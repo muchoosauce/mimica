@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from . import core
 from . import theme as t
 from .pages import (
-    AdaptPage, BrandsPage, DashboardPage, GeneratePage, HistoryPage,
+    AdaptPage, BatchFixPage, BrandsPage, DashboardPage, GeneratePage, HistoryPage,
     RunDetailPage, SettingsPage
 )
 from .widgets import icon_button, icon_label, svg_icon, ICONS
@@ -133,6 +133,7 @@ class Sidebar(QWidget):
             ("dashboard", "dashboard", "Dashboard"),
             ("generate", "generate", "Generate"),
             ("adapt", "adapt", "Adapt"),
+            ("fix", "wrench", "Fix"),
             ("history", "history", "History"),
         ]:
             item = SidebarItem(icon, label)
@@ -181,12 +182,14 @@ class Sidebar(QWidget):
         self.update_status()
 
     def update_status(self):
-        if core.get_api_key():
-            self.status_title.setText("MuAPI · Connected")
+        name = core.get_active_provider_name()
+        label = core.PROVIDER_LABELS.get(name, name.title())
+        if core.get_provider_key(name):
+            self.status_title.setText(f"{label} · Connected")
             self.status_sub.setText("Your key is saved locally.")
             self.status_btn.setText("Manage")
         else:
-            self.status_title.setText("MuAPI")
+            self.status_title.setText(label)
             self.status_sub.setText("Add your API key to start.")
             self.status_btn.setText("Set key")
 
@@ -246,12 +249,13 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardPage()
         self.generate = GeneratePage()
         self.adapt = AdaptPage()
+        self.fix = BatchFixPage()
         self.history = HistoryPage()
         self.brands = BrandsPage()
         self.detail = RunDetailPage()
         self.settings = SettingsPage()
-        for p in (self.dashboard, self.generate, self.adapt, self.history,
-                  self.brands, self.detail, self.settings):
+        for p in (self.dashboard, self.generate, self.adapt, self.fix,
+                  self.history, self.brands, self.detail, self.settings):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
 
@@ -268,14 +272,22 @@ class MainWindow(QMainWindow):
         self.history.open_run.connect(self._open_run)
         self.detail.back.connect(lambda: self._on_nav("history"))
         self.adapt.open_brands.connect(lambda: self._on_nav("brands"))
+        self.settings.provider_changed.connect(self._on_provider_changed)
 
         self._on_nav("dashboard")
+
+    def _on_provider_changed(self, _name: str):
+        self.sidebar.update_status()
+        self.generate._update_cost()
+        self.adapt._update_cost()
+        self.fix._update_cost()
 
     def _on_nav(self, key: str):
         mapping = {
             "dashboard": (self.dashboard, "Dashboard"),
             "generate":  (self.generate,  "Generate"),
             "adapt":     (self.adapt,     "Adapt"),
+            "fix":       (self.fix,       "Fix"),
             "history":   (self.history,   "History"),
             "brands":    (self.brands,    "Brands"),
             "settings":  (self.settings,  "Settings"),
@@ -287,6 +299,8 @@ class MainWindow(QMainWindow):
             self.dashboard.refresh()
         if page is self.brands:
             self.brands.refresh()
+        if page is self.fix:
+            self.fix.refresh_brands()
         if page is self.adapt:
             self.adapt.refresh_brands()
         self.stack.setCurrentWidget(page)

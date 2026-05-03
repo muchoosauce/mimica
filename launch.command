@@ -33,4 +33,10 @@ if [ ! -f ".venv/.deps_installed" ] || [ requirements.txt -nt .venv/.deps_instal
   touch .venv/.deps_installed
 fi
 
+if [ ! -f ".venv/.playwright_installed" ] || [ requirements.txt -nt ".venv/.playwright_installed" ]; then
+  printf "${C_DIM}Installing Playwright Chromium (one-time, ~150 MB)…${C_RESET}\n"
+  python -m playwright install chromium
+  touch .venv/.playwright_installed
+fi
+
 exec python app.py

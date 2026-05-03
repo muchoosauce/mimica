@@ -7,10 +7,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QStackedWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
+    QAbstractItemView, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSizePolicy,
+    QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout,
+    QWidget
 )
 
 from . import core
@@ -318,10 +319,11 @@ class GenerateWorker(QObject):
     out_dir_signal = Signal(str)
     finished = Signal(str)
 
-    def __init__(self, image, n, res, aspects, languages, workers, output_root):
+    def __init__(self, image, n, res, aspects, languages, workers, output_root, image_model):
         super().__init__()
         self._args = (image, n, res, aspects, languages, workers)
         self._output_root = output_root
+        self._image_model = image_model
         self._cancel = False
 
     def cancel(self):
@@ -335,6 +337,7 @@ class GenerateWorker(QObject):
             on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
             should_cancel=lambda: self._cancel,
             output_root=self._output_root,
+            image_model=self._image_model,
         )
         self.finished.emit(str(out) if out else "")
 
@@ -363,6 +366,7 @@ class GeneratePage(QWidget):
 
         # Left: form (scrollable)
         form_card = Card()
+        form_card.setMinimumWidth(520)
         card_lay = QVBoxLayout(form_card)
         card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
 
@@ -393,11 +397,20 @@ class GeneratePage(QWidget):
         params_row.addLayout(col_n, 1); params_row.addLayout(col_w, 1)
         form.addLayout(params_row)
 
+        res_model_row = QHBoxLayout(); res_model_row.setSpacing(14)
         res_col = QVBoxLayout(); res_col.setSpacing(6)
         res_col.addWidget(_field_label("Resolution"))
         self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("1k")
         res_col.addWidget(self.res)
-        form.addLayout(res_col)
+        model_col = QVBoxLayout(); model_col.setSpacing(6)
+        model_col.addWidget(_field_label("Model"))
+        self.model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.model.addItem(label, userData=slug)
+        self.model.setCurrentIndex(0)
+        model_col.addWidget(self.model)
+        res_model_row.addLayout(res_col, 1); res_model_row.addLayout(model_col, 1)
+        form.addLayout(res_model_row)
 
         asp_l = QLabel("OUTPUT FORMATS  ·  pick one or more"); asp_l.setObjectName("Muted")
         form.addWidget(asp_l)
@@ -420,6 +433,7 @@ class GeneratePage(QWidget):
         self._update_cost()
         self.n.valueChanged.connect(self._update_cost)
         self.res.currentTextChanged.connect(self._update_cost)
+        self.model.currentIndexChanged.connect(self._update_cost)
         self.asp.changed.connect(self._update_cost)
         self.lang.changed.connect(self._update_cost)
 
@@ -440,7 +454,7 @@ class GeneratePage(QWidget):
         form.addLayout(btn_row)
         form.addStretch()
 
-        body.addWidget(form_card, 40)
+        body.addWidget(form_card, 5)
 
         # Right: log + results
         right = QVBoxLayout(); right.setSpacing(14)
@@ -482,7 +496,7 @@ class GeneratePage(QWidget):
         right.addWidget(res_card, 2)
 
         right_w = QWidget(); right_w.setLayout(right)
-        body.addWidget(right_w, 60)
+        body.addWidget(right_w, 5)
 
         root.addLayout(body, 1)
 
@@ -493,7 +507,9 @@ class GeneratePage(QWidget):
         n = self.n.value()
         m = max(1, len(self.asp.selected()))
         l = max(1, len(self.lang.selected()))
-        price = core.COST_PER_IMAGE.get(self.res.currentText(), 0.06)
+        provider = core.get_active_provider_name()
+        model = self.model.currentData() or core.DEFAULT_IMAGE_MODEL
+        price = core.cost_per_image(provider, model, self.res.currentText())
         total = n * m * l
         self.cost_label.setText(
             f"{total} images  ·  estimated ${total * price:.2f}  "
@@ -513,8 +529,9 @@ class GeneratePage(QWidget):
         if not languages:
             QMessageBox.warning(self, "No language", "Pick at least one language.")
             return
-        if not core.get_api_key():
-            QMessageBox.warning(self, "Missing key", "Set your MuAPI key in Settings first.")
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first.")
             return
 
         self._clear_grid()
@@ -533,6 +550,7 @@ class GeneratePage(QWidget):
             path, self.n.value(), self.res.currentText(),
             aspects, languages, self.workers.value(),
             self.out_row.path(),
+            self.model.currentData() or core.DEFAULT_IMAGE_MODEL,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -793,19 +811,51 @@ class RunDetailPage(QWidget):
             item = self.grid.takeAt(0)
             w = item.widget()
             if w: w.deleteLater()
+
+        brand_name = r.get("brand", "")
+        default_aspect_list = p.get("aspects", [p.get("aspect_ratio", "1:1")])
+        default_aspect = default_aspect_list[0] if isinstance(default_aspect_list, list) and default_aspect_list else "1:1"
+        default_lang_list = p.get("languages", [p.get("language", "English")])
+        default_lang = default_lang_list[0] if isinstance(default_lang_list, list) and default_lang_list else "English"
+        by_file = {rr.get("file"): rr for rr in r.get("results", []) if rr.get("file")}
+
         cols = 4
         for i, img in enumerate(r["images"]):
-            thumb = ThumbLabel(img, 180, 180, 12)
+            thumb = ThumbLabel(img, 180, 180, 12, show_fix=bool(brand_name))
             thumb.clicked.connect(lambda path=img: open_path(path))
+            if brand_name:
+                meta_r = by_file.get(Path(img).name, {})
+                meta = {
+                    "brand": brand_name,
+                    "aspect": meta_r.get("aspect", default_aspect),
+                    "language": meta_r.get("language", default_lang),
+                }
+                thumb.fix_requested.connect(
+                    lambda path=img, m=meta: self._open_fix_dialog(path, m)
+                )
             self.grid.addWidget(thumb, i // cols, i % cols)
+
+    def _open_fix_dialog(self, path: Path, meta: dict):
+        dlg = FixDialog(
+            self, Path(path),
+            default_brand=meta.get("brand", ""),
+            default_aspect=meta.get("aspect", "1:1"),
+            default_language=meta.get("language", "English"),
+        )
+        dlg.exec()
 
 
 # ─── Settings ───────────────────────────────────────────────────────────────
 
 class SettingsPage(QWidget):
+    provider_changed = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.setObjectName("Root")
+        self._key_inputs: dict[str, QLineEdit] = {}
+        self._key_status: dict[str, QLabel] = {}
+        self._radios: dict[str, QRadioButton] = {}
         self._build()
 
     def _build(self):
@@ -815,58 +865,170 @@ class SettingsPage(QWidget):
 
         head = QVBoxLayout(); head.setSpacing(2)
         h1 = QLabel("Settings"); h1.setObjectName("H1")
-        sub = QLabel("Configure your MuAPI credentials and defaults.")
+        sub = QLabel("Pick your provider and store the keys you need.")
         sub.setObjectName("Dim")
         head.addWidget(h1); head.addWidget(sub)
         root.addLayout(head)
 
-        card = Card()
-        lay = QVBoxLayout(card); lay.setContentsMargins(22, 20, 22, 20); lay.setSpacing(14)
+        # Provider selector card
+        prov_card = Card()
+        plv = QVBoxLayout(prov_card); plv.setContentsMargins(22, 20, 22, 20); plv.setSpacing(10)
+        plabel = QLabel("ACTIVE PROVIDER"); plabel.setObjectName("Muted")
+        plv.addWidget(plabel)
 
-        sect = QLabel("MUAPI KEY"); sect.setObjectName("Muted")
-        lay.addWidget(sect)
+        self._radio_group = QButtonGroup(self)
+        self._radio_group.setExclusive(True)
+        radio_row = QHBoxLayout(); radio_row.setSpacing(18)
+        active = core.get_active_provider_name()
+        for name in core.PROVIDERS:
+            rb = QRadioButton(core.PROVIDER_LABELS[name])
+            rb.setCursor(Qt.PointingHandCursor)
+            rb.setChecked(name == active)
+            rb.toggled.connect(lambda checked, n=name: checked and self._on_provider_changed(n))
+            self._radio_group.addButton(rb)
+            self._radios[name] = rb
+            radio_row.addWidget(rb)
+        radio_row.addStretch()
+        plv.addLayout(radio_row)
+
+        prov_tip = QLabel(
+            "The active provider routes both image generation and the LLM that writes prompts."
+        )
+        prov_tip.setWordWrap(True)
+        prov_tip.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
+        plv.addWidget(prov_tip)
+        root.addWidget(prov_card)
+
+        # Key cards (one per provider)
+        for name in core.PROVIDERS:
+            root.addWidget(self._build_key_card(name))
+
+        # Anthropic key (Brand DNA Generator only — independent of provider)
+        root.addWidget(self._build_anthropic_card())
+
+        root.addStretch()
+
+    def _build_anthropic_card(self) -> Card:
+        card = Card()
+        lay = QVBoxLayout(card); lay.setContentsMargins(22, 20, 22, 20); lay.setSpacing(10)
+
+        title = QLabel("ANTHROPIC KEY  ·  Brand DNA Generator"); title.setObjectName("Muted")
+        lay.addWidget(title)
+
         row = QHBoxLayout()
-        self.key = QLineEdit()
-        self.key.setEchoMode(QLineEdit.Password)
-        self.key.setPlaceholderText("paste your MuAPI key")
-        self.key.setText(core.get_api_key())
-        row.addWidget(self.key)
+        self._anthropic_key = QLineEdit()
+        self._anthropic_key.setEchoMode(QLineEdit.Password)
+        self._anthropic_key.setPlaceholderText("paste your Anthropic API key (sk-ant-...)")
+        self._anthropic_key.setText(core.get_anthropic_key())
+        row.addWidget(self._anthropic_key)
+
         toggle = QPushButton("Show"); toggle.setObjectName("GhostBtn")
         toggle.setCursor(Qt.PointingHandCursor); toggle.setCheckable(True)
-        def _tog():
-            self.key.setEchoMode(QLineEdit.Normal if toggle.isChecked() else QLineEdit.Password)
-            toggle.setText("Hide" if toggle.isChecked() else "Show")
-        toggle.clicked.connect(_tog)
+        def _tog(checked, e=self._anthropic_key, b=toggle):
+            e.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+            b.setText("Hide" if checked else "Show")
+        toggle.toggled.connect(_tog)
         row.addWidget(toggle)
+
         save = QPushButton("Save"); save.setObjectName("PrimaryBtn")
         save.setCursor(Qt.PointingHandCursor)
-        save.clicked.connect(self._save)
+        save.clicked.connect(self._save_anthropic_key)
         row.addWidget(save)
         lay.addLayout(row)
 
-        self.status = QLabel(""); self.status.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
-        lay.addWidget(self.status)
+        self._anthropic_status = QLabel("")
+        self._anthropic_status.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
+        lay.addWidget(self._anthropic_status)
 
         tip = QLabel(
-            "Key is stored locally in <b>.env</b>. It is sent only to api.muapi.ai "
-            "over HTTPS for uploads, LLM prompting, and image generation."
+            "Used only by the Brand DNA Generator. Stored locally in <b>.env</b>; sent only to "
+            "api.anthropic.com over HTTPS for vision analysis. Independent of the active image provider above."
         )
         tip.setWordWrap(True)
-        tip.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px; padding-top: 4px;")
+        tip.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
         lay.addWidget(tip)
+        return card
 
-        root.addWidget(card)
-        root.addStretch()
-
-    def _save(self):
-        v = self.key.text().strip()
+    def _save_anthropic_key(self) -> None:
+        v = self._anthropic_key.text().strip()
         if not v:
             QMessageBox.warning(self, "Empty key", "Paste a key before saving.")
             return
-        core.save_api_key(v)
-        self.status.setText("Saved.")
-        self.status.setStyleSheet(f"color: {t.GREEN}; font-size: 12px;")
-        QTimer.singleShot(2500, lambda: self.status.setText(""))
+        core.save_anthropic_key(v)
+        self._anthropic_status.setText("Saved.")
+        self._anthropic_status.setStyleSheet(f"color: {t.GREEN}; font-size: 12px;")
+        QTimer.singleShot(2500, lambda: self._anthropic_status.setText(""))
+
+    def _build_key_card(self, name: str) -> Card:
+        card = Card()
+        lay = QVBoxLayout(card); lay.setContentsMargins(22, 20, 22, 20); lay.setSpacing(10)
+
+        title = QLabel(f"{core.PROVIDER_LABELS[name].upper()} KEY")
+        title.setObjectName("Muted")
+        lay.addWidget(title)
+
+        row = QHBoxLayout()
+        edit = QLineEdit()
+        edit.setEchoMode(QLineEdit.Password)
+        edit.setPlaceholderText(f"paste your {core.PROVIDER_LABELS[name]} key")
+        edit.setText(core.get_provider_key(name))
+        self._key_inputs[name] = edit
+        row.addWidget(edit)
+
+        toggle = QPushButton("Show"); toggle.setObjectName("GhostBtn")
+        toggle.setCursor(Qt.PointingHandCursor); toggle.setCheckable(True)
+        def _tog(checked, e=edit, b=toggle):
+            e.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+            b.setText("Hide" if checked else "Show")
+        toggle.toggled.connect(_tog)
+        row.addWidget(toggle)
+
+        save = QPushButton("Save"); save.setObjectName("PrimaryBtn")
+        save.setCursor(Qt.PointingHandCursor)
+        save.clicked.connect(lambda _=False, n=name: self._save_key(n))
+        row.addWidget(save)
+
+        lay.addLayout(row)
+
+        status = QLabel(""); status.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
+        self._key_status[name] = status
+        lay.addWidget(status)
+
+        host = "api.muapi.ai" if name == "muapi" else "api.kie.ai"
+        tip = QLabel(
+            f"Key is stored locally in <b>.env</b>. It is sent only to {host} "
+            f"over HTTPS for uploads, LLM prompting, and image generation."
+        )
+        tip.setWordWrap(True)
+        tip.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
+        lay.addWidget(tip)
+        return card
+
+    def _on_provider_changed(self, name: str) -> None:
+        core.save_active_provider(name)
+        self.provider_changed.emit(name)
+
+    def _save_key(self, name: str) -> None:
+        edit = self._key_inputs[name]
+        status = self._key_status[name]
+        v = edit.text().strip()
+        if not v:
+            QMessageBox.warning(self, "Empty key", "Paste a key before saving.")
+            return
+        core.save_provider_key(name, v)
+        status.setText("Saved.")
+        status.setStyleSheet(f"color: {t.GREEN}; font-size: 12px;")
+        QTimer.singleShot(2500, lambda s=status: s.setText(""))
+        self.provider_changed.emit(core.get_active_provider_name())
+
+    def refresh(self) -> None:
+        active = core.get_active_provider_name()
+        for name, rb in self._radios.items():
+            rb.blockSignals(True)
+            rb.setChecked(name == active)
+            rb.blockSignals(False)
+        for name, edit in self._key_inputs.items():
+            edit.setText(core.get_provider_key(name))
 
 
 # ─── Brand editor dialog ────────────────────────────────────────────────────
@@ -1007,6 +1169,12 @@ class BrandsPage(QWidget):
         tl.addWidget(h1); tl.addWidget(sub)
         head.addLayout(tl); head.addStretch()
 
+        gen_btn = QPushButton("  Generate from sources")
+        gen_btn.setObjectName("GhostBtn")
+        gen_btn.setCursor(Qt.PointingHandCursor)
+        gen_btn.clicked.connect(self._generate_dna)
+        head.addWidget(gen_btn)
+
         new_btn = QPushButton("  + New Brand")
         new_btn.setObjectName("PrimaryBtn")
         new_btn.setCursor(Qt.PointingHandCursor)
@@ -1102,6 +1270,879 @@ class BrandsPage(QWidget):
         if dlg.exec() in (QDialog.Accepted, 2):
             self.refresh()
 
+    def _generate_dna(self):
+        if not core.is_anthropic_configured():
+            QMessageBox.warning(
+                self,
+                "Anthropic key required",
+                "The Brand DNA Generator uses Claude directly for vision analysis. "
+                "Add your Anthropic API key in Settings to continue.",
+            )
+            return
+        dlg = BrandDNAGeneratorDialog(self)
+        if dlg.exec() in (QDialog.Accepted, 2):
+            self.refresh()
+
+
+# ─── Brand DNA Generator dialog ─────────────────────────────────────────────
+
+class BrandDNAWorker(QObject):
+    log = Signal(str, str)
+    finished = Signal(object, str)   # (BrandDNAResult or None, error message)
+
+    def __init__(self, sources, output_root: str | None):
+        super().__init__()
+        self._sources = sources
+        self._output_root = output_root
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            import brand_dna
+            result = brand_dna.generate(
+                self._sources,
+                output_root=Path(self._output_root) if self._output_root else None,
+                on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+                should_cancel=lambda: self._cancel,
+            )
+            self.finished.emit(result, "")
+        except Exception as e:
+            self.finished.emit(None, str(e))
+
+
+class BrandDNAGeneratorDialog(QDialog):
+    DOC_EXTS = {".pdf", ".docx", ".txt", ".md"}
+    IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Generate Brand DNA")
+        self.setModal(True)
+        self.resize(820, 720)
+        self._creative_paths: list[str] = []
+        self._document_paths: list[str] = []
+        self._result = None
+        self._worker: BrandDNAWorker | None = None
+        self._thread: QThread | None = None
+        self._candidate_checks: list[tuple[QPushButton, object]] = []
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self); root.setContentsMargins(20, 20, 20, 20); root.setSpacing(14)
+
+        title = QLabel("Generate Brand DNA"); title.setObjectName("H1")
+        sub = QLabel("Drop a website URL, creative assets, or a guidelines document. "
+                     "Claude reads everything and writes a structured Brand DNA.")
+        sub.setObjectName("Dim"); sub.setWordWrap(True)
+        root.addWidget(title); root.addWidget(sub)
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_step_sources())
+        self._stack.addWidget(self._build_step_progress())
+        self._stack.addWidget(self._build_step_review())
+        root.addWidget(self._stack, 1)
+
+    # ── Step 1: Sources ────────────────────────────────────────────────────
+
+    def _build_step_sources(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(14)
+
+        url_lbl = QLabel("WEBSITE URLs  ·  one per line, optional"); url_lbl.setObjectName("Muted")
+        lay.addWidget(url_lbl)
+        self._urls_edit = QPlainTextEdit()
+        self._urls_edit.setPlaceholderText("https://brand.com\nhttps://brand.com/about")
+        self._urls_edit.setMaximumHeight(90)
+        lay.addWidget(self._urls_edit)
+
+        # Two columns: creatives + documents
+        cols = QHBoxLayout(); cols.setSpacing(14)
+
+        cre_card = Card()
+        cre_lay = QVBoxLayout(cre_card); cre_lay.setContentsMargins(14, 14, 14, 14); cre_lay.setSpacing(8)
+        cre_lay.addWidget(_field_label("CREATIVE ASSETS  ·  PNG, JPG, WEBP"))
+        self._cre_list = QListWidget()
+        self._cre_list.setMinimumHeight(140)
+        cre_lay.addWidget(self._cre_list, 1)
+        cre_btns = QHBoxLayout()
+        add_cre = QPushButton("Add files…"); add_cre.setObjectName("GhostBtn")
+        add_cre.clicked.connect(lambda: self._pick_files(self._cre_list, self._creative_paths,
+                                                          "Add creative files",
+                                                          "Images (*.png *.jpg *.jpeg *.webp *.bmp)"))
+        rm_cre = QPushButton("Remove"); rm_cre.setObjectName("GhostBtn")
+        rm_cre.clicked.connect(lambda: self._remove_selected(self._cre_list, self._creative_paths))
+        cre_btns.addWidget(add_cre); cre_btns.addWidget(rm_cre); cre_btns.addStretch()
+        cre_lay.addLayout(cre_btns)
+        cols.addWidget(cre_card, 1)
+
+        doc_card = Card()
+        doc_lay = QVBoxLayout(doc_card); doc_lay.setContentsMargins(14, 14, 14, 14); doc_lay.setSpacing(8)
+        doc_lay.addWidget(_field_label("BRAND DOCUMENTS  ·  PDF, DOCX, TXT"))
+        self._doc_list = QListWidget()
+        self._doc_list.setMinimumHeight(140)
+        doc_lay.addWidget(self._doc_list, 1)
+        doc_btns = QHBoxLayout()
+        add_doc = QPushButton("Add files…"); add_doc.setObjectName("GhostBtn")
+        add_doc.clicked.connect(lambda: self._pick_files(self._doc_list, self._document_paths,
+                                                          "Add documents",
+                                                          "Documents (*.pdf *.docx *.txt *.md)"))
+        rm_doc = QPushButton("Remove"); rm_doc.setObjectName("GhostBtn")
+        rm_doc.clicked.connect(lambda: self._remove_selected(self._doc_list, self._document_paths))
+        doc_btns.addWidget(add_doc); doc_btns.addWidget(rm_doc); doc_btns.addStretch()
+        doc_lay.addLayout(doc_btns)
+        cols.addWidget(doc_card, 1)
+
+        lay.addLayout(cols, 1)
+
+        actions = QHBoxLayout()
+        cancel = QPushButton("Cancel"); cancel.setObjectName("GhostBtn")
+        cancel.clicked.connect(self.reject)
+        gen = QPushButton("Generate"); gen.setObjectName("PrimaryBtn")
+        gen.setCursor(Qt.PointingHandCursor)
+        gen.clicked.connect(self._start_generation)
+        actions.addStretch(); actions.addWidget(cancel); actions.addWidget(gen)
+        lay.addLayout(actions)
+
+        return w
+
+    def _pick_files(self, lst: QListWidget, store: list[str], title: str, filt: str):
+        files, _ = QFileDialog.getOpenFileNames(self, title, "", filt)
+        for f in files:
+            if f and f not in store:
+                store.append(f)
+                lst.addItem(Path(f).name)
+
+    def _remove_selected(self, lst: QListWidget, store: list[str]):
+        for item in lst.selectedItems():
+            row = lst.row(item)
+            lst.takeItem(row)
+            if 0 <= row < len(store):
+                store.pop(row)
+
+    # ── Step 2: Progress ───────────────────────────────────────────────────
+
+    def _build_step_progress(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(14)
+
+        head = QHBoxLayout()
+        h = QLabel("Analyzing sources…"); h.setObjectName("H2")
+        self._pill = StatusPill("Running", t.ACCENT)
+        head.addWidget(h); head.addStretch(); head.addWidget(self._pill)
+        lay.addLayout(head)
+
+        self._log = QPlainTextEdit(); self._log.setReadOnly(True); self._log.setMinimumHeight(360)
+        lay.addWidget(self._log, 1)
+
+        actions = QHBoxLayout()
+        self._cancel_run = QPushButton("Cancel"); self._cancel_run.setObjectName("GhostBtn")
+        self._cancel_run.clicked.connect(self._cancel_generation)
+        actions.addStretch(); actions.addWidget(self._cancel_run)
+        lay.addLayout(actions)
+        return w
+
+    def _start_generation(self):
+        try:
+            import brand_dna
+        except ImportError as e:
+            QMessageBox.critical(self, "Missing dependency",
+                                  f"brand_dna package failed to import: {e}")
+            return
+
+        urls = [u.strip() for u in self._urls_edit.toPlainText().splitlines() if u.strip()]
+        for u in urls:
+            if not u.startswith(("http://", "https://")):
+                QMessageBox.warning(self, "Invalid URL",
+                                    f"URL must start with http:// or https://\n→ {u}")
+                return
+        if not (urls or self._creative_paths or self._document_paths):
+            QMessageBox.warning(self, "No sources",
+                                "Add at least one URL, creative file, or document.")
+            return
+
+        sources = brand_dna.Sources(
+            urls=urls,
+            creative_files=[Path(p) for p in self._creative_paths],
+            document_files=[Path(p) for p in self._document_paths],
+        )
+        self._stack.setCurrentIndex(1)
+        self._log.clear()
+        self._cancel_run.setEnabled(True); self._cancel_run.setText("Cancel")
+
+        self._thread = QThread()
+        self._worker = BrandDNAWorker(sources, str(core.get_output_dir()))
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._on_log)
+        self._worker.finished.connect(self._on_finished)
+        self._thread.start()
+
+    def _on_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        self._log.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _cancel_generation(self):
+        if self._worker:
+            self._worker.cancel()
+        self._cancel_run.setEnabled(False)
+        self._cancel_run.setText("Cancelling…")
+
+    def _on_finished(self, result, error: str):
+        if self._thread:
+            self._thread.quit()
+            self._thread.wait()
+        if error or result is None or not getattr(result, "dna_text", ""):
+            self._pill.setText("Failed")
+            self._pill.setStyleSheet(
+                f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
+                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            )
+            self._cancel_run.setEnabled(True); self._cancel_run.setText("Back")
+            self._cancel_run.clicked.disconnect()
+            self._cancel_run.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+            if error:
+                QMessageBox.critical(self, "Brand DNA failed", error)
+            else:
+                QMessageBox.warning(self, "Brand DNA cancelled",
+                                     "No result was produced.")
+            return
+        self._result = result
+        self._pill.setText("Done")
+        self._pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        self._populate_review()
+        self._stack.setCurrentIndex(2)
+
+    # ── Step 3: Review ─────────────────────────────────────────────────────
+
+    def _build_step_review(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(14)
+
+        cols = QHBoxLayout(); cols.setSpacing(14)
+
+        # Left: name + DNA editor
+        left = QVBoxLayout(); left.setSpacing(10)
+        left.addWidget(_field_label("BRAND NAME"))
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("e.g. Atlas Eyewear")
+        left.addWidget(self._name_edit)
+        left.addWidget(_field_label("BRAND DNA  ·  edit before saving"))
+        self._dna_edit = QTextEdit()
+        self._dna_edit.setMinimumHeight(420)
+        left.addWidget(self._dna_edit, 1)
+        left_w = QWidget(); left_w.setLayout(left)
+        cols.addWidget(left_w, 6)
+
+        # Right: candidate images
+        right = QVBoxLayout(); right.setSpacing(10)
+        right.addWidget(_field_label("PRODUCT IMAGE CANDIDATES  ·  pick the ones to attach"))
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._cand_container = QWidget()
+        self._cand_grid = QGridLayout(self._cand_container)
+        self._cand_grid.setSpacing(8); self._cand_grid.setContentsMargins(0, 0, 0, 0)
+        self._cand_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self._cand_container)
+        scroll.setMinimumWidth(280)
+        right.addWidget(scroll, 1)
+        right_w = QWidget(); right_w.setLayout(right)
+        cols.addWidget(right_w, 4)
+
+        lay.addLayout(cols, 1)
+
+        actions = QHBoxLayout()
+        back = QPushButton("Back"); back.setObjectName("GhostBtn")
+        back.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        save = QPushButton("Save brand"); save.setObjectName("PrimaryBtn")
+        save.setCursor(Qt.PointingHandCursor)
+        save.clicked.connect(self._save_brand)
+        actions.addWidget(back); actions.addStretch(); actions.addWidget(save)
+        lay.addLayout(actions)
+        return w
+
+    def _populate_review(self):
+        self._dna_edit.setPlainText(self._result.dna_text)
+        # Clear existing
+        while self._cand_grid.count():
+            item = self._cand_grid.takeAt(0)
+            wid = item.widget()
+            if wid: wid.deleteLater()
+        self._candidate_checks.clear()
+
+        # Show product-tagged candidates first, then others.
+        cands = sorted(
+            self._result.candidates,
+            key=lambda c: (0 if c.tag == "product" else 1 if c.tag == "lifestyle" else 2),
+        )
+        for i, cand in enumerate(cands[:24]):
+            wrap = QFrame()
+            wrap.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 10px; padding: 6px;")
+            wl = QVBoxLayout(wrap); wl.setSpacing(4); wl.setContentsMargins(6, 6, 6, 6)
+            try:
+                thumb = ThumbLabel(Path(cand.path), 110, 110, 8)
+                wl.addWidget(thumb, alignment=Qt.AlignCenter)
+            except Exception:
+                ph = QLabel("?"); ph.setFixedSize(110, 110)
+                ph.setAlignment(Qt.AlignCenter)
+                wl.addWidget(ph)
+            tag_lbl = QLabel(cand.tag or "?")
+            tag_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 10px;")
+            tag_lbl.setAlignment(Qt.AlignCenter)
+            wl.addWidget(tag_lbl)
+            chk = QPushButton("✓ Keep" if cand.tag == "product" else "Keep")
+            chk.setCheckable(True)
+            chk.setChecked(cand.tag == "product")
+            chk.setCursor(Qt.PointingHandCursor)
+            chk.setObjectName("PrimaryBtn" if cand.tag == "product" else "GhostBtn")
+            chk.toggled.connect(
+                lambda checked, b=chk: (
+                    b.setObjectName("PrimaryBtn" if checked else "GhostBtn"),
+                    b.setText("✓ Keep" if checked else "Keep"),
+                    b.style().unpolish(b), b.style().polish(b),
+                )
+            )
+            wl.addWidget(chk)
+            self._cand_grid.addWidget(wrap, i // 2, i % 2)
+            self._candidate_checks.append((chk, cand))
+
+    def _save_brand(self):
+        name = self._name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Name required", "Give the brand a name.")
+            return
+        dna_text = self._dna_edit.toPlainText().strip()
+        if not dna_text:
+            QMessageBox.warning(self, "Empty DNA", "The DNA text is empty.")
+            return
+        kept = [str(cand.path) for chk, cand in self._candidate_checks if chk.isChecked()]
+        if not kept:
+            QMessageBox.warning(self, "No product image",
+                                "Pick at least one image to use as the brand's reference.")
+            return
+        try:
+            core.save_brand(name=name, dna=dna_text, product_image_sources=kept)
+        except Exception as e:
+            QMessageBox.critical(self, "Save failed", str(e))
+            return
+        self.accept()
+
+
+# ─── Fix tool ───────────────────────────────────────────────────────────────
+
+FIX_PRESETS = {
+    "Wrong size":       "The product is the wrong size in the scene — adjust its scale to fit naturally.",
+    "Wrong design":     "The product packaging / design was altered — re-render it to match the brand product images exactly.",
+    "Text overlaps product": "A copy / text element overlaps the product. Reposition or resize only the conflicting element so the text is fully legible and does not touch the product. Keep the text content identical.",
+    "Wrong colors":     "The colors of the product or a specific element drifted — fix only that element's color.",
+    "Missing element":  "An element is missing from the scene — add it back while keeping everything else unchanged.",
+}
+
+
+class FixWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    finished = Signal(str)
+
+    def __init__(self, image_path, brand_name, issue, resolution, aspect, language, image_model):
+        super().__init__()
+        self._args = (image_path, brand_name, issue, resolution, aspect, language)
+        self._image_model = image_model
+        self._cancel = False
+
+    def cancel(self): self._cancel = True
+
+    def run(self):
+        out = core.run_fix(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            should_cancel=lambda: self._cancel,
+            image_model=self._image_model,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
+class FixDialog(QDialog):
+    fixed_path = Signal(str)
+
+    def __init__(self, parent, image_path: Path, default_brand: str = "",
+                 default_aspect: str = "1:1", default_language: str = "English"):
+        super().__init__(parent)
+        self.setWindowTitle("Fix creative")
+        self.setModal(True)
+        self.resize(640, 760)
+        self._image_path = Path(image_path)
+        self._default_brand = default_brand
+        self._default_aspect = default_aspect
+        self._default_language = default_language
+        self._worker = None
+        self._thread = None
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self); root.setContentsMargins(22, 20, 22, 20); root.setSpacing(14)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Fix creative"); h1.setObjectName("H1")
+        sub = QLabel("Describe only what's wrong. Everything else stays identical.")
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        prev_wrap = QHBoxLayout(); prev_wrap.setSpacing(12)
+        self.preview = ThumbLabel(self._image_path, 140, 140, 10)
+        prev_wrap.addWidget(self.preview)
+        info_box = QVBoxLayout(); info_box.setSpacing(4)
+        fname = QLabel(self._image_path.name)
+        fname.setStyleSheet("font-weight: 600; font-size: 13px;")
+        info_box.addWidget(fname)
+        fmeta = QLabel(f"{self._default_language}  ·  {self._default_aspect}")
+        fmeta.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
+        info_box.addWidget(fmeta)
+        info_box.addStretch()
+        prev_wrap.addLayout(info_box, 1)
+        root.addLayout(prev_wrap)
+
+        bl = QLabel("BRAND"); bl.setObjectName("Muted")
+        root.addWidget(bl)
+        self.brand_combo = QComboBox()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())
+        if not names:
+            self.brand_combo.addItem("— No brands —"); self.brand_combo.setEnabled(False)
+        else:
+            self.brand_combo.addItems(names)
+            if self._default_brand in names:
+                self.brand_combo.setCurrentText(self._default_brand)
+        root.addWidget(self.brand_combo)
+
+        root.addSpacing(4)
+        pl = QLabel("QUICK ISSUES"); pl.setObjectName("Muted")
+        root.addWidget(pl)
+        preset_row = QHBoxLayout(); preset_row.setSpacing(6)
+        for label in FIX_PRESETS:
+            btn = QPushButton(label); btn.setObjectName("ChipOff")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=None, lbl=label: self._apply_preset(lbl))
+            preset_row.addWidget(btn)
+        preset_row.addStretch()
+        preset_wrap = QWidget(); preset_wrap.setLayout(preset_row)
+        root.addWidget(preset_wrap)
+
+        il = QLabel("WHAT NEEDS TO BE FIXED"); il.setObjectName("Muted")
+        root.addWidget(il)
+        self.issue = QTextEdit()
+        self.issue.setPlaceholderText(
+            "e.g., the sachet is too small — make it fill the bottom-right corner, "
+            "match the packaging of the second brand image exactly."
+        )
+        self.issue.setMinimumHeight(120)
+        root.addWidget(self.issue, 1)
+
+        row = QHBoxLayout(); row.setSpacing(14)
+        col_a = QVBoxLayout(); col_a.setSpacing(6)
+        col_a.addWidget(_field_label("Aspect"))
+        self.asp = QComboBox(); self.asp.addItems(core.ASPECTS)
+        if self._default_aspect in core.ASPECTS:
+            self.asp.setCurrentText(self._default_aspect)
+        col_a.addWidget(self.asp)
+        col_r = QVBoxLayout(); col_r.setSpacing(6)
+        col_r.addWidget(_field_label("Resolution"))
+        self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS)
+        self.res.setCurrentText("1k")
+        col_r.addWidget(self.res)
+        col_m = QVBoxLayout(); col_m.setSpacing(6)
+        col_m.addWidget(_field_label("Model"))
+        self.model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.model.addItem(label, userData=slug)
+        self.model.setCurrentIndex(0)
+        col_m.addWidget(self.model)
+        row.addLayout(col_a, 1); row.addLayout(col_r, 1); row.addLayout(col_m, 1)
+        root.addLayout(row)
+
+        log_head = QHBoxLayout()
+        lh = QLabel("Activity"); lh.setObjectName("H3")
+        log_head.addWidget(lh); log_head.addStretch()
+        self.pill = StatusPill("Idle", t.TEXT_MUTED)
+        log_head.addWidget(self.pill)
+        root.addLayout(log_head)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(120)
+        root.addWidget(self.log)
+
+        btns = QHBoxLayout(); btns.setSpacing(10)
+        cancel = QPushButton("Cancel"); cancel.setObjectName("GhostBtn")
+        cancel.setCursor(Qt.PointingHandCursor); cancel.clicked.connect(self.reject)
+        btns.addWidget(cancel); btns.addStretch()
+        self.go_btn = QPushButton("Fix"); self.go_btn.setObjectName("PrimaryBtn")
+        self.go_btn.setCursor(Qt.PointingHandCursor); self.go_btn.clicked.connect(self._start)
+        btns.addWidget(self.go_btn)
+        root.addLayout(btns)
+
+    def _apply_preset(self, label: str):
+        current = self.issue.toPlainText().strip()
+        boiler = FIX_PRESETS[label]
+        self.issue.setPlainText(current + "\n\n" + boiler if current else boiler)
+        self.issue.setFocus()
+        c = self.issue.textCursor(); c.movePosition(c.MoveOperation.End); self.issue.setTextCursor(c)
+
+    def _start(self):
+        if not self.brand_combo.isEnabled():
+            QMessageBox.warning(self, "No brand", "Create a Brand DNA first."); return
+        issue = self.issue.toPlainText().strip()
+        if not issue:
+            QMessageBox.warning(self, "Describe the issue", "Write what needs to be fixed."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self.go_btn.setEnabled(False); self.go_btn.setText("Fixing…")
+        self.pill.setText("Running")
+        self.pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+
+        self._thread = QThread()
+        self._worker = FixWorker(
+            str(self._image_path), self.brand_combo.currentText(), issue,
+            self.res.currentText(), self.asp.currentText(), self._default_language,
+            self.model.currentData() or core.DEFAULT_IMAGE_MODEL,
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._on_log)
+        self._worker.finished.connect(self._on_finished)
+        self._thread.start()
+
+    def _on_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        self.log.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _on_finished(self, out_path: str):
+        self._thread.quit(); self._thread.wait()
+        self.go_btn.setEnabled(True); self.go_btn.setText("Fix")
+        if out_path:
+            self.pill.setText("Done")
+            self.pill.setStyleSheet(
+                f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            )
+            self.fixed_path.emit(out_path)
+            QTimer.singleShot(600, self.accept)
+        else:
+            self.pill.setText("Failed")
+            self.pill.setStyleSheet(
+                f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
+                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            )
+
+
+class BatchFixWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    finished = Signal(int)
+
+    def __init__(self, image_paths, brand_name, issue, resolution, aspect, language, workers, image_model):
+        super().__init__()
+        self._args = (image_paths, brand_name, issue, resolution, aspect, language, workers)
+        self._image_model = image_model
+        self._cancel = False
+
+    def cancel(self): self._cancel = True
+
+    def run(self):
+        out = core.run_batch_fix(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            should_cancel=lambda: self._cancel,
+            image_model=self._image_model,
+        )
+        self.finished.emit(len(out))
+
+
+class BatchFixPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._worker: BatchFixWorker | None = None
+        self._thread: QThread | None = None
+        self._results_count = 0
+        self._build()
+        self.refresh_brands()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Fix creatives"); h1.setObjectName("H1")
+        sub = QLabel("Drop one or many images, describe the common issue, fix them in one batch.")
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        body = QHBoxLayout(); body.setSpacing(14)
+
+        form_card = Card()
+        form_card.setMinimumWidth(520)
+        card_lay = QVBoxLayout(form_card); card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        form_inner = QWidget()
+        form = QVBoxLayout(form_inner)
+        form.setContentsMargins(22, 20, 22, 20); form.setSpacing(16)
+        scroll.setWidget(form_inner)
+        card_lay.addWidget(scroll)
+
+        bl = QLabel("BRAND DNA"); bl.setObjectName("Muted")
+        form.addWidget(bl)
+        self.brand_combo = QComboBox()
+        form.addWidget(self.brand_combo)
+
+        il = QLabel("IMAGES TO FIX  ·  files only"); il.setObjectName("Muted")
+        form.addWidget(il)
+        self.drop = FolderDropZone()
+        form.addWidget(self.drop)
+
+        pl = QLabel("QUICK ISSUES"); pl.setObjectName("Muted")
+        form.addWidget(pl)
+        preset_row = QHBoxLayout(); preset_row.setSpacing(6)
+        for label in FIX_PRESETS:
+            btn = QPushButton(label); btn.setObjectName("ChipOff")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=None, lbl=label: self._apply_preset(lbl))
+            preset_row.addWidget(btn)
+        preset_row.addStretch()
+        preset_wrap = QWidget(); preset_wrap.setLayout(preset_row)
+        form.addWidget(preset_wrap)
+
+        tl = QLabel("WHAT NEEDS TO BE FIXED  ·  applied to all dropped images"); tl.setObjectName("Muted")
+        form.addWidget(tl)
+        self.issue = QTextEdit()
+        self.issue.setPlaceholderText(
+            "e.g., the sachet is too small and deformed on all of these ads — "
+            "scale it up and render it exactly like the brand's packaging."
+        )
+        self.issue.setMinimumHeight(130)
+        form.addWidget(self.issue)
+
+        params = QHBoxLayout(); params.setSpacing(14)
+        c1 = QVBoxLayout(); c1.setSpacing(6)
+        c1.addWidget(_field_label("Workers"))
+        self.workers = QSpinBox(); self.workers.setRange(1, 16); self.workers.setValue(8)
+        c1.addWidget(self.workers)
+        c2 = QVBoxLayout(); c2.setSpacing(6)
+        c2.addWidget(_field_label("Resolution"))
+        self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("1k")
+        c2.addWidget(self.res)
+        c3 = QVBoxLayout(); c3.setSpacing(6)
+        c3.addWidget(_field_label("Aspect"))
+        self.asp = QComboBox(); self.asp.addItems(core.ASPECTS); self.asp.setCurrentText("1:1")
+        c3.addWidget(self.asp)
+        c4 = QVBoxLayout(); c4.setSpacing(6)
+        c4.addWidget(_field_label("Language"))
+        self.lang = QComboBox(); self.lang.addItems(core.LANGUAGES); self.lang.setCurrentText("English")
+        c4.addWidget(self.lang)
+        c5 = QVBoxLayout(); c5.setSpacing(6)
+        c5.addWidget(_field_label("Model"))
+        self.model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.model.addItem(label, userData=slug)
+        self.model.setCurrentIndex(0)
+        c5.addWidget(self.model)
+        params.addLayout(c1, 1); params.addLayout(c2, 1); params.addLayout(c3, 1)
+        params.addLayout(c4, 1); params.addLayout(c5, 1)
+        form.addLayout(params)
+
+        self.cost_label = QLabel()
+        self.cost_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        form.addWidget(self.cost_label)
+
+        form.addSpacing(8)
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        self.go_btn = QPushButton("Fix all"); self.go_btn.setObjectName("PrimaryBtn")
+        self.go_btn.setCursor(Qt.PointingHandCursor); self.go_btn.clicked.connect(self._start)
+        self.cancel_btn = QPushButton("Cancel"); self.cancel_btn.setObjectName("GhostBtn")
+        self.cancel_btn.setCursor(Qt.PointingHandCursor); self.cancel_btn.clicked.connect(self._cancel)
+        self.cancel_btn.hide()
+        btn_row.addWidget(self.go_btn); btn_row.addWidget(self.cancel_btn); btn_row.addStretch()
+        form.addLayout(btn_row)
+        form.addStretch()
+
+        body.addWidget(form_card, 5)
+
+        right = QVBoxLayout(); right.setSpacing(14)
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lhead = QHBoxLayout()
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        lhead.addWidget(lh); lhead.addStretch()
+        self.live_pill = StatusPill("Idle", t.TEXT_MUTED)
+        lhead.addWidget(self.live_pill)
+        llay.addLayout(lhead)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(180)
+        llay.addWidget(self.log)
+        right.addWidget(log_card, 1)
+
+        res_card = Card()
+        rlay = QVBoxLayout(res_card); rlay.setContentsMargins(20, 18, 20, 18); rlay.setSpacing(10)
+        rhead = QHBoxLayout()
+        rh = QLabel("Fixed"); rh.setObjectName("H2")
+        rhead.addWidget(rh); rhead.addStretch()
+        rlay.addLayout(rhead)
+        scroll2 = QScrollArea(); scroll2.setWidgetResizable(True)
+        scroll2.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.grid_container = QWidget()
+        self.grid = QGridLayout(self.grid_container)
+        self.grid.setSpacing(12); self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll2.setWidget(self.grid_container)
+        scroll2.setMinimumHeight(240)
+        rlay.addWidget(scroll2)
+        right.addWidget(res_card, 2)
+
+        right_w = QWidget(); right_w.setLayout(right)
+        body.addWidget(right_w, 5)
+        root.addLayout(body, 1)
+
+        self.drop.paths_changed.connect(lambda _=None: self._update_cost())
+        self.res.currentTextChanged.connect(self._update_cost)
+        self.model.currentIndexChanged.connect(self._update_cost)
+        self._update_cost()
+
+    def refresh_brands(self):
+        current = self.brand_combo.currentText()
+        self.brand_combo.blockSignals(True)
+        self.brand_combo.clear()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())
+        if not names:
+            self.brand_combo.addItem("— No brands (open Brands first) —")
+            self.brand_combo.setEnabled(False)
+        else:
+            self.brand_combo.setEnabled(True)
+            self.brand_combo.addItems(names)
+            if current in names:
+                self.brand_combo.setCurrentText(current)
+        self.brand_combo.blockSignals(False)
+
+    def _apply_preset(self, label: str):
+        current = self.issue.toPlainText().strip()
+        boiler = FIX_PRESETS[label]
+        self.issue.setPlainText(current + "\n\n" + boiler if current else boiler)
+        self.issue.setFocus()
+        c = self.issue.textCursor(); c.movePosition(c.MoveOperation.End); self.issue.setTextCursor(c)
+
+    def _update_cost(self):
+        n = len(self.drop.paths())
+        provider = core.get_active_provider_name()
+        model = self.model.currentData() or core.DEFAULT_IMAGE_MODEL
+        price = core.cost_per_image(provider, model, self.res.currentText())
+        if n > 0:
+            self.cost_label.setText(
+                f"{n} image{'s' if n != 1 else ''}  ·  estimated ${n * price:.2f} (+ {n} LLM calls)"
+            )
+        else:
+            self.cost_label.setText("Drop images to estimate cost.")
+
+    def _start(self):
+        images = self.drop.paths()
+        if not images:
+            QMessageBox.warning(self, "No images", "Drop files to fix first."); return
+        if not self.brand_combo.isEnabled():
+            QMessageBox.warning(self, "No brand", "Create a Brand DNA first."); return
+        issue = self.issue.toPlainText().strip()
+        if not issue:
+            QMessageBox.warning(self, "Describe the issue", "Write what needs to be fixed."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self._clear_grid()
+        self.log.clear()
+        self._results_count = 0
+        self.go_btn.hide(); self.cancel_btn.show()
+        self.live_pill.setText("Running")
+        self.live_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+
+        self._thread = QThread()
+        self._worker = BatchFixWorker(
+            images, self.brand_combo.currentText(), issue,
+            self.res.currentText(), self.asp.currentText(),
+            self.lang.currentText(), self.workers.value(),
+            self.model.currentData() or core.DEFAULT_IMAGE_MODEL,
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._on_log)
+        self._worker.result.connect(self._on_result)
+        self._worker.finished.connect(self._on_finished)
+        self._thread.start()
+
+    def _cancel(self):
+        if self._worker: self._worker.cancel()
+        self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
+
+    def _on_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        self.log.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _on_result(self, r: dict):
+        if r.get("status") != "ok": return
+        self._results_count += 1
+        local = Path(r.get("path", ""))
+        if local.exists():
+            thumb = ThumbLabel(local, 160, 160, 10)
+            thumb.clicked.connect(lambda path=local: open_path(path))
+            thumb.setToolTip(r.get("source", ""))
+            row = (self._results_count - 1) // 4
+            col = (self._results_count - 1) % 4
+            self.grid.addWidget(thumb, row, col)
+
+    def _on_finished(self, count: int):
+        self._thread.quit(); self._thread.wait()
+        self.go_btn.show(); self.cancel_btn.hide()
+        self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
+        color = t.GREEN if count else t.RED
+        label = "Done" if count else "Failed"
+        self.live_pill.setText(label)
+        self.live_pill.setStyleSheet(
+            f"background: {color}22; color: {color}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+
+    def _clear_grid(self):
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+
 
 # ─── Adapt page ─────────────────────────────────────────────────────────────
 
@@ -1111,10 +2152,11 @@ class AdaptWorker(QObject):
     out_dir_signal = Signal(str)
     finished = Signal(str)
 
-    def __init__(self, ad_paths, brand_name, res, aspects, languages, workers, output_root):
+    def __init__(self, ad_paths, brand_name, res, aspects, languages, workers, output_root, image_model):
         super().__init__()
         self._args = (ad_paths, brand_name, res, aspects, languages, workers)
         self._output_root = output_root
+        self._image_model = image_model
         self._cancel = False
 
     def cancel(self):
@@ -1128,6 +2170,7 @@ class AdaptWorker(QObject):
             on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
             should_cancel=lambda: self._cancel,
             output_root=self._output_root,
+            image_model=self._image_model,
         )
         self.finished.emit(str(out) if out else "")
 
@@ -1160,6 +2203,7 @@ class AdaptPage(QWidget):
 
         # Left: form (scrollable)
         form_card = Card()
+        form_card.setMinimumWidth(520)
         card_lay = QVBoxLayout(form_card)
         card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
 
@@ -1217,7 +2261,14 @@ class AdaptPage(QWidget):
         col_r.addWidget(_field_label("Resolution"))
         self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("1k")
         col_r.addWidget(self.res)
-        params_row.addLayout(col_w, 1); params_row.addLayout(col_r, 1)
+        col_m = QVBoxLayout(); col_m.setSpacing(6)
+        col_m.addWidget(_field_label("Model"))
+        self.model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.model.addItem(label, userData=slug)
+        self.model.setCurrentIndex(0)
+        col_m.addWidget(self.model)
+        params_row.addLayout(col_w, 1); params_row.addLayout(col_r, 1); params_row.addLayout(col_m, 1)
         form.addLayout(params_row)
 
         asp_l = QLabel("OUTPUT FORMATS  ·  pick one or more"); asp_l.setObjectName("Muted")
@@ -1254,7 +2305,7 @@ class AdaptPage(QWidget):
         form.addLayout(btn_row)
         form.addStretch()
 
-        body.addWidget(form_card, 40)
+        body.addWidget(form_card, 5)
 
         # Right: log + results
         right = QVBoxLayout(); right.setSpacing(14)
@@ -1294,13 +2345,14 @@ class AdaptPage(QWidget):
         right.addWidget(res_card, 2)
 
         right_w = QWidget(); right_w.setLayout(right)
-        body.addWidget(right_w, 60)
+        body.addWidget(right_w, 5)
 
         root.addLayout(body, 1)
 
         self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
         self.drop.paths_changed.connect(lambda _=None: self._update_cost())
         self.res.currentTextChanged.connect(self._update_cost)
+        self.model.currentIndexChanged.connect(self._update_cost)
         self.asp.changed.connect(self._update_cost)
         self.lang.changed.connect(self._update_cost)
 
@@ -1349,7 +2401,9 @@ class AdaptPage(QWidget):
         n = len(self.drop.paths())
         m = max(1, len(self.asp.selected()))
         l = max(1, len(self.lang.selected()))
-        price = core.COST_PER_IMAGE.get(self.res.currentText(), 0.06)
+        provider = core.get_active_provider_name()
+        model = self.model.currentData() or core.DEFAULT_IMAGE_MODEL
+        price = core.cost_per_image(provider, model, self.res.currentText())
         if n > 0:
             total = n * m * l
             self.cost_label.setText(
@@ -1371,8 +2425,9 @@ class AdaptPage(QWidget):
         languages = self.lang.selected()
         if not languages:
             QMessageBox.warning(self, "No language", "Pick at least one language."); return
-        if not core.get_api_key():
-            QMessageBox.warning(self, "Missing key", "Set your MuAPI key in Settings first."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
 
         self._clear_grid()
         self.log.clear()
@@ -1391,6 +2446,7 @@ class AdaptPage(QWidget):
             ad_paths, self.brand_combo.currentText(),
             self.res.currentText(), aspects, languages, self.workers.value(),
             self.out_row.path(),
+            self.model.currentData() or core.DEFAULT_IMAGE_MODEL,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1423,12 +2479,30 @@ class AdaptPage(QWidget):
         if self._out_dir:
             local = self._out_dir / r.get("file", "")
             if local.exists():
-                thumb = ThumbLabel(local, 160, 160, 10)
+                thumb = ThumbLabel(local, 160, 160, 10, show_fix=True)
                 thumb.clicked.connect(lambda path=local: open_path(path))
+                meta = {
+                    "brand": self.brand_combo.currentText(),
+                    "aspect": r.get("aspect", "1:1"),
+                    "language": r.get("language", "English"),
+                }
+                thumb.fix_requested.connect(
+                    lambda path=local, m=meta: self._open_fix_dialog(path, m)
+                )
                 thumb.setToolTip(r.get("source", ""))
                 row = (self._results_count - 1) // 4
                 col = (self._results_count - 1) % 4
                 self.grid.addWidget(thumb, row, col)
+
+    def _open_fix_dialog(self, path: Path, meta: dict):
+        dlg = FixDialog(
+            self, Path(path),
+            default_brand=meta.get("brand", ""),
+            default_aspect=meta.get("aspect", "1:1"),
+            default_language=meta.get("language", "English"),
+        )
+        dlg.fixed_path.connect(lambda p: self._on_log("OK", f"Fix saved: {Path(p).name}"))
+        dlg.exec()
 
     def _on_finished(self, out_dir: str):
         self._thread.quit(); self._thread.wait()

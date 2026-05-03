@@ -1,13 +1,9 @@
-"""Programmatic wrapper around ad_variator.py for the GUI."""
+"""GUI-side glue: pipelines, persistence, brand library."""
 import json
 import os
 import re
 import shutil
 import sys
-import tempfile
-import threading
-import time
-from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -19,11 +15,31 @@ _here = Path(__file__).resolve().parent.parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
-import ad_variator as av
+import providers as pv
+from providers import (
+    CensorshipError,
+    IMAGE_MODEL_CHOICES,
+    IMAGE_MODEL_LABELS,
+    IMAGE_MODELS,
+    PROVIDER_LABELS,
+    PROVIDERS,
+    Provider,
+    cost_per_image,
+    get_active_provider,
+    get_active_provider_name,
+    get_provider,
+    is_censorship_error,
+)
+from providers.prompts import (
+    ADAPT_SYSTEM_PROMPT,
+    generate_prompts as _gen_prompts,
+    soften_prompt as _soften,
+)
 
 load_dotenv()
 
-COST_PER_IMAGE = {"1k": 0.06, "2k": 0.09, "4k": 0.12}
+# Pricing exposed for the cost-estimate widgets in the UI.
+COST_PER_IMAGE = pv.COST_PER_IMAGE
 RESOLUTIONS = ["1k", "2k", "4k"]
 ASPECTS = ["1:1", "4:5", "9:16", "16:9", "3:2", "2:3", "3:4", "4:3"]
 LANGUAGES = ["English", "French", "Spanish", "German", "Italian",
@@ -34,55 +50,10 @@ LANG_SLUG = {
 }
 AD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
+DEFAULT_IMAGE_MODEL = "nano_banana_2"
+
 BRANDS_FILE = _here / "brands.json"
 BRANDS_IMG_DIR = _here / "brands" / "images"
-
-ADAPT_SYSTEM_PROMPT = """You are an expert ad adaptation prompt engineer for NanoBanana 2 (image-to-image edit mode).
-
-You receive a reference ad image and a Brand DNA (text describing a brand and its product). You must output exactly ONE NanoBanana 2 prompt that recreates the reference ad's composition for the brand described in the Brand DNA.
-
-At generation time NanoBanana will receive:
-- Reference image 1: the source ad (composition / layout / framing / text zone placement to replicate)
-- Reference images 2, 3, 4, …: the brand's target product forms (pouch, stick, bottle, sachet, capsule, etc.). There may be one or several target product images.
-
-Rules:
-1. The first character of your output must be ^ (caret).
-2. Explicitly mention "reference image 1" (composition) and "reference images 2+" (target product forms). If you know the count of target product images, cite them precisely (e.g., "reference images 2 and 3").
-3. Keep the composition, framing, crop, product placement, and text zone placement IDENTICAL to reference image 1 — including the NUMBER of visible product forms (if the source shows a pouch + a stick, the output must show a pouch + a stick, not just one).
-4. Product mapping — CRITICAL:
-   - Every visible product in the generated ad MUST come from reference images 2+.
-   - If the source ad shows multiple product forms (e.g., pouch + stick packet), match each source form to the closest target form in reference images 2+ (pouch → target pouch, stick → target stick).
-   - If the source ad shows a form for which NO equivalent exists in reference images 2+, replace it with the primary target form (reference image 2) OR omit that secondary product entirely — NEVER invent, hallucinate, or keep the source product.
-   - Preserve each target product's exact shape, packaging, logo, and color as shown in its reference image.
-5. Apply the Brand DNA:
-   - Color palette: swap background / accent / gradients to the brand palette.
-   - Typography: swap any visible font style to the brand's typography.
-   - Copy / headline / CTA: rewrite literal copy (never placeholders) in the brand's tone of voice AND in the target language specified at runtime.
-   - Brand marks (wordmark, logo): include only if the DNA specifies them, otherwise none.
-6. Strict negatives (repeat them in the prompt): "No foreign brand names. No competitor logos. No secondary products, sachets, sticks, or packaging that are not present in reference images 2+. No invented packaging. No leftover source-ad product."
-7. End every prompt with: "Every product shown must exactly match one of reference images 2+. Do not render any product, logo, packaging, or brand mark that is not in reference images 2+."
-
-CONTENT SAFETY (critical — the image model's content filter will reject and return nothing if the prompt violates Google Generative AI policy):
-- Never use literal medical / clinical / therapeutic claims. Rewrite them into neutral lifestyle or wellness language BEFORE they appear in the output prompt.
-  - "hormonal imbalance" / "hormones changed" → "everyday balance" / "feeling off-sync"
-  - "clinically formulated" / "clinically proven" → "expertly crafted" / "thoughtfully made"
-  - "cure / treat / heal / diagnose" → "support / help / feel / enjoy"
-  - Disease or disorder names (migraine, depression, anxiety, menopause, PMS, insomnia, acne, diabetes, etc.) → generic moods ("tired", "foggy", "restless", "off-balance", "low energy").
-- No before/after body transformations. Replace with mood or lifestyle shifts ("tired → bright", "foggy → focused"), NOT physical changes.
-- No weight-loss language, no specific body measurements, no body-part focus beyond what the setting requires, no anatomy close-ups.
-- No nudity, no suggestive posing, no implied adult content.
-- No names of real public figures, athletes, celebrities, politicians.
-- No political, religious, violent, weapon, or drug imagery or language.
-- If the reference ad's copy contains any of the above, REWRITE it into neutral lifestyle/wellness copy that preserves the emotional beat but strips the medical / anatomical / claim framing.
-- Scenes should read as lifestyle photography, not clinical or pharmaceutical documentation.
-
-CLOTHING & SETTING SAFETY (applies to any human figure in the scene):
-- Describe every figure as fully dressed in modest, everyday clothing. Default attire: long-sleeve top (shirt, sweater, turtleneck, blouse) + full-length trousers / jeans / midi skirt with opaque tights. Closed shoes.
-- If the reference ad shows pajamas, sleepwear, nightgown, lingerie, underwear, tank top, crop top, swimwear, bikini, bare shoulders, bare chest, cleavage, exposed midriff, short shorts, or any revealing outfit → REPLACE it in the output prompt with modest everyday clothing (e.g., "woman in a cream long-sleeve knit sweater and straight-leg jeans").
-- No intimate body contact, no embraces on a bed, no suggestive poses. Replace intimate embraces with casual interactions: sitting next to each other on a sofa, standing together in a kitchen, walking side by side.
-- Prefer neutral public-ish settings: living room sofa, kitchen, office, studio, park, street. If the reference ad uses a bedroom, bathroom, or bed scene → relocate to a living room sofa, kitchen counter, or studio with neutral furniture. Do NOT describe beds, bedsheets, pillows, bedroom lamps, headboards, or nightstands.
-
-Output: exactly ONE prompt, nothing else. No commentary, no numbering, no headers, no explanations."""
 
 
 def _safe_name(s: str) -> str:
@@ -90,122 +61,68 @@ def _safe_name(s: str) -> str:
     return s.strip("_").lower() or "brand"
 
 
-MUAPI_UPLOAD_LIMIT = 10 * 1024 * 1024  # 10 MB
+# ─── Provider / API key persistence ─────────────────────────────────────────
+
+_PROVIDER_ENV_KEYS = {"muapi": "MUAPI_KEY", "kie": "KIE_API_KEY"}
 
 
-def _prepare_upload(path: Path, tmpdir: Path) -> Path:
-    """Return `path` if under the MuAPI size limit, else a compressed JPEG copy."""
-    try:
-        sz = path.stat().st_size
-    except FileNotFoundError:
-        return path
-    if sz <= MUAPI_UPLOAD_LIMIT:
-        return path
-    try:
-        from PIL import Image
-    except ImportError:
-        return path
-    try:
-        im = Image.open(path)
-    except Exception:
-        return path
-    if im.mode not in ("RGB", "L"):
-        im = im.convert("RGB")
-
-    tmp = tmpdir / f"{path.stem}_{threading.get_ident()}.jpg"
-    max_dim = 2400
-    quality = 85
-    for _ in range(6):
-        w, h = im.size
-        if max(w, h) > max_dim:
-            scale = max_dim / max(w, h)
-            im_s = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        else:
-            im_s = im
-        im_s.save(tmp, "JPEG", quality=quality, optimize=True)
-        if tmp.stat().st_size <= MUAPI_UPLOAD_LIMIT:
-            return tmp
-        quality = max(40, quality - 15)
-        max_dim = max(1200, int(max_dim * 0.85))
-    return tmp
+def get_provider_key(provider: str) -> str:
+    env_key = _PROVIDER_ENV_KEYS.get(provider)
+    if not env_key:
+        return ""
+    return (os.getenv(env_key) or "").strip()
 
 
-@contextmanager
-def _patched_av(on_log: Callable[[str, str], None]):
-    tmpdir = tempfile.TemporaryDirectory(prefix="advar_")
-    tmp_path = Path(tmpdir.name)
-    orig_log = av.log
-    orig_upload = av.upload_image
-    orig_call = av.call_prediction
-    av.log = lambda lvl, msg: on_log(lvl, msg)
-
-    def _safe_call(model_id, payload, label):
-        last_err = None
-        for attempt in range(3):
-            try:
-                return orig_call(model_id, payload, label)
-            except Exception as e:
-                last_err = e
-                msg = str(e).lower()
-                transient = any(s in msg for s in (
-                    "nameresolutionerror", "max retries", "connection aborted",
-                    "connection reset", "timed out", "temporary failure", "remote end closed",
-                ))
-                if transient and attempt < 2:
-                    av.log("WARN", f"{label} network error, retry {attempt+1}/3 in {2**attempt}s")
-                    time.sleep(2 ** attempt)
-                    continue
-                raise
-        raise last_err
-
-    def _safe_upload(p):
-        p = Path(p)
-        prepped = _prepare_upload(p, tmp_path)
-        if prepped != p:
-            av.log("INFO",
-                   f"Compressed {p.name} ({p.stat().st_size/1e6:.1f}MB → "
-                   f"{prepped.stat().st_size/1e6:.1f}MB) to fit 10MB limit")
-        last_err = None
-        for attempt in range(3):
-            try:
-                return orig_upload(prepped)
-            except Exception as e:
-                last_err = e
-                msg = str(e).lower()
-                transient = any(s in msg for s in (
-                    "nameresolutionerror", "max retries", "connection aborted",
-                    "connection reset", "timed out", "temporary failure", "remote end closed",
-                ))
-                if transient and attempt < 2:
-                    av.log("WARN", f"Upload network error on {p.name}, retry {attempt+1}/3 in {2**attempt}s")
-                    time.sleep(2 ** attempt)
-                    continue
-                raise
-        raise last_err  # unreachable
-
-    av.upload_image = _safe_upload
-    av.call_prediction = _safe_call
-    try:
-        yield
-    finally:
-        av.log = orig_log
-        av.upload_image = orig_upload
-        av.call_prediction = orig_call
-        try: tmpdir.cleanup()
-        except Exception: pass
-
-
-def save_api_key(key: str):
+def save_provider_key(provider: str, key: str) -> None:
+    env_key = _PROVIDER_ENV_KEYS.get(provider)
+    if not env_key:
+        raise ValueError(f"Unknown provider: {provider!r}")
     env_path = _here / ".env"
     env_path.touch(exist_ok=True)
-    set_key(str(env_path), "MUAPI_KEY", key.strip())
-    os.environ["MUAPI_KEY"] = key.strip()
-    av.MUAPI_KEY = key.strip()
+    set_key(str(env_path), env_key, key.strip())
+    os.environ[env_key] = key.strip()
+
+
+def save_active_provider(name: str) -> None:
+    if name not in PROVIDERS:
+        raise ValueError(f"Unknown provider: {name!r}")
+    env_path = _here / ".env"
+    env_path.touch(exist_ok=True)
+    set_key(str(env_path), "ACTIVE_PROVIDER", name)
+    os.environ["ACTIVE_PROVIDER"] = name
+
+
+def is_active_provider_configured() -> bool:
+    return bool(get_provider_key(get_active_provider_name()))
+
+
+# Anthropic key for the Brand DNA Generator (separate from the active image provider).
+
+def get_anthropic_key() -> str:
+    return (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+
+
+def save_anthropic_key(key: str) -> None:
+    env_path = _here / ".env"
+    env_path.touch(exist_ok=True)
+    set_key(str(env_path), "ANTHROPIC_API_KEY", key.strip())
+    os.environ["ANTHROPIC_API_KEY"] = key.strip()
+
+
+def is_anthropic_configured() -> bool:
+    return bool(get_anthropic_key())
+
+
+# Back-compat shims — call sites in pages.py still use these for the moment.
+def save_api_key(key: str) -> None:
+    save_provider_key("muapi", key)
 
 
 def get_api_key() -> str:
-    return os.getenv("MUAPI_KEY") or av.MUAPI_KEY or ""
+    return get_provider_key("muapi")
 
+
+# ─── Output dir ─────────────────────────────────────────────────────────────
 
 DEFAULT_OUTPUT_DIR = _here / "outputs"
 
@@ -215,17 +132,28 @@ def get_output_dir() -> Path:
     return Path(v).expanduser() if v else DEFAULT_OUTPUT_DIR
 
 
-def save_output_dir(path: str):
+def save_output_dir(path: str) -> None:
     env_path = _here / ".env"
     env_path.touch(exist_ok=True)
     set_key(str(env_path), "OUTPUT_DIR", path.strip())
     os.environ["OUTPUT_DIR"] = path.strip()
 
 
+# ─── Cost helpers ───────────────────────────────────────────────────────────
+
 def cost_for_run(run: dict) -> float:
-    res = (run.get("params") or {}).get("resolution", "1k")
+    params = run.get("params") or {}
+    res = params.get("resolution", "1k")
+    provider = params.get("provider", "muapi")
+    image_model = params.get("image_model", DEFAULT_IMAGE_MODEL)
+    if image_model.startswith("nano-banana"):
+        image_model = "nano_banana_2"
+    elif image_model.startswith("gpt-image"):
+        image_model = "gpt_image_2"
+    elif image_model not in IMAGE_MODELS:
+        image_model = DEFAULT_IMAGE_MODEL
     done = sum(1 for r in run.get("results", []) if r.get("status") == "ok")
-    return COST_PER_IMAGE.get(res, 0.06) * done
+    return cost_per_image(provider, image_model, res) * done
 
 
 def list_runs(root: Optional[Path] = None) -> list[dict]:
@@ -310,7 +238,6 @@ def save_brand(
 
     brands = load_brands()
     if original_name and original_name != name and original_name in brands:
-        # clean old brand's images not reused
         old = brands[original_name]
         for old_p in old.get("product_images", []):
             try:
@@ -321,7 +248,6 @@ def save_brand(
                 pass
         del brands[original_name]
     else:
-        # clean this brand's images that are no longer referenced
         for old_p in brands.get(name, {}).get("product_images", []):
             try:
                 p = Path(old_p)
@@ -376,6 +302,8 @@ def _aspect_slug(a: str) -> str:
     return a.replace(":", "x").replace("/", "x")
 
 
+# ─── Generate pipeline ──────────────────────────────────────────────────────
+
 def run_generation(
     image_path: str,
     n: int,
@@ -388,16 +316,23 @@ def run_generation(
     on_out_dir: Callable[[Path], None] = lambda _p: None,
     should_cancel: Callable[[], bool] = lambda: False,
     output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
 ) -> Optional[Path]:
-    if not av.MUAPI_KEY:
-        av.MUAPI_KEY = get_api_key()
-    if not av.MUAPI_KEY:
-        on_log("ERR", "MUAPI_KEY not set. Open Settings and add your key.")
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
         return None
 
     ref_path = Path(image_path).expanduser().resolve()
     if not ref_path.exists():
         on_log("ERR", f"File not found: {ref_path}")
+        return None
+
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
         return None
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -406,132 +341,126 @@ def run_generation(
     out_dir.mkdir(parents=True, exist_ok=True)
     on_out_dir(out_dir)
     on_log("INFO", f"Output: {out_dir}")
+    on_log("INFO", f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]}")
 
     aspects = aspects or ["1:1"]
     languages = languages or ["English"]
-    variant = len(aspects) > 1 or len(languages) > 1
 
-    with _patched_av(on_log):
-        try:
-            ref_url = av.upload_image(ref_path)
+    try:
+        ref_url = provider.upload_image(ref_path)
+        if should_cancel():
+            return out_dir
+
+        prompts_by_lang: dict[str, list[str]] = {}
+        for lang in languages:
             if should_cancel():
                 return out_dir
+            prompts_by_lang[lang] = _gen_prompts(provider, ref_url, n, language=lang)
 
-            prompts_by_lang: dict[str, list[str]] = {}
-            for lang in languages:
-                if should_cancel():
-                    return out_dir
-                prompts_by_lang[lang] = av.generate_prompts(ref_url, n, language=lang)
-
-            (out_dir / "prompts.txt").write_text(
-                "\n\n".join(
-                    f"=== {lang} · Variation {i:02d} ===\n{p}"
-                    for lang, prompts in prompts_by_lang.items()
-                    for i, p in enumerate(prompts, 1)
-                )
-            )
-
-            total = sum(len(p) for p in prompts_by_lang.values()) * len(aspects)
-            on_log(
-                "INFO",
-                f"Generating {total} images "
-                f"({n} variations × {len(languages)} lang × {len(aspects)} aspects, {workers} workers)..."
-            )
-
-            def one(idx, prompt, aspect, lang):
-                bits = []
-                if len(languages) > 1: bits.append(LANG_SLUG.get(lang, lang[:2].lower()))
-                if len(aspects) > 1: bits.append(_aspect_slug(aspect))
-                suffix = ("_" + "_".join(bits)) if bits else ""
-                file_name = f"variation_{idx:02d}{suffix}.png"
-                def _payload(p):
-                    return {
-                        "prompt": p, "images_list": [ref_url],
-                        "resolution": resolution, "aspect_ratio": aspect,
-                        "output_format": "png",
-                    }
-                label = f"var_{idx:02d}{suffix}"
-                av.log("INFO", f"[{label}] generating ({lang} · {aspect})...")
-                softened = False
-                try:
-                    try:
-                        out = av.call_prediction(av.IMAGE_MODEL, _payload(prompt), label)
-                    except Exception as e:
-                        if _is_censorship_error(e):
-                            av.log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
-                            try:
-                                prompt = _soften_prompt(prompt, ref_url)
-                                softened = True
-                                out = av.call_prediction(av.IMAGE_MODEL, _payload(prompt), label + "-retry")
-                            except Exception as e2:
-                                raise e2 from e
-                        else:
-                            raise
-                    img_url = av._first_url(out)
-                    if not img_url:
-                        raise RuntimeError(f"No image URL in output: {out}")
-                    dest = out_dir / file_name
-                    av._download(img_url, dest)
-                    av.log("OK", f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""))
-                    return {"index": idx, "aspect": aspect, "language": lang, "status": "ok",
-                            "prompt": prompt, "image_url": img_url, "file": dest.name,
-                            "softened": softened}
-                except Exception as e:
-                    if _is_censorship_error(e):
-                        av.log("ERR", f"[{label}] blocked by content filter (after retry). Try softer reference or brand copy.")
-                    else:
-                        av.log("ERR", f"[{label}] {e}")
-                    return {"index": idx, "aspect": aspect, "language": lang, "status": "error",
-                            "prompt": prompt, "error": str(e)}
-
-            jobs = [
-                (i + 1, p, a, lang)
+        (out_dir / "prompts.txt").write_text(
+            "\n\n".join(
+                f"=== {lang} · Variation {i:02d} ===\n{p}"
                 for lang, prompts in prompts_by_lang.items()
-                for i, p in enumerate(prompts)
-                for a in aspects
-            ]
-            results = []
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(one, *j) for j in jobs]
-                for fut in as_completed(futures):
-                    if should_cancel():
-                        break
-                    r = fut.result()
-                    results.append(r)
-                    on_result(r)
+                for i, p in enumerate(prompts, 1)
+            )
+        )
 
-            results.sort(key=lambda r: (r.get("language", ""), r["index"], r.get("aspect", "")))
-            report = {
-                "type": "generate",
-                "timestamp": ts,
-                "reference": str(ref_path),
-                "reference_url": ref_url,
-                "params": {
-                    "iterations": n,
-                    "resolution": resolution,
-                    "aspects": aspects,
-                    "languages": languages,
-                    "aspect_ratio": aspects[0] if len(aspects) == 1 else ",".join(aspects),
-                    "language": languages[0] if len(languages) == 1 else ",".join(languages),
-                    "workers": workers,
-                    "llm_model": av.LLM_MODEL,
-                    "image_model": av.IMAGE_MODEL,
-                },
-                "results": results,
-            }
-            (out_dir / "report.json").write_text(json.dumps(report, indent=2))
-            ok = sum(1 for r in results if r.get("status") == "ok")
-            on_log("OK", f"Done: {ok}/{len(results)} succeeded.")
-            return out_dir
-        except Exception as e:
-            on_log("ERR", str(e))
-            return out_dir
+        total = sum(len(p) for p in prompts_by_lang.values()) * len(aspects)
+        on_log(
+            "INFO",
+            f"Generating {total} images "
+            f"({n} variations × {len(languages)} lang × {len(aspects)} aspects, {workers} workers)..."
+        )
+
+        def one(idx, prompt, aspect, lang):
+            bits = []
+            if len(languages) > 1: bits.append(LANG_SLUG.get(lang, lang[:2].lower()))
+            if len(aspects) > 1: bits.append(_aspect_slug(aspect))
+            suffix = ("_" + "_".join(bits)) if bits else ""
+            file_name = f"variation_{idx:02d}{suffix}.png"
+            label = f"var_{idx:02d}{suffix}"
+            provider._log("INFO", f"[{label}] generating ({lang} · {aspect})...")
+            softened = False
+            try:
+                try:
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt, image_urls=[ref_url],
+                        resolution=resolution, aspect_ratio=aspect, label=label,
+                    )
+                except CensorshipError:
+                    provider._log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
+                    prompt = _soften(provider, prompt, ref_url)
+                    softened = True
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt, image_urls=[ref_url],
+                        resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+                    )
+                dest = out_dir / file_name
+                provider.download(img_url, dest)
+                provider._log(
+                    "OK",
+                    f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+                )
+                return {"index": idx, "aspect": aspect, "language": lang, "status": "ok",
+                        "prompt": prompt, "image_url": img_url, "file": dest.name,
+                        "softened": softened}
+            except Exception as e:
+                if is_censorship_error(e):
+                    provider._log("ERR", f"[{label}] blocked by content filter (after retry). Try softer reference or brand copy.")
+                else:
+                    provider._log("ERR", f"[{label}] {e}")
+                return {"index": idx, "aspect": aspect, "language": lang, "status": "error",
+                        "prompt": prompt, "error": str(e)}
+
+        jobs = [
+            (i + 1, p, a, lang)
+            for lang, prompts in prompts_by_lang.items()
+            for i, p in enumerate(prompts)
+            for a in aspects
+        ]
+        results = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(one, *j) for j in jobs]
+            for fut in as_completed(futures):
+                if should_cancel():
+                    break
+                r = fut.result()
+                results.append(r)
+                on_result(r)
+
+        results.sort(key=lambda r: (r.get("language", ""), r["index"], r.get("aspect", "")))
+        report = {
+            "type": "generate",
+            "timestamp": ts,
+            "reference": str(ref_path),
+            "reference_url": ref_url,
+            "params": {
+                "iterations": n,
+                "resolution": resolution,
+                "aspects": aspects,
+                "languages": languages,
+                "aspect_ratio": aspects[0] if len(aspects) == 1 else ",".join(aspects),
+                "language": languages[0] if len(languages) == 1 else ",".join(languages),
+                "workers": workers,
+                "provider": provider.name,
+                "image_model": image_model,
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": results,
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        on_log("OK", f"Done: {ok}/{len(results)} succeeded.")
+        return out_dir
+    except Exception as e:
+        on_log("ERR", str(e))
+        return out_dir
 
 
 # ─── Adapt pipeline ─────────────────────────────────────────────────────────
 
-def _generate_adapt_prompt(ad_url: str, brand_dna: str, product_count: int = 1,
-                            language: str = "English") -> str:
+def _generate_adapt_prompt(provider: Provider, ad_url: str, brand_dna: str,
+                           product_count: int = 1, language: str = "English") -> str:
     if product_count <= 1:
         forms_note = "The brand has 1 target product form (reference image 2)."
     else:
@@ -541,8 +470,8 @@ def _generate_adapt_prompt(ad_url: str, brand_dna: str, product_count: int = 1,
             f"If the source ad shows several product forms, map each to the closest target form; "
             f"if a source form has no target equivalent, use reference image 2 or omit the secondary product."
         )
-    payload = {
-        "prompt": (
+    text = provider.call_llm(
+        prompt=(
             f"Brand DNA:\n{brand_dna}\n\n"
             f"{forms_note}\n\n"
             f"Target language for every visible text, headline, body copy, tagline and CTA "
@@ -550,12 +479,12 @@ def _generate_adapt_prompt(ad_url: str, brand_dna: str, product_count: int = 1,
             "Reference ad is attached. Generate exactly ONE NanoBanana 2 prompt "
             "to recreate its composition for this brand, following all rules."
         ),
-        "image_url": ad_url,
-        "system_prompt": ADAPT_SYSTEM_PROMPT,
-    }
-    out = av.call_prediction(av.LLM_MODEL, payload, f"LLM-adapt-{LANG_SLUG.get(language, language[:2].lower())}")
-    text = av._coerce_text(out)
-    prompts = av._parse_prompts(text)
+        image_url=ad_url,
+        system_prompt=ADAPT_SYSTEM_PROMPT,
+        label=f"LLM-adapt-{LANG_SLUG.get(language, language[:2].lower())}",
+    )
+    from providers.parsing import parse_prompts as _parse
+    prompts = _parse(text)
     if prompts:
         return prompts[0]
     text = text.strip()
@@ -564,55 +493,8 @@ def _generate_adapt_prompt(ad_url: str, brand_dna: str, product_count: int = 1,
     return text
 
 
-def _is_censorship_error(e: Exception) -> bool:
-    m = str(e).lower()
-    return any(s in m for s in (
-        "prohibited use", "content policy", "filtered out", "violated",
-        "generative ai policy", "safety", "filtered because",
-    ))
-
-
-_SOFTENER_SYSTEM = """You rewrite image-generation prompts to pass strict Google Generative AI content filters.
-
-Your first attempt triggered the filter. Rewrite the prompt so it passes, by applying ALL of the following transformations:
-
-1. Strip all medical / clinical / therapeutic / hormonal / disease / anatomical / weight-loss / before-after-body language. Replace with neutral lifestyle or wellness wording.
-
-2. DRESS every human figure in modest, fully covered everyday clothing. REPLACE — aggressively:
-   - Pajamas / sleepwear / nightgown / lingerie / underwear → long-sleeve button-up shirt + full-length trousers, OR a long-sleeve knit sweater + straight-leg jeans. Neutral colors (beige, cream, grey, soft blue).
-   - Tank top / crop top / low necklines / bikini / swimwear / tube top → crewneck or turtleneck long-sleeve top, no skin exposure.
-   - Bare shoulders / bare chest / cleavage / exposed midriff / bare legs → fully covered: long sleeves, high neckline, long pants or opaque tights.
-   - Any hint of nudity, implied nudity, or revealing outfit → fully dressed in everyday casual or business casual. Closed shoes.
-
-3. RELOCATE intimate / private settings to neutral public-ish ones:
-   - Bedroom / bed / bedsheets / pillows / headboard / nightstand → living room sofa, kitchen counter, office desk, outdoor park bench, studio with neutral backdrop.
-   - Bathroom / bath / shower / mirror-in-bathrobe → kitchen sink, vanity counter with a mug, neutral studio.
-
-4. DE-INTIMIZE poses and interactions:
-   - Intimate embrace / hug on bed / romantic pose → sitting side by side on a sofa, standing casually in a kitchen, walking in a park, smiling toward camera from a distance.
-   - Suggestive expressions / smoldering looks → natural warm smile, everyday calm expression.
-
-5. Keep unchanged: composition structure, product description, brand palette, typography direction, copy language, text zone placement, brand intent, and the list of product references (reference image 1, reference images 2+).
-
-6. Keep the ^ first character.
-
-7. Output ONLY the rewritten prompt. No explanations, no headers, no commentary."""
-
-
-def _soften_prompt(prompt: str, ad_url: str) -> str:
-    payload = {
-        "prompt": "Rewrite this NanoBanana prompt to pass content filters:\n\n" + prompt,
-        "image_url": ad_url,
-        "system_prompt": _SOFTENER_SYSTEM,
-    }
-    out = av.call_prediction(av.LLM_MODEL, payload, "LLM-soften")
-    text = av._coerce_text(out).strip()
-    if not text.startswith("^"):
-        text = "^" + text.lstrip("^").lstrip()
-    return text
-
-
-def _adapt_image(idx: int, prompt: str, ad_url: str, product_urls: list[str],
+def _adapt_image(provider: Provider, image_model: str,
+                 idx: int, prompt: str, ad_url: str, product_urls: list[str],
                  resolution: str, aspect: str, language: str, out_dir: Path,
                  source_name: str, multi_aspect: bool, multi_lang: bool) -> dict:
     bits = []
@@ -620,49 +502,40 @@ def _adapt_image(idx: int, prompt: str, ad_url: str, product_urls: list[str],
     if multi_aspect: bits.append(_aspect_slug(aspect))
     suffix = ("_" + "_".join(bits)) if bits else ""
     label = f"adapt_{idx:02d}{suffix}"
-    av.log("INFO", f"[{label}] generating ({source_name} · {language} · {aspect})...")
+    provider._log("INFO", f"[{label}] generating ({source_name} · {language} · {aspect})...")
 
-    def _payload(p):
-        return {
-            "prompt": p,
-            "images_list": [ad_url, *product_urls],
-            "resolution": resolution,
-            "aspect_ratio": aspect,
-            "output_format": "png",
-        }
-
-    attempts = [("initial", prompt)]
+    inputs = [ad_url, *product_urls]
+    softened = False
     try:
         try:
-            out = av.call_prediction(av.IMAGE_MODEL, _payload(prompt), label)
-        except Exception as e:
-            if _is_censorship_error(e):
-                av.log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
-                try:
-                    softer = _soften_prompt(prompt, ad_url)
-                    attempts.append(("softened", softer))
-                    out = av.call_prediction(av.IMAGE_MODEL, _payload(softer), label + "-retry")
-                    prompt = softer
-                except Exception as e2:
-                    raise e2 from e
-            else:
-                raise
-        img_url = av._first_url(out)
-        if not img_url:
-            raise RuntimeError(f"No image URL in output: {out}")
+            img_url = provider.call_image(
+                model=image_model, prompt=prompt, image_urls=inputs,
+                resolution=resolution, aspect_ratio=aspect, label=label,
+            )
+        except CensorshipError:
+            provider._log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
+            prompt = _soften(provider, prompt, ad_url)
+            softened = True
+            img_url = provider.call_image(
+                model=image_model, prompt=prompt, image_urls=inputs,
+                resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+            )
         dest = out_dir / f"adapt_{idx:02d}{suffix}.png"
-        av._download(img_url, dest)
-        av.log("OK", f"[{label}] saved {dest.name}" + (" (after softening)" if len(attempts) > 1 else ""))
+        provider.download(img_url, dest)
+        provider._log(
+            "OK",
+            f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+        )
         return {
             "index": idx, "aspect": aspect, "language": language, "status": "ok",
             "prompt": prompt, "image_url": img_url, "file": dest.name,
-            "source": source_name, "softened": len(attempts) > 1,
+            "source": source_name, "softened": softened,
         }
     except Exception as e:
-        if _is_censorship_error(e):
-            av.log("ERR", f"[{label}] blocked by content filter (after retry). Simplify brand DNA copy or remove medical claims.")
+        if is_censorship_error(e):
+            provider._log("ERR", f"[{label}] blocked by content filter (after retry). Simplify brand DNA copy or remove medical claims.")
         else:
-            av.log("ERR", f"[{label}] {e}")
+            provider._log("ERR", f"[{label}] {e}")
         return {
             "index": idx, "aspect": aspect, "language": language, "status": "error",
             "prompt": prompt, "error": str(e), "source": source_name,
@@ -681,11 +554,18 @@ def run_adapt(
     on_out_dir: Callable[[Path], None] = lambda _p: None,
     should_cancel: Callable[[], bool] = lambda: False,
     output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
 ) -> Optional[Path]:
-    if not av.MUAPI_KEY:
-        av.MUAPI_KEY = get_api_key()
-    if not av.MUAPI_KEY:
-        on_log("ERR", "MUAPI_KEY not set. Open Settings and add your key.")
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
         return None
 
     brands = load_brands()
@@ -720,127 +600,402 @@ def run_adapt(
     out_dir.mkdir(parents=True, exist_ok=True)
     on_out_dir(out_dir)
     on_log("INFO", f"Output: {out_dir}")
+    on_log("INFO", f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]}")
     on_log(
         "INFO",
         f"Adapting {len(ads)} ads × {len(languages)} lang × {len(aspects)} aspect"
         f"{'s' if multi_aspect else ''} for '{brand_name}' ({workers} workers)",
     )
 
-    with _patched_av(on_log):
-        try:
-            on_log("INFO", f"Uploading {len(product_paths)} target product image(s)...")
-            product_urls: list[str] = []
-            for pp in product_paths:
-                product_urls.append(av.upload_image(pp))
+    try:
+        on_log("INFO", f"Uploading {len(product_paths)} target product image(s)...")
+        product_urls: list[str] = []
+        for pp in product_paths:
+            product_urls.append(provider.upload_image(pp))
 
-            # Stage 1: upload each ad once.
-            ad_urls: dict[int, str] = {}
-            def upload_one(pair):
-                idx, ad = pair
-                if should_cancel(): return idx, None
-                try:
-                    return idx, av.upload_image(ad)
-                except Exception as e:
-                    av.log("ERR", f"[upload_{idx:02d}] {e}")
-                    return idx, None
+        # Stage 1: upload each ad once.
+        ad_urls: dict[int, str] = {}
+        def upload_one(pair):
+            idx, ad = pair
+            if should_cancel(): return idx, None
+            try:
+                return idx, provider.upload_image(ad)
+            except Exception as e:
+                provider._log("ERR", f"[upload_{idx:02d}] {e}")
+                return idx, None
 
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for fut in as_completed([pool.submit(upload_one, (i + 1, ad)) for i, ad in enumerate(ads)]):
-                    idx, url = fut.result()
-                    if url: ad_urls[idx] = url
-            if should_cancel():
-                on_log("WARN", "Cancelled during upload.")
-                return out_dir
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(upload_one, (i + 1, ad)) for i, ad in enumerate(ads)]):
+                idx, url = fut.result()
+                if url: ad_urls[idx] = url
+        if should_cancel():
+            on_log("WARN", "Cancelled during upload.")
+            return out_dir
 
-            # Stage 2: generate 1 prompt per (ad, language).
-            prompts: dict[tuple[int, str], str] = {}
-            def gen_prompt(triple):
-                idx, ad_url, lang = triple
-                if should_cancel(): return idx, lang, None
-                try:
-                    return idx, lang, _generate_adapt_prompt(
-                        ad_url, brand["dna"],
-                        product_count=len(product_urls), language=lang
-                    )
-                except Exception as e:
-                    av.log("ERR", f"[prompt_{idx:02d}_{LANG_SLUG.get(lang, lang[:2].lower())}] {e}")
-                    return idx, lang, None
-
-            triples = [(i, ad_urls[i], lang) for i in ad_urls for lang in languages]
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for fut in as_completed([pool.submit(gen_prompt, tr) for tr in triples]):
-                    idx, lang, prompt = fut.result()
-                    if prompt: prompts[(idx, lang)] = prompt
-            if should_cancel():
-                on_log("WARN", "Cancelled during prompt generation.")
-                return out_dir
-
-            # Stage 3: generate 1 image per (ad, language, aspect).
-            jobs = []
-            source_by_idx = {i + 1: ad.name for i, ad in enumerate(ads)}
-            for (idx, lang), prompt in prompts.items():
-                for aspect in aspects:
-                    jobs.append((idx, prompt, lang, aspect, source_by_idx[idx]))
-
-            results = []
-            def gen_img(job):
-                idx, prompt, lang, aspect, source_name = job
-                if should_cancel():
-                    return {"index": idx, "aspect": aspect, "language": lang,
-                            "status": "cancelled", "source": source_name, "prompt": prompt}
-                return _adapt_image(idx, prompt, ad_urls[idx], product_urls,
-                                    resolution, aspect, lang, out_dir, source_name,
-                                    multi_aspect, multi_lang)
-
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for fut in as_completed([pool.submit(gen_img, j) for j in jobs]):
-                    r = fut.result()
-                    results.append(r)
-                    on_result(r)
-
-            # Mark ads/langs that never produced prompts
-            for i, ad in enumerate(ads, 1):
-                for lang in languages:
-                    if (i, lang) not in prompts:
-                        for aspect in aspects:
-                            results.append({
-                                "index": i, "aspect": aspect, "language": lang,
-                                "status": "error", "source": ad.name, "prompt": "",
-                                "error": "prep failed (upload or LLM)",
-                            })
-
-            results.sort(key=lambda r: (r["index"], r.get("language", ""), r.get("aspect", "")))
-            (out_dir / "prompts.txt").write_text(
-                "\n\n".join(
-                    f"=== {source_by_idx[idx]} · {lang} ===\n{p}"
-                    for (idx, lang), p in sorted(prompts.items())
+        # Stage 2: generate 1 prompt per (ad, language).
+        prompts: dict[tuple[int, str], str] = {}
+        def gen_prompt(triple):
+            idx, ad_url, lang = triple
+            if should_cancel(): return idx, lang, None
+            try:
+                return idx, lang, _generate_adapt_prompt(
+                    provider, ad_url, brand["dna"],
+                    product_count=len(product_urls), language=lang
                 )
-            )
+            except Exception as e:
+                provider._log("ERR", f"[prompt_{idx:02d}_{LANG_SLUG.get(lang, lang[:2].lower())}] {e}")
+                return idx, lang, None
 
-            report = {
-                "type": "adapt",
-                "timestamp": ts,
-                "source_paths": [str(a) for a in ads],
-                "brand": brand_name,
-                "brand_dna": brand["dna"],
-                "product_images": [str(p) for p in product_paths],
-                "params": {
-                    "iterations": len(ads),
-                    "resolution": resolution,
-                    "aspects": aspects,
-                    "languages": languages,
-                    "aspect_ratio": aspects[0] if len(aspects) == 1 else ",".join(aspects),
-                    "language": languages[0] if len(languages) == 1 else ",".join(languages),
-                    "workers": workers,
-                    "llm_model": av.LLM_MODEL,
-                    "image_model": av.IMAGE_MODEL,
-                },
-                "results": results,
-            }
-            (out_dir / "report.json").write_text(json.dumps(report, indent=2))
-            ok = sum(1 for r in results if r.get("status") == "ok")
-            on_log("OK", f"Done: {ok}/{len(results)} adapted.")
+        triples = [(i, ad_urls[i], lang) for i in ad_urls for lang in languages]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(gen_prompt, tr) for tr in triples]):
+                idx, lang, prompt = fut.result()
+                if prompt: prompts[(idx, lang)] = prompt
+        if should_cancel():
+            on_log("WARN", "Cancelled during prompt generation.")
             return out_dir
-        except Exception as e:
-            on_log("ERR", str(e))
-            return out_dir
+
+        # Stage 3: generate 1 image per (ad, language, aspect).
+        jobs = []
+        source_by_idx = {i + 1: ad.name for i, ad in enumerate(ads)}
+        for (idx, lang), prompt in prompts.items():
+            for aspect in aspects:
+                jobs.append((idx, prompt, lang, aspect, source_by_idx[idx]))
+
+        results = []
+        def gen_img(job):
+            idx, prompt, lang, aspect, source_name = job
+            if should_cancel():
+                return {"index": idx, "aspect": aspect, "language": lang,
+                        "status": "cancelled", "source": source_name, "prompt": prompt}
+            return _adapt_image(provider, image_model, idx, prompt, ad_urls[idx], product_urls,
+                                resolution, aspect, lang, out_dir, source_name,
+                                multi_aspect, multi_lang)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(gen_img, j) for j in jobs]):
+                r = fut.result()
+                results.append(r)
+                on_result(r)
+
+        for i, ad in enumerate(ads, 1):
+            for lang in languages:
+                if (i, lang) not in prompts:
+                    for aspect in aspects:
+                        results.append({
+                            "index": i, "aspect": aspect, "language": lang,
+                            "status": "error", "source": ad.name, "prompt": "",
+                            "error": "prep failed (upload or LLM)",
+                        })
+
+        results.sort(key=lambda r: (r["index"], r.get("language", ""), r.get("aspect", "")))
+        (out_dir / "prompts.txt").write_text(
+            "\n\n".join(
+                f"=== {source_by_idx[idx]} · {lang} ===\n{p}"
+                for (idx, lang), p in sorted(prompts.items())
+            )
+        )
+
+        report = {
+            "type": "adapt",
+            "timestamp": ts,
+            "source_paths": [str(a) for a in ads],
+            "brand": brand_name,
+            "brand_dna": brand["dna"],
+            "product_images": [str(p) for p in product_paths],
+            "params": {
+                "iterations": len(ads),
+                "resolution": resolution,
+                "aspects": aspects,
+                "languages": languages,
+                "aspect_ratio": aspects[0] if len(aspects) == 1 else ",".join(aspects),
+                "language": languages[0] if len(languages) == 1 else ",".join(languages),
+                "workers": workers,
+                "provider": provider.name,
+                "image_model": image_model,
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": results,
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        on_log("OK", f"Done: {ok}/{len(results)} adapted.")
+        return out_dir
+    except Exception as e:
+        on_log("ERR", str(e))
+        return out_dir
+
+
+# ─── Fix pipeline ───────────────────────────────────────────────────────────
+
+FIX_SYSTEM_PROMPT = """You are a surgical image-fix prompt engineer for NanoBanana 2 (image-to-image edit mode).
+
+Inputs at generation time:
+- Reference image 1: the CURRENT output (contains a specific issue the user wants fixed)
+- Reference images 2+: the brand's target product forms (one or several — pouch, stick, bottle, sachet, bottle cap, etc.)
+- A user issue description (short text)
+
+Your output is exactly ONE NanoBanana 2 prompt that performs a SURGICAL fix and nothing more.
+
+Rules:
+1. First character must be ^ (caret).
+2. Explicitly reference "reference image 1" (the current output to preserve) and "reference images 2+" (target products).
+3. ALL non-issue elements from reference image 1 must be preserved UNCHANGED: composition, layout, framing, crop, background, text zones, copy (wording, font, placement, color), typography, color palette, lighting, mood, all non-product props.
+4. The ONLY modification is the specific issue described by the user:
+   - If the issue is product size / scale / position / orientation → fix only that aspect of the product.
+   - If the issue is product design / packaging / logo → re-render the product to match reference images 2+ exactly.
+   - If the issue is text overlap / text clipping / text occlusion → reposition or resize ONLY the conflicting element so the text is legible; keep the text content identical.
+   - If the issue is color drift on a specific element → fix only that element's color.
+   - If the issue is a missing element → add only that element.
+5. Do NOT restyle, do NOT redesign, do NOT rewrite copy, do NOT re-layout, do NOT change framing, do NOT swap background, do NOT alter any other element.
+6. End every prompt with: "Preserve every element of reference image 1 exactly as shown, including all copy, typography, colors, background, and layout. The only change is the fix described above. Do not redesign, do not re-layout, do not re-word anything else."
+
+CONTENT SAFETY (same rules as the adapt pipeline):
+- No medical / clinical / hormonal / anatomical claims in copy (rewrite if present already).
+- All figures fully dressed in modest everyday clothing; no bedrooms, no bathrooms, no intimate embraces; neutral settings (sofa, kitchen, studio, outdoors).
+
+Output: exactly ONE prompt, nothing else."""
+
+
+def _generate_fix_prompt(provider: Provider, brand_dna: str, issue: str,
+                         product_count: int = 1, language: str = "English") -> str:
+    if product_count <= 1:
+        forms_note = "The brand has 1 target product form (reference image 2)."
+    else:
+        imgs = ", ".join(str(i) for i in range(2, 2 + product_count))
+        forms_note = f"The brand has {product_count} target product forms (reference images {imgs})."
+    text = provider.call_llm(
+        prompt=(
+            f"Brand DNA (for context only — do NOT re-apply to the image):\n{brand_dna}\n\n"
+            f"{forms_note}\n\n"
+            f"Copy language (already correct in reference image 1, keep as-is): {language}.\n\n"
+            f"Issue to fix (user-reported):\n{issue.strip()}\n\n"
+            "Generate ONE NanoBanana 2 prompt that performs the surgical fix described, "
+            "following all rules. At generation time the image model will see: "
+            "reference image 1 (the current output to preserve) and reference images 2+ "
+            f"({product_count} target product form(s)). Refer to them in the prompt."
+        ),
+        image_url="",
+        system_prompt=FIX_SYSTEM_PROMPT,
+        label="LLM-fix",
+    )
+    text = text.strip()
+    if not text.startswith("^"):
+        text = "^" + text.lstrip("^").lstrip()
+    return text
+
+
+def _next_fixed_path(original: Path) -> Path:
+    stem, ext = original.stem, original.suffix or ".png"
+    parent = original.parent
+    if not (parent / f"{stem}_fixed{ext}").exists():
+        return parent / f"{stem}_fixed{ext}"
+    i = 2
+    while (parent / f"{stem}_fixed_{i}{ext}").exists():
+        i += 1
+    return parent / f"{stem}_fixed_{i}{ext}"
+
+
+def _render_fix(provider: Provider, image_model: str,
+                prompt: str, img_url: str, product_urls: list[str],
+                resolution: str, aspect: str, label: str) -> tuple[str, str, bool]:
+    """Run the image model with content-filter softening. Returns (img_url, final_prompt, softened)."""
+    inputs = [img_url, *product_urls]
+    try:
+        out_url = provider.call_image(
+            model=image_model, prompt=prompt, image_urls=inputs,
+            resolution=resolution, aspect_ratio=aspect, label=label,
+        )
+        return out_url, prompt, False
+    except CensorshipError:
+        provider._log("WARN", f"[{label}] blocked by content filter — softening and retrying")
+        softer = _soften(provider, prompt, img_url)
+        out_url = provider.call_image(
+            model=image_model, prompt=softer, image_urls=inputs,
+            resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+        )
+        return out_url, softer, True
+
+
+def run_fix(
+    image_path: str,
+    brand_name: str,
+    issue: str,
+    resolution: str,
+    aspect: str,
+    language: str,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    should_cancel: Callable[[], bool] = lambda: False,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+
+    brands = load_brands()
+    brand = brands.get(brand_name)
+    if not brand:
+        on_log("ERR", f"Brand '{brand_name}' not found.")
+        return None
+    product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+    if not product_paths:
+        on_log("ERR", "Brand has no product image on disk.")
+        return None
+
+    src = Path(image_path).expanduser().resolve()
+    if not src.exists():
+        on_log("ERR", f"Image not found: {src}")
+        return None
+    if not issue.strip():
+        on_log("ERR", "Describe what needs to be fixed.")
+        return None
+
+    dest = _next_fixed_path(src)
+    on_log("INFO", f"Fix → {dest.name}")
+    on_log("INFO", f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]}")
+
+    try:
+        on_log("INFO", "Uploading current output...")
+        img_url = provider.upload_image(src)
+        if should_cancel(): return None
+
+        on_log("INFO", f"Uploading {len(product_paths)} product image(s)...")
+        product_urls = [provider.upload_image(pp) for pp in product_paths]
+        if should_cancel(): return None
+
+        on_log("INFO", "Generating fix prompt...")
+        prompt = _generate_fix_prompt(
+            provider, brand["dna"], issue,
+            product_count=len(product_urls), language=language,
+        )
+        if should_cancel(): return None
+
+        on_log("INFO", f"Rendering fix ({aspect} · {resolution})...")
+        out_url, final_prompt, softened = _render_fix(
+            provider, image_model, prompt, img_url, product_urls,
+            resolution, aspect, "fix",
+        )
+        provider.download(out_url, dest)
+        on_log("OK", f"Saved {dest.name}" + (" (after softening)" if softened else ""))
+        on_result({
+            "status": "ok", "file": dest.name, "path": str(dest),
+            "source": src.name, "issue": issue, "prompt": final_prompt,
+            "softened": softened, "provider": provider.name, "image_model": image_model,
+        })
+        return dest
+    except Exception as e:
+        on_log("ERR", str(e))
+        on_result({"status": "error", "error": str(e), "source": src.name, "issue": issue})
+        return None
+
+
+def run_batch_fix(
+    image_paths: list[str],
+    brand_name: str,
+    issue: str,
+    resolution: str,
+    aspect: str,
+    language: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    should_cancel: Callable[[], bool] = lambda: False,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+) -> list[Path]:
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return []
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return []
+
+    brands = load_brands()
+    brand = brands.get(brand_name)
+    if not brand:
+        on_log("ERR", f"Brand '{brand_name}' not found.")
+        return []
+    product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+    if not product_paths:
+        on_log("ERR", "Brand has no product image on disk.")
+        return []
+
+    srcs: list[Path] = []
+    for p in image_paths:
+        pp = Path(p).expanduser().resolve()
+        if pp.is_file() and pp.suffix.lower() in AD_EXTS:
+            srcs.append(pp)
+    if not srcs:
+        on_log("ERR", "No valid images to fix.")
+        return []
+    if not issue.strip():
+        on_log("ERR", "Describe what needs to be fixed.")
+        return []
+
+    on_log("INFO", f"Batch fix: {len(srcs)} images for '{brand_name}' ({workers} workers)")
+    on_log("INFO", f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]}")
+
+    try:
+        on_log("INFO", f"Uploading {len(product_paths)} brand product image(s)...")
+        product_urls = [provider.upload_image(pp) for pp in product_paths]
+        if should_cancel(): return []
+
+        def process(src: Path) -> dict:
+            if should_cancel():
+                return {"status": "cancelled", "source": src.name}
+            dest = _next_fixed_path(src)
+            label = f"fix_{src.stem}"
+            try:
+                img_url = provider.upload_image(src)
+                if should_cancel():
+                    return {"status": "cancelled", "source": src.name}
+                prompt = _generate_fix_prompt(
+                    provider, brand["dna"], issue,
+                    product_count=len(product_urls), language=language,
+                )
+                if should_cancel():
+                    return {"status": "cancelled", "source": src.name}
+                out_url, final_prompt, softened = _render_fix(
+                    provider, image_model, prompt, img_url, product_urls,
+                    resolution, aspect, label,
+                )
+                provider.download(out_url, dest)
+                provider._log(
+                    "OK",
+                    f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+                )
+                return {
+                    "status": "ok", "source": src.name, "file": dest.name,
+                    "path": str(dest), "issue": issue, "prompt": final_prompt,
+                    "softened": softened,
+                }
+            except Exception as e:
+                provider._log("ERR", f"[{label}] {e}")
+                return {"status": "error", "source": src.name, "error": str(e),
+                        "issue": issue, "prompt": ""}
+
+        results: list[Path] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(process, s) for s in srcs]):
+                r = fut.result()
+                on_result(r)
+                if r.get("status") == "ok" and r.get("path"):
+                    results.append(Path(r["path"]))
+
+        ok = len(results)
+        on_log("OK", f"Batch fix done: {ok}/{len(srcs)} fixed.")
+        return results
+    except Exception as e:
+        on_log("ERR", str(e))
+        return []

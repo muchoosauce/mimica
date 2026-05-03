@@ -47,6 +47,7 @@ ICONS = {
     "chevron_right": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></g></svg>',
     "open": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></g></svg>',
     "adapt": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3l5 5-5 5"/><path d="M21 8H9a4 4 0 0 0-4 4v1"/><path d="M8 21l-5-5 5-5"/><path d="M3 16h12a4 4 0 0 0 4-4v-1"/></g></svg>',
+    "wrench": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.5 5.5L3 18l3 3 6.2-6.2a4 4 0 0 0 5.5-5.5l-2.8 2.8-2-2z"/></g></svg>',
     "brand": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.5" fill="currentColor"/></g></svg>',
     "trash": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></g></svg>',
     "edit": '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4z"/></g></svg>',
@@ -257,17 +258,51 @@ def round_pixmap(path: Path, w: int, h: int, radius: int = 12) -> QPixmap:
 
 class ThumbLabel(QLabel):
     clicked = Signal()
+    fix_requested = Signal()
 
-    def __init__(self, path: Path, w: int = 170, h: int = 170, radius: int = 12):
+    def __init__(self, path: Path, w: int = 170, h: int = 170, radius: int = 12,
+                 show_fix: bool = False):
         super().__init__()
         self.setFixedSize(w, h)
         self.setCursor(Qt.PointingHandCursor)
         self.path = path
         self.setPixmap(round_pixmap(path, w, h, radius))
+        self._fix_btn: QPushButton | None = None
+        if show_fix:
+            self._fix_btn = QPushButton("Fix", self)
+            self._fix_btn.setFixedSize(46, 24)
+            self._fix_btn.setCursor(Qt.PointingHandCursor)
+            self._fix_btn.setStyleSheet(
+                f"QPushButton {{ background: rgba(10,10,10,220); color: white; "
+                f"border: 1px solid rgba(255,255,255,60); border-radius: 8px; "
+                f"font-size: 11px; font-weight: 700; }}"
+                f"QPushButton:hover {{ background: {t.ACCENT}; border-color: {t.ACCENT}; }}"
+            )
+            self._fix_btn.move(w - 46 - 8, 8)
+            self._fix_btn.hide()
+            self._fix_btn.clicked.connect(self._on_fix_click)
+
+    def _on_fix_click(self):
+        self.fix_requested.emit()
+
+    def enterEvent(self, ev):
+        if self._fix_btn:
+            self._fix_btn.show()
+        super().enterEvent(ev)
+
+    def leaveEvent(self, ev):
+        if self._fix_btn:
+            self._fix_btn.hide()
+        super().leaveEvent(ev)
 
     def mousePressEvent(self, ev: QMouseEvent):
-        if ev.button() == Qt.LeftButton:
-            self.clicked.emit()
+        if ev.button() != Qt.LeftButton:
+            return
+        if self._fix_btn and self._fix_btn.isVisible():
+            pos = ev.position().toPoint() if hasattr(ev, "position") else ev.pos()
+            if self._fix_btn.geometry().contains(pos):
+                return
+        self.clicked.emit()
 
 
 class DropZone(QFrame):
