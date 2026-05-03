@@ -36,7 +36,29 @@ from providers.prompts import (
     soften_prompt as _soften,
 )
 
-load_dotenv()
+def _is_frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+
+def _user_data_dir() -> Path:
+    """Where to store .env, brands.json, brand images, default outputs.
+
+    Frozen (.app inside /Applications): ~/Library/Application Support/Ad Variator
+    Source mode: project root (so dev is unchanged).
+    """
+    if _is_frozen():
+        d = Path.home() / "Library" / "Application Support" / "Ad Variator"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    return _here
+
+
+USER_DATA_DIR = _user_data_dir()
+ENV_FILE = USER_DATA_DIR / ".env"
+
+# In frozen mode, app.py loaded the env file early; this no-op call is a safety
+# net for source-mode runs where .env sits next to the project root.
+load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 
 # Pricing exposed for the cost-estimate widgets in the UI.
 COST_PER_IMAGE = pv.COST_PER_IMAGE
@@ -52,8 +74,8 @@ AD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 DEFAULT_IMAGE_MODEL = "nano_banana_2"
 
-BRANDS_FILE = _here / "brands.json"
-BRANDS_IMG_DIR = _here / "brands" / "images"
+BRANDS_FILE = USER_DATA_DIR / "brands.json"
+BRANDS_IMG_DIR = USER_DATA_DIR / "brands" / "images"
 
 
 def _safe_name(s: str) -> str:
@@ -77,18 +99,16 @@ def save_provider_key(provider: str, key: str) -> None:
     env_key = _PROVIDER_ENV_KEYS.get(provider)
     if not env_key:
         raise ValueError(f"Unknown provider: {provider!r}")
-    env_path = _here / ".env"
-    env_path.touch(exist_ok=True)
-    set_key(str(env_path), env_key, key.strip())
+    ENV_FILE.touch(exist_ok=True)
+    set_key(str(ENV_FILE), env_key, key.strip())
     os.environ[env_key] = key.strip()
 
 
 def save_active_provider(name: str) -> None:
     if name not in PROVIDERS:
         raise ValueError(f"Unknown provider: {name!r}")
-    env_path = _here / ".env"
-    env_path.touch(exist_ok=True)
-    set_key(str(env_path), "ACTIVE_PROVIDER", name)
+    ENV_FILE.touch(exist_ok=True)
+    set_key(str(ENV_FILE), "ACTIVE_PROVIDER", name)
     os.environ["ACTIVE_PROVIDER"] = name
 
 
@@ -103,9 +123,8 @@ def get_anthropic_key() -> str:
 
 
 def save_anthropic_key(key: str) -> None:
-    env_path = _here / ".env"
-    env_path.touch(exist_ok=True)
-    set_key(str(env_path), "ANTHROPIC_API_KEY", key.strip())
+    ENV_FILE.touch(exist_ok=True)
+    set_key(str(ENV_FILE), "ANTHROPIC_API_KEY", key.strip())
     os.environ["ANTHROPIC_API_KEY"] = key.strip()
 
 
@@ -124,7 +143,10 @@ def get_api_key() -> str:
 
 # ─── Output dir ─────────────────────────────────────────────────────────────
 
-DEFAULT_OUTPUT_DIR = _here / "outputs"
+if _is_frozen():
+    DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "Ad Variator" / "outputs"
+else:
+    DEFAULT_OUTPUT_DIR = _here / "outputs"
 
 
 def get_output_dir() -> Path:
@@ -133,9 +155,8 @@ def get_output_dir() -> Path:
 
 
 def save_output_dir(path: str) -> None:
-    env_path = _here / ".env"
-    env_path.touch(exist_ok=True)
-    set_key(str(env_path), "OUTPUT_DIR", path.strip())
+    ENV_FILE.touch(exist_ok=True)
+    set_key(str(ENV_FILE), "OUTPUT_DIR", path.strip())
     os.environ["OUTPUT_DIR"] = path.strip()
 
 

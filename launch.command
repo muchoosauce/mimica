@@ -28,8 +28,9 @@ source .venv/bin/activate
 
 if [ ! -f ".venv/.deps_installed" ] || [ requirements.txt -nt .venv/.deps_installed ]; then
   printf "${C_DIM}Installing dependencies (first run can take ~1 min)…${C_RESET}\n"
-  pip install --quiet --upgrade pip
-  pip install --quiet -r requirements.txt
+  python -m ensurepip --upgrade >/dev/null 2>&1 || true
+  python -m pip install --quiet --upgrade pip
+  python -m pip install --quiet -r requirements.txt
   touch .venv/.deps_installed
 fi
 
