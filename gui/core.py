@@ -210,13 +210,30 @@ def list_runs(root: Optional[Path] = None) -> list[dict]:
 
 # ─── Brand DNA storage ──────────────────────────────────────────────────────
 
+def _heal_path(p: str) -> str:
+    """If a product image path is stale (project moved), try to find it by
+    filename inside the current BRANDS_IMG_DIR."""
+    if not p:
+        return p
+    pp = Path(p)
+    if pp.exists():
+        return p
+    candidate = BRANDS_IMG_DIR / pp.name
+    if candidate.exists():
+        return str(candidate)
+    return p
+
+
 def _migrate_brand(b: dict) -> dict:
     if "product_images" not in b:
         single = b.get("product_image", "")
         b["product_images"] = [single] if single else []
+    b["product_images"] = [_heal_path(p) for p in b["product_images"]]
     if "product_image" in b and not b["product_image"] and b["product_images"]:
         b["product_image"] = b["product_images"][0]
-    b.setdefault("product_image", b["product_images"][0] if b["product_images"] else "")
+    b["product_image"] = _heal_path(b.get("product_image", ""))
+    if not b.get("product_image") and b["product_images"]:
+        b["product_image"] = b["product_images"][0]
     return b
 
 
@@ -227,7 +244,14 @@ def load_brands() -> dict[str, dict]:
         data = json.loads(BRANDS_FILE.read_text())
     except Exception:
         return {}
-    return {k: _migrate_brand(v) for k, v in data.items()}
+    healed = {k: _migrate_brand(v) for k, v in data.items()}
+    # Persist the healed paths so we don't redo this on every load.
+    if json.dumps(healed, sort_keys=True) != json.dumps(data, sort_keys=True):
+        try:
+            BRANDS_FILE.write_text(json.dumps(healed, indent=2))
+        except Exception:
+            pass
+    return healed
 
 
 def save_brand(

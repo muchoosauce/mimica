@@ -21,21 +21,28 @@ if [ ! -d ".venv" ]; then
   printf "${C_DIM}Creating virtual environment…${C_RESET}\n"
   python3 -m venv .venv
 fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
+
+VENV_PY=".venv/bin/python"
+VENV_PIP=".venv/bin/pip"
+
+if [ ! -x "$VENV_PY" ]; then
+  printf "${C_RED}Broken venv (no .venv/bin/python). Removing and recreating…${C_RESET}\n"
+  rm -rf .venv
+  python3 -m venv .venv
+fi
 
 # 2. Build deps
 printf "${C_DIM}Installing build dependencies…${C_RESET}\n"
-python -m ensurepip --upgrade >/dev/null 2>&1 || true
-python -m pip install --quiet --upgrade pip pyinstaller
-python -m pip install --quiet -r requirements.txt
+"$VENV_PY" -m ensurepip --upgrade >/dev/null 2>&1 || true
+"$VENV_PY" -m pip install --quiet --upgrade pip pyinstaller
+"$VENV_PY" -m pip install --quiet -r requirements.txt
 
 # 3. Bundle Chromium for Playwright into ./build_browsers/
 BROWSERS_DIR="$(pwd)/build_browsers"
 if [ ! -d "$BROWSERS_DIR" ] || [ -z "$(ls -A "$BROWSERS_DIR" 2>/dev/null)" ]; then
   printf "${C_DIM}Downloading Chromium for Playwright (~150 MB)…${C_RESET}\n"
   rm -rf "$BROWSERS_DIR"
-  PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" python -m playwright install chromium
+  PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" "$VENV_PY" -m playwright install chromium
 else
   printf "${C_DIM}Chromium already cached in build_browsers/${C_RESET}\n"
 fi
@@ -43,7 +50,7 @@ fi
 # 4. Clean and build
 printf "${C_DIM}Building .app via PyInstaller…${C_RESET}\n"
 rm -rf build dist
-pyinstaller --clean --noconfirm AdVariator.spec
+"$VENV_PY" -m PyInstaller --clean --noconfirm AdVariator.spec
 
 APP_PATH="dist/Ad Variator.app"
 if [ ! -d "$APP_PATH" ]; then
@@ -51,10 +58,17 @@ if [ ! -d "$APP_PATH" ]; then
   exit 1
 fi
 
-# 5. Strip extended attributes that confuse Gatekeeper
+# 5. Copy Chromium into Contents/Resources/ (kept out of PyInstaller's
+#    bundling step so its internal signature stays valid).
+printf "${C_DIM}Copying Chromium into the bundle…${C_RESET}\n"
+RES_BROWSERS="$APP_PATH/Contents/Resources/playwright_browsers"
+mkdir -p "$RES_BROWSERS"
+ditto "$BROWSERS_DIR/" "$RES_BROWSERS/"
+
+# 6. Strip extended attributes that confuse Gatekeeper
 xattr -cr "$APP_PATH" 2>/dev/null || true
 
-# 6. Zip the .app
+# 7. Zip the .app
 ZIP_PATH="dist/AdVariator.app.zip"
 rm -f "$ZIP_PATH"
 printf "${C_DIM}Zipping…${C_RESET}\n"

@@ -230,10 +230,18 @@ class MuApiProvider(Provider):
         slug = _IMAGE_SLUGS.get(model)
         if not slug:
             raise ProviderError(f"MuAPI does not support image model {model!r}")
-        normalized_res = (
-            resolution.upper() if resolution and resolution[-1].lower() == "k"
-            else (resolution or "1K")
-        )
+        # nano-banana-2-edit accepts lowercase ("1k"); gpt-image-2-image-to-image
+        # accepts uppercase ("1K"). Cast per model to avoid 422.
+        if model == "gpt_image_2":
+            normalized_res = (
+                resolution.upper() if resolution and resolution[-1].lower() == "k"
+                else (resolution or "1K")
+            )
+        else:
+            normalized_res = (
+                resolution.lower() if resolution and resolution[-1].lower() == "k"
+                else (resolution or "1k")
+            )
         payload = {
             "prompt": prompt,
             "images_list": list(image_urls),

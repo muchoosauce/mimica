@@ -7,11 +7,11 @@ and PyInstaller bundles that directory inside the .app.
 from pathlib import Path
 
 HERE = Path.cwd()
-BROWSERS_DIR = HERE / "build_browsers"
 
+# Chromium is NOT bundled via PyInstaller because it has its own internal
+# signature that breaks under PyInstaller's ad-hoc resigning. The build
+# script copies build_browsers/ into Contents/Resources/ post-build.
 datas = []
-if BROWSERS_DIR.exists():
-    datas.append((str(BROWSERS_DIR), "playwright_browsers"))
 
 hiddenimports = [
     # PySide6 plugins / modules

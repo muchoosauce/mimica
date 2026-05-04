@@ -21,10 +21,20 @@ def _bootstrap_frozen() -> None:
         except Exception:
             pass
 
-    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
-    browsers_dir = bundle_root / "playwright_browsers"
-    if browsers_dir.exists():
-        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browsers_dir))
+    # Search common bundled locations for the Playwright browsers dir.
+    candidates = []
+    mei = getattr(sys, "_MEIPASS", "")
+    if mei:
+        mei_path = Path(mei)
+        candidates.append(mei_path / "playwright_browsers")
+        # When packaged as .app, MEIPASS is .app/Contents/Frameworks; browsers
+        # live next door in .app/Contents/Resources.
+        if mei_path.parent.name == "Contents":
+            candidates.append(mei_path.parent / "Resources" / "playwright_browsers")
+    for browsers_dir in candidates:
+        if browsers_dir.exists():
+            os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browsers_dir))
+            break
 
 
 _bootstrap_frozen()
