@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
-    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+    QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton,
+    QStackedWidget, QVBoxLayout, QWidget
 )
 
 from . import core
@@ -13,61 +12,45 @@ from .pages import (
     AdaptPage, BatchFixPage, BrandsPage, DashboardPage, GeneratePage, HistoryPage,
     RunDetailPage, SettingsPage
 )
-from .widgets import icon_button, icon_label, svg_icon, ICONS
-from PySide6.QtGui import QPixmap
+from .widgets import icon_label, svg_icon, ICONS
 
 
 class SidebarItem(QPushButton):
-    def __init__(self, icon_name: str, label: str, badge: str = ""):
+    def __init__(self, icon_name: str, label: str):
         super().__init__()
         self.icon_name = icon_name
         self.label_text = label
-        self.badge_text = badge
         self.setObjectName("SidebarItem")
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(40)
+        self.setFixedHeight(38)
         self.setCheckable(True)
         self._build()
 
     def _build(self):
         self.setText("")
-        lay = QHBoxLayout(self); lay.setContentsMargins(12, 0, 12, 0); lay.setSpacing(10)
-        color = t.TEXT if self.isChecked() else t.TEXT_DIM
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 14, 0)
+        lay.setSpacing(12)
+        color = t.ACCENT_STRONG if self.isChecked() else t.TEXT
         self._icon = icon_label(self.icon_name, 16, color)
         self._text = QLabel(self.label_text)
-        self._text.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: {'600' if self.isChecked() else '500'};")
+        self._text.setStyleSheet(
+            f"color: {color}; font-size: 13px; "
+            f"font-weight: {'600' if self.isChecked() else '500'};"
+        )
         lay.addWidget(self._icon)
         lay.addWidget(self._text)
         lay.addStretch()
-        if self.badge_text:
-            self._badge = QLabel(self.badge_text)
-            self._badge.setStyleSheet(
-                f"background: {t.BORDER}; color: {t.TEXT_DIM}; "
-                f"padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;"
-            )
-            lay.addWidget(self._badge)
-        else:
-            self._badge = None
-
-    def set_badge(self, text: str):
-        self.badge_text = text
-        if self._badge:
-            self._badge.setText(text)
-            self._badge.setVisible(bool(text))
-        elif text:
-            self._badge = QLabel(text)
-            self._badge.setStyleSheet(
-                f"background: {t.BORDER}; color: {t.TEXT_DIM}; "
-                f"padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;"
-            )
-            self.layout().addWidget(self._badge)
 
     def set_active(self, active: bool):
         self.setChecked(active)
         self.setObjectName("SidebarItemActive" if active else "SidebarItem")
-        color = t.TEXT if active else t.TEXT_DIM
+        color = t.ACCENT_STRONG if active else t.TEXT
         self._icon.setPixmap(svg_icon(ICONS[self.icon_name], 16, color))
-        self._text.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: {'600' if active else '500'};")
+        self._text.setStyleSheet(
+            f"color: {color}; font-size: 13px; "
+            f"font-weight: {'600' if active else '500'};"
+        )
         self.style().unpolish(self); self.style().polish(self)
 
 
@@ -84,49 +67,28 @@ class Sidebar(QWidget):
 
     def _build(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 20, 16, 20)
-        root.setSpacing(8)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(4)
 
-        # Logo
-        logo_row = QHBoxLayout(); logo_row.setSpacing(10)
+        # Logo + name
+        logo_row = QHBoxLayout(); logo_row.setSpacing(10); logo_row.setContentsMargins(0, 0, 0, 0)
         logo_box = QFrame()
-        logo_box.setFixedSize(34, 34)
+        logo_box.setFixedSize(28, 28)
         logo_box.setStyleSheet(
             f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-            f"stop:0 {t.ACCENT_DEEP}, stop:1 {t.ACCENT_LIGHT});"
+            f"stop:0 {t.ACCENT_SOFT}, stop:1 {t.ACCENT_STRONG});"
             f"border-radius: 8px;"
         )
         ll = QVBoxLayout(logo_box); ll.setContentsMargins(0, 0, 0, 0)
-        ic = icon_label("logo", 20, "white"); ic.setAlignment(Qt.AlignCenter)
-        ll.addWidget(ic, alignment=Qt.AlignCenter)
+        m = QLabel("M"); m.setAlignment(Qt.AlignCenter)
+        m.setStyleSheet("color: white; font-size: 14px; font-weight: 700; letter-spacing: -0.02em; background: transparent;")
+        ll.addWidget(m)
         logo_row.addWidget(logo_box)
-        name = QLabel("Ad Variator")
-        name.setStyleSheet("font-size: 16px; font-weight: 700; letter-spacing: -0.2px;")
+        name = QLabel("Mimica")
+        name.setStyleSheet("font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: " + t.TEXT + ";")
         logo_row.addWidget(name); logo_row.addStretch()
         root.addLayout(logo_row)
-        root.addSpacing(18)
-
-        # Search
-        search_wrap = QFrame()
-        sl = QHBoxLayout(search_wrap); sl.setContentsMargins(10, 0, 10, 0); sl.setSpacing(8)
-        sicon = icon_label("search", 14, t.TEXT_MUTED)
-        self.search = QLineEdit()
-        self.search.setObjectName("Search")
-        self.search.setPlaceholderText("Search")
-        self.search.setStyleSheet(
-            f"QLineEdit {{ background: {t.BG_CARD}; border: 1px solid {t.BORDER}; "
-            f"border-radius: 10px; padding: 8px 10px 8px 10px; color: {t.TEXT}; font-size: 12px; }}"
-            f"QLineEdit:focus {{ border: 1px solid {t.ACCENT}; }}"
-        )
-        shortcut = QLabel("⌘K")
-        shortcut.setStyleSheet(
-            f"background: {t.BG_INPUT}; color: {t.TEXT_MUTED}; "
-            f"padding: 2px 6px; border-radius: 4px; font-size: 10px;"
-        )
-        sl.addWidget(sicon); sl.addWidget(self.search); sl.addWidget(shortcut)
-        search_wrap.setFixedHeight(38)
-        root.addWidget(search_wrap)
-        root.addSpacing(14)
+        root.addSpacing(24)
 
         # Primary nav
         for key, icon, label in [
@@ -141,9 +103,14 @@ class Sidebar(QWidget):
             root.addWidget(item)
             self.items[key] = item
 
-        root.addSpacing(14)
-        sect = QLabel("LIBRARY"); sect.setObjectName("SectionLabel")
+        root.addSpacing(16)
+        sect = QLabel("LIBRARY")
+        sect.setStyleSheet(
+            f"color: {t.TEXT_DIM}; font-size: 11px; "
+            f"font-weight: 600; letter-spacing: 0.08em; padding: 0 14px;"
+        )
         root.addWidget(sect)
+        root.addSpacing(6)
 
         for key, icon, label in [
             ("brands", "brand", "Brands"),
@@ -156,27 +123,38 @@ class Sidebar(QWidget):
 
         root.addStretch()
 
-        # Upgrade / status card
+        # Provider status card (white card on grey sidebar)
         self.status_card = QFrame()
-        self.status_card.setObjectName("CardFlat")
-        self.status_card.setStyleSheet(
-            f"background: {t.BG_CARD}; border: 1px solid {t.BORDER}; border-radius: 14px;"
+        self.status_card.setObjectName("ProviderStatusCard")
+        sc = QVBoxLayout(self.status_card)
+        sc.setContentsMargins(14, 12, 14, 12)
+        sc.setSpacing(6)
+
+        title_row = QHBoxLayout(); title_row.setSpacing(8); title_row.setContentsMargins(0, 0, 0, 0)
+        self.status_dot = QLabel()
+        self.status_dot.setFixedSize(8, 8)
+        self.status_dot.setStyleSheet(
+            f"background: {t.SUCCESS}; border-radius: 4px;"
         )
-        sc = QVBoxLayout(self.status_card); sc.setContentsMargins(14, 14, 14, 14); sc.setSpacing(6)
         self.status_title = QLabel("MuAPI")
-        self.status_title.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.status_title.setStyleSheet(f"color: {t.TEXT}; font-size: 12px; font-weight: 600;")
+        title_row.addWidget(self.status_dot, alignment=Qt.AlignVCenter)
+        title_row.addWidget(self.status_title); title_row.addStretch()
+        sc.addLayout(title_row)
+
         self.status_sub = QLabel("No key configured")
-        self.status_sub.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
-        sc.addWidget(self.status_title); sc.addWidget(self.status_sub)
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
-        self.status_btn = QPushButton("Set key")
-        self.status_btn.setObjectName("PrimaryBtn")
+        self.status_sub.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+        sc.addWidget(self.status_sub)
+
+        self.status_btn = QPushButton("Manage")
+        self.status_btn.setObjectName("GhostBtn")
         self.status_btn.setCursor(Qt.PointingHandCursor)
-        self.status_btn.setFixedHeight(30)
+        self.status_btn.setFixedHeight(28)
         self.status_btn.clicked.connect(lambda: self.nav.emit("settings"))
-        btn_row.addWidget(self.status_btn)
-        btn_row.addStretch()
+        btn_row = QHBoxLayout(); btn_row.setContentsMargins(0, 4, 0, 0); btn_row.setSpacing(0)
+        btn_row.addWidget(self.status_btn); btn_row.addStretch()
         sc.addLayout(btn_row)
+
         root.addWidget(self.status_card)
 
         self.update_status()
@@ -187,10 +165,12 @@ class Sidebar(QWidget):
         if core.get_provider_key(name):
             self.status_title.setText(f"{label} · Connected")
             self.status_sub.setText("Your key is saved locally.")
+            self.status_dot.setStyleSheet(f"background: {t.SUCCESS}; border-radius: 4px;")
             self.status_btn.setText("Manage")
         else:
             self.status_title.setText(label)
             self.status_sub.setText("Add your API key to start.")
+            self.status_dot.setStyleSheet(f"background: {t.TEXT_DIM}; border-radius: 4px;")
             self.status_btn.setText("Set key")
 
     def set_active(self, key: str):
@@ -202,36 +182,56 @@ class TopBar(QWidget):
     def __init__(self):
         super().__init__()
         self.setFixedHeight(56)
+        self._current_icon = "dashboard"
         self._build()
 
     def _build(self):
-        lay = QHBoxLayout(self); lay.setContentsMargins(28, 10, 28, 10); lay.setSpacing(10)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(40, 10, 40, 10)
+        lay.setSpacing(10)
 
-        self.crumb_left = QLabel("Ad Variator")
-        self.crumb_left.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 13px;")
-        chev = icon_label("chevron_right", 12, t.TEXT_MUTED)
+        self.crumb_icon = icon_label(self._current_icon, 14, t.TEXT_MUTED)
         self.crumb_page = QLabel("Dashboard")
-        self.crumb_page.setStyleSheet(f"color: {t.TEXT}; font-size: 13px; font-weight: 600;")
-        lay.addWidget(self.crumb_left)
-        lay.addWidget(chev)
+        self.crumb_page.setStyleSheet(
+            f"color: {t.TEXT}; font-size: 13px; font-weight: 600;"
+        )
+        lay.addWidget(self.crumb_icon)
         lay.addWidget(self.crumb_page)
         lay.addStretch()
 
-        help_btn = icon_button("alert", 14, t.TEXT_DIM, "Help")
-        lay.addWidget(help_btn)
-        self.new_btn = QPushButton("  + New Generation")
+        # Search pill (search icon + label)
+        self.search_btn = QPushButton("  Search")
+        self.search_btn.setObjectName("SearchBtn")
+        self.search_btn.setCursor(Qt.PointingHandCursor)
+        # Inject SVG icon onto the button via QPainter — keep it simple: prefix label
+        lay.addWidget(self.search_btn)
+
+        self.new_btn = QPushButton("  + New Run")
         self.new_btn.setObjectName("PrimaryBtn")
         self.new_btn.setCursor(Qt.PointingHandCursor)
         lay.addWidget(self.new_btn)
 
+    _ICON_MAP = {
+        "Dashboard": "dashboard",
+        "Generate":  "generate",
+        "Adapt":     "adapt",
+        "Fix":       "wrench",
+        "History":   "history",
+        "Brands":    "brand",
+        "Settings":  "settings",
+    }
+
     def set_crumb(self, page: str):
         self.crumb_page.setText(page)
+        icon_key = next((self._ICON_MAP.get(part.strip()) for part in page.split("·")
+                         if self._ICON_MAP.get(part.strip())), "dashboard")
+        self.crumb_icon.setPixmap(svg_icon(ICONS.get(icon_key, ICONS["dashboard"]), 14, t.TEXT_MUTED))
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Ad Variator")
+        self.setWindowTitle("Mimica")
         self.resize(1280, 820)
         self.setMinimumSize(1100, 720)
 
@@ -267,7 +267,11 @@ class MainWindow(QMainWindow):
         self.sidebar.nav.connect(self._on_nav)
         self.topbar.new_btn.clicked.connect(lambda: self._on_nav("generate"))
         self.dashboard.open_generate.connect(lambda: self._on_nav("generate"))
+        self.dashboard.open_adapt.connect(lambda: self._on_nav("adapt"))
+        self.dashboard.open_fix.connect(lambda: self._on_nav("fix"))
         self.dashboard.open_history.connect(lambda: self._on_nav("history"))
+        self.dashboard.open_brands.connect(lambda: self._on_nav("brands"))
+        self.dashboard.open_settings.connect(lambda: self._on_nav("settings"))
         self.dashboard.open_run.connect(self._open_run)
         self.history.open_run.connect(self._open_run)
         self.detail.back.connect(lambda: self._on_nav("history"))
@@ -281,6 +285,8 @@ class MainWindow(QMainWindow):
         self.generate._update_cost()
         self.adapt._update_cost()
         self.fix._update_cost()
+        if hasattr(self.dashboard, "refresh"):
+            self.dashboard.refresh()
 
     def _on_nav(self, key: str):
         mapping = {

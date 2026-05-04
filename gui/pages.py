@@ -31,284 +31,535 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 class DashboardPage(QWidget):
     open_generate = Signal()
+    open_adapt = Signal()
+    open_fix = Signal()
     open_history = Signal()
+    open_brands = Signal()
+    open_settings = Signal()
     open_run = Signal(object)
 
     def __init__(self):
         super().__init__()
         self.setObjectName("Root")
+        self._spend_period = "1M"
         self._build()
         self.refresh()
 
     def _build(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 20, 28, 20)
-        root.setSpacing(18)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(40, 16, 40, 32)
+        outer.setSpacing(0)
 
-        head = QHBoxLayout()
-        tl = QVBoxLayout(); tl.setSpacing(2)
-        h1 = QLabel("Overview"); h1.setObjectName("H1")
-        sub = QLabel("Here is the summary of your ad variation production")
-        sub.setObjectName("Dim")
-        tl.addWidget(h1); tl.addWidget(sub)
-        head.addLayout(tl)
-        head.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(32)
 
-        period = QComboBox()
-        period.addItems(["This Month", "Last 3 Months", "All Time"])
-        period.setFixedWidth(160)
-        period.currentIndexChanged.connect(lambda _: self.refresh())
-        self.period = period
-        head.addWidget(period)
+        root.addLayout(self._build_hero())
+        root.addLayout(self._build_workflows())
+        root.addLayout(self._build_recent_runs())
+        root.addLayout(self._build_brands_strip())
+        root.addStretch()
 
-        refresh_btn = QPushButton("  Refresh")
-        refresh_btn.setObjectName("GhostBtn")
-        refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.clicked.connect(self.refresh)
-        head.addWidget(refresh_btn)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
 
-        root.addLayout(head)
+    # ── Section: hero greeting + balances stat card ─────────────────────────
 
-        self.stats_row = QHBoxLayout(); self.stats_row.setSpacing(14)
-        self.stats_container = QWidget(); self.stats_container.setLayout(self.stats_row)
-        root.addWidget(self.stats_container)
+    def _build_hero(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(24)
 
-        mid = QHBoxLayout(); mid.setSpacing(14)
+        # Left 60%: greeting
+        left = QVBoxLayout(); left.setSpacing(0); left.setContentsMargins(0, 0, 0, 0)
+        eyebrow = QLabel("GOOD AFTERNOON"); eyebrow.setObjectName("Muted")
+        left.addWidget(eyebrow)
+        left.addSpacing(12)
 
-        wallet = Card()
-        wallet.setMinimumHeight(330)
-        wlay = QVBoxLayout(wallet); wlay.setContentsMargins(20, 18, 20, 18); wlay.setSpacing(10)
-        whead = QHBoxLayout()
-        wt = QLabel("Reference Library"); wt.setObjectName("H2")
-        whead.addWidget(wt); whead.addStretch()
-        new_btn = QPushButton("+ New")
-        new_btn.setObjectName("PrimaryBtn")
-        new_btn.setCursor(Qt.PointingHandCursor)
-        new_btn.clicked.connect(self.open_generate.emit)
-        whead.addWidget(new_btn)
-        wlay.addLayout(whead)
-        wlay.addSpacing(4)
-        self.wallet_body = QVBoxLayout(); self.wallet_body.setSpacing(10)
-        wlay.addLayout(self.wallet_body)
-        wlay.addStretch()
-        mid.addWidget(wallet, 45)
+        self.welcome = QLabel("Welcome back, Sofiane")
+        self.welcome.setObjectName("H1")
+        left.addWidget(self.welcome)
+        left.addSpacing(2)
 
-        cash = Card()
-        cash.setMinimumHeight(330)
-        clay = QVBoxLayout(cash); clay.setContentsMargins(22, 20, 22, 18); clay.setSpacing(6)
-        ch = QHBoxLayout()
-        ct = QLabel("Generation Flow"); ct.setObjectName("Dim"); ct.setStyleSheet(f"color:{t.TEXT_DIM}; font-size: 13px;")
-        ch.addWidget(ct); ch.addStretch()
-        self.tab_monthly = QPushButton("Monthly"); self.tab_yearly = QPushButton("Yearly")
-        for b, active in [(self.tab_monthly, True), (self.tab_yearly, False)]:
-            b.setObjectName("TabBtnActive" if active else "TabBtn")
+        cursive = QLabel("ready when you are")
+        cursive.setObjectName("Cursive")
+        left.addWidget(cursive)
+        left.addSpacing(14)
+
+        body = QLabel(
+            "Generate, adapt, or fix ads — pick a workflow to start. "
+            "Your last run finished a few minutes ago."
+        )
+        body.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 13px; line-height: 1.5;")
+        body.setWordWrap(True)
+        body.setMaximumWidth(460)
+        left.addWidget(body)
+        left.addSpacing(20)
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10); btn_row.setContentsMargins(0, 0, 0, 0)
+        start_btn = QPushButton("  Start Generating  ›")
+        start_btn.setObjectName("PrimaryBtn")
+        start_btn.setCursor(Qt.PointingHandCursor)
+        start_btn.clicked.connect(self.open_generate.emit)
+        cont_btn = QPushButton("  ▸  Continue last run")
+        cont_btn.setObjectName("GhostBtn")
+        cont_btn.setCursor(Qt.PointingHandCursor)
+        cont_btn.clicked.connect(self.open_history.emit)
+        btn_row.addWidget(start_btn); btn_row.addWidget(cont_btn); btn_row.addStretch()
+        left.addLayout(btn_row)
+        left.addStretch()
+
+        left_w = QWidget(); left_w.setLayout(left)
+
+        row.addWidget(left_w, 6)
+        row.addWidget(self._build_stat_card(), 4)
+        return row
+
+    def _build_stat_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("StatCard")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(24, 24, 24, 24)
+        lay.setSpacing(16)
+
+        # Row 1 — Active provider balance
+        prov_block = QVBoxLayout(); prov_block.setSpacing(10)
+        prov_head = QHBoxLayout(); prov_head.setSpacing(8); prov_head.setContentsMargins(0, 0, 0, 0)
+        prov_eyebrow = QLabel("ACTIVE PROVIDER BALANCE"); prov_eyebrow.setObjectName("Muted")
+        prov_head.addWidget(prov_eyebrow); prov_head.addStretch()
+        topup1 = QPushButton("Top up  ↗")
+        topup1.setStyleSheet(
+            f"background: transparent; border: none; color: {t.TEXT_MUTED}; "
+            f"font-size: 11px; font-weight: 500;"
+        )
+        topup1.setCursor(Qt.PointingHandCursor)
+        topup1.clicked.connect(self.open_settings.emit)
+        prov_head.addWidget(topup1)
+        prov_block.addLayout(prov_head)
+
+        prov_row = QHBoxLayout(); prov_row.setSpacing(10); prov_row.setContentsMargins(0, 0, 0, 0)
+        self.provider_chip = QLabel("MuAPI")
+        self.provider_chip.setStyleSheet(
+            f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
+            f"padding: 4px 10px; border-radius: 9999px; "
+            f"font-size: 11px; font-weight: 600;"
+        )
+        self.provider_chip.setFixedHeight(22)
+        self.provider_balance = QLabel("$24.15  remaining")
+        self.provider_balance.setObjectName("BigNumber")
+        prov_row.addWidget(self.provider_chip, alignment=Qt.AlignVCenter)
+        prov_row.addWidget(self.provider_balance, alignment=Qt.AlignVCenter)
+        prov_row.addStretch()
+        prov_block.addLayout(prov_row)
+        lay.addLayout(prov_block)
+
+        lay.addWidget(self._divider())
+
+        # Row 2 — Anthropic balance
+        anth_block = QVBoxLayout(); anth_block.setSpacing(10)
+        anth_head = QHBoxLayout(); anth_head.setSpacing(8); anth_head.setContentsMargins(0, 0, 0, 0)
+        anth_eyebrow = QLabel("ANTHROPIC BALANCE"); anth_eyebrow.setObjectName("Muted")
+        anth_head.addWidget(anth_eyebrow); anth_head.addStretch()
+        topup2 = QPushButton("Top up  ↗")
+        topup2.setStyleSheet(
+            f"background: transparent; border: none; color: {t.TEXT_MUTED}; "
+            f"font-size: 11px; font-weight: 500;"
+        )
+        topup2.setCursor(Qt.PointingHandCursor)
+        topup2.clicked.connect(self.open_settings.emit)
+        anth_head.addWidget(topup2)
+        anth_block.addLayout(anth_head)
+
+        anth_row = QHBoxLayout(); anth_row.setSpacing(10); anth_row.setContentsMargins(0, 0, 0, 0)
+        self.anthropic_chip = QLabel("Anthropic")
+        self.anthropic_chip.setStyleSheet(
+            f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
+            f"padding: 4px 10px; border-radius: 9999px; "
+            f"font-size: 11px; font-weight: 600;"
+        )
+        self.anthropic_chip.setFixedHeight(22)
+        self.anthropic_balance = QLabel("$11.80  remaining")
+        self.anthropic_balance.setObjectName("BigNumber")
+        anth_row.addWidget(self.anthropic_chip, alignment=Qt.AlignVCenter)
+        anth_row.addWidget(self.anthropic_balance, alignment=Qt.AlignVCenter)
+        anth_row.addStretch()
+        anth_block.addLayout(anth_row)
+        lay.addLayout(anth_block)
+
+        lay.addWidget(self._divider())
+
+        # Row 3 — Estimated spend with period segmented control
+        spend_block = QVBoxLayout(); spend_block.setSpacing(10)
+        spend_head = QHBoxLayout(); spend_head.setSpacing(8); spend_head.setContentsMargins(0, 0, 0, 0)
+        spend_eyebrow = QLabel("ESTIMATED SPEND"); spend_eyebrow.setObjectName("Muted")
+        spend_head.addWidget(spend_eyebrow); spend_head.addStretch()
+
+        # Segmented control container
+        seg_wrap = QFrame()
+        seg_wrap.setStyleSheet(
+            f"background: {t.BG_CANVAS}; border: 1px solid {t.BORDER_MUTED}; "
+            f"border-radius: 9999px;"
+        )
+        seg_layout = QHBoxLayout(seg_wrap)
+        seg_layout.setContentsMargins(2, 2, 2, 2); seg_layout.setSpacing(0)
+        self._seg_buttons: dict[str, QPushButton] = {}
+        for period in ("1D", "1W", "1M", "1Y"):
+            b = QPushButton(period)
+            b.setObjectName("ChipOn" if period == self._spend_period else "ChipOff")
+            b.setFixedHeight(22)
             b.setCursor(Qt.PointingHandCursor)
-        self.tab_monthly.clicked.connect(lambda: self._set_tab("monthly"))
-        self.tab_yearly.clicked.connect(lambda: self._set_tab("yearly"))
-        ch.addWidget(self.tab_monthly); ch.addWidget(self.tab_yearly)
-        clay.addLayout(ch)
-        self.chart_total = QLabel("$0.00")
-        self.chart_total.setObjectName("Huge")
-        clay.addWidget(self.chart_total)
-        self.chart_wrap = QVBoxLayout()
-        clay.addLayout(self.chart_wrap, 1)
-        self.chart = BarChart([], unit=" imgs")
-        self.chart_wrap.addWidget(self.chart)
-        mid.addWidget(cash, 55)
+            b.setStyleSheet(
+                "QPushButton { padding: 0 10px; font-size: 10px; font-weight: 600; "
+                "letter-spacing: 0.04em; border: none; border-radius: 9999px; background: transparent; }"
+                f"QPushButton[active='1'] {{ background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; }}"
+                f"QPushButton[active='0'] {{ color: {t.TEXT_MUTED}; }}"
+                f"QPushButton[active='0']:hover {{ background: {t.BG_HOVER}; }}"
+            )
+            b.setProperty("active", "1" if period == self._spend_period else "0")
+            b.clicked.connect(lambda _=None, p=period: self._on_period_change(p))
+            seg_layout.addWidget(b)
+            self._seg_buttons[period] = b
 
-        root.addLayout(mid)
+        spend_head.addWidget(seg_wrap)
+        spend_block.addLayout(spend_head)
 
-        bottom = Card()
-        blay = QVBoxLayout(bottom); blay.setContentsMargins(20, 18, 20, 18); blay.setSpacing(10)
-        bh = QHBoxLayout()
-        bt = QLabel("Recent Runs"); bt.setObjectName("H2")
-        bh.addWidget(bt); bh.addStretch()
-        see_all = QPushButton("  See all")
-        see_all.setObjectName("GhostBtn")
-        see_all.setCursor(Qt.PointingHandCursor)
-        see_all.clicked.connect(self.open_history.emit)
-        bh.addWidget(see_all)
-        blay.addLayout(bh)
+        self.spend_amount = QLabel("$32.40")
+        self.spend_amount.setObjectName("BigNumber")
+        spend_block.addWidget(self.spend_amount)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Run", "Date", "Iterations", "Resolution", "Aspect", "Status"])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setShowGrid(False)
-        self.table.cellDoubleClicked.connect(self._open_row)
-        blay.addWidget(self.table)
+        # Usage bar
+        track = QFrame()
+        track.setFixedHeight(6)
+        track.setStyleSheet(
+            f"background: {t.BG_HOVER}; border-radius: 3px;"
+        )
+        tl = QHBoxLayout(track); tl.setContentsMargins(0, 0, 0, 0); tl.setSpacing(0)
+        self.usage_fill = QFrame()
+        self.usage_fill.setStyleSheet(f"background: {t.ACCENT}; border-radius: 3px;")
+        self.usage_fill.setFixedHeight(6)
+        tl.addWidget(self.usage_fill, 65)
+        tl.addStretch(35)
+        spend_block.addWidget(track)
+        spend_block.addSpacing(2)
 
-        root.addWidget(bottom, 1)
+        self.usage_label = QLabel("65% of $50 budget")
+        self.usage_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+        spend_block.addWidget(self.usage_label)
+        lay.addLayout(spend_block)
 
-        self._tab = "monthly"
+        return card
 
-    def _set_tab(self, which: str):
-        self._tab = which
-        self.tab_monthly.setObjectName("TabBtnActive" if which == "monthly" else "TabBtn")
-        self.tab_yearly.setObjectName("TabBtnActive" if which == "yearly" else "TabBtn")
-        for b in (self.tab_monthly, self.tab_yearly):
-            b.style().unpolish(b); b.style().polish(b)
-        self.refresh()
+    def _divider(self) -> QFrame:
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background: {t.BORDER_MUTED};")
+        return line
+
+    def _on_period_change(self, period: str):
+        self._spend_period = period
+        for p, btn in self._seg_buttons.items():
+            btn.setProperty("active", "1" if p == period else "0")
+            btn.style().unpolish(btn); btn.style().polish(btn)
+        self._refresh_spend()
+
+    # ── Section: What are we making today? (3 tinted cards) ─────────────────
+
+    def _build_workflows(self) -> QVBoxLayout:
+        block = QVBoxLayout(); block.setContentsMargins(0, 0, 0, 0); block.setSpacing(0)
+        head = QHBoxLayout(); head.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("What are we making today?"); title.setObjectName("H2")
+        sub = QLabel("Pick a workflow")
+        sub.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px; font-weight: 500;")
+        head.addWidget(title); head.addStretch(); head.addWidget(sub, alignment=Qt.AlignBottom)
+        block.addLayout(head)
+        block.addSpacing(16)
+
+        grid = QHBoxLayout(); grid.setSpacing(16)
+        grid.addWidget(self._workflow_card(
+            "01", "CardLavender", "generate", "Generate variations",
+            "Drop a reference ad, get N variations in your style.",
+            self.open_generate.emit,
+        ), 1)
+        grid.addWidget(self._workflow_card(
+            "02", "CardRose", "adapt", "Adapt to a brand",
+            "Re-render any ad for one of your brand DNAs.",
+            self.open_adapt.emit,
+        ), 1)
+        grid.addWidget(self._workflow_card(
+            "03", "CardViolet", "wrench", "Fix creatives",
+            "Surgical fix on existing ads — wrong size, wrong color.",
+            self.open_fix.emit,
+        ), 1)
+        block.addLayout(grid)
+        return block
+
+    def _workflow_card(self, number: str, frame_obj_name: str, icon: str,
+                       title: str, body: str, on_click) -> QFrame:
+        card = QFrame()
+        card.setObjectName(frame_obj_name)
+        card.setCursor(Qt.PointingHandCursor)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(28, 28, 28, 28)
+        lay.setSpacing(0)
+
+        # Top row: number badge + icon halo
+        top = QHBoxLayout(); top.setContentsMargins(0, 0, 0, 0)
+        badge = QLabel(number)
+        badge.setFixedSize(32, 32)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet(
+            f"background: {t.BG_CANVAS}; color: {t.TEXT}; "
+            f"border-radius: 16px; font-size: 12px; font-weight: 600;"
+        )
+        top.addWidget(badge); top.addStretch()
+
+        halo = QFrame()
+        halo.setFixedSize(56, 56)
+        halo.setStyleSheet(
+            f"background: rgba(255,255,255,0.7); border-radius: 28px;"
+        )
+        hl = QVBoxLayout(halo); hl.setContentsMargins(0, 0, 0, 0)
+        ic = icon_label(icon, 24, t.ACCENT_STRONG); ic.setAlignment(Qt.AlignCenter)
+        hl.addWidget(ic, alignment=Qt.AlignCenter)
+        top.addWidget(halo)
+        lay.addLayout(top)
+        lay.addSpacing(36)
+
+        h2 = QLabel(title); h2.setObjectName("H2")
+        lay.addWidget(h2)
+        lay.addSpacing(8)
+        b = QLabel(body)
+        b.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 13px; line-height: 1.5;")
+        b.setWordWrap(True)
+        lay.addWidget(b)
+        lay.addSpacing(20)
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(0); btn_row.setContentsMargins(0, 0, 0, 0)
+        new_btn = QPushButton("  New  ›")
+        new_btn.setObjectName("OnCardBtn")
+        new_btn.setCursor(Qt.PointingHandCursor)
+        new_btn.clicked.connect(on_click)
+        btn_row.addWidget(new_btn); btn_row.addStretch()
+        lay.addLayout(btn_row)
+        lay.addStretch()
+
+        # Whole card click also triggers the workflow
+        card.mousePressEvent = lambda _ev, fn=on_click: fn()
+        return card
+
+    # ── Section: recent runs (4 cards) ──────────────────────────────────────
+
+    def _build_recent_runs(self) -> QVBoxLayout:
+        block = QVBoxLayout(); block.setContentsMargins(0, 0, 0, 0); block.setSpacing(0)
+        head = QHBoxLayout(); head.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("Recent runs"); title.setObjectName("H2")
+        view_all = QPushButton("View all  →")
+        view_all.setStyleSheet(
+            f"background: transparent; border: none; color: {t.TEXT_MUTED}; "
+            f"font-size: 12px; font-weight: 500;"
+        )
+        view_all.setCursor(Qt.PointingHandCursor)
+        view_all.clicked.connect(self.open_history.emit)
+        head.addWidget(title); head.addStretch(); head.addWidget(view_all)
+        block.addLayout(head)
+        block.addSpacing(16)
+
+        self.runs_grid = QHBoxLayout(); self.runs_grid.setSpacing(16); self.runs_grid.setContentsMargins(0, 0, 0, 0)
+        block.addLayout(self.runs_grid)
+        return block
+
+    def _run_card(self, run: dict) -> QFrame:
+        card = QFrame()
+        card.setObjectName("RunCard")
+        card.setCursor(Qt.PointingHandCursor)
+        lay = QVBoxLayout(card); lay.setContentsMargins(14, 14, 14, 14); lay.setSpacing(12)
+
+        thumb_path = run.get("images", [None])[0] if run.get("images") else None
+        thumb = QFrame()
+        thumb.setMinimumHeight(140)
+        if thumb_path and Path(str(thumb_path)).exists():
+            from .widgets import round_pixmap
+            tlbl = QLabel()
+            tlbl.setPixmap(round_pixmap(Path(str(thumb_path)), 220, 180, 14))
+            tlbl.setAlignment(Qt.AlignCenter)
+            tl = QVBoxLayout(thumb); tl.setContentsMargins(0, 0, 0, 0)
+            tl.addWidget(tlbl, alignment=Qt.AlignCenter)
+        else:
+            thumb.setStyleSheet(
+                f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+                f"stop:0 {t.CARD_LAVENDER}, stop:1 {t.ACCENT_BG});"
+                f"border-radius: 14px;"
+            )
+        lay.addWidget(thumb)
+
+        header = QHBoxLayout(); header.setContentsMargins(0, 0, 0, 0)
+        name = run.get("brand") or Path(run.get("reference") or "Run").stem
+        n_lbl = QLabel(name[:18])
+        n_lbl.setStyleSheet(f"color: {t.TEXT}; font-size: 14px; font-weight: 600;")
+        run_type = (run.get("type") or "Generate").capitalize()
+        type_pill = QLabel(run_type)
+        type_pill.setStyleSheet(
+            f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
+            f"padding: 4px 10px; border-radius: 9999px; font-size: 10px; font-weight: 600;"
+        )
+        header.addWidget(n_lbl); header.addStretch(); header.addWidget(type_pill)
+        lay.addLayout(header)
+
+        meta = QHBoxLayout(); meta.setContentsMargins(0, 0, 0, 0)
+        dt = core.parse_run_dt(run.get("timestamp", ""))
+        date_txt = dt.strftime("%d %b %Y") if dt else (run.get("timestamp", "")[:8])
+        date = QLabel(date_txt)
+        date.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+        results = run.get("results", [])
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        ratio = QLabel(f"{ok} of {len(results)}")
+        ratio.setStyleSheet(f"color: {t.SUCCESS}; font-size: 11px; font-weight: 600;")
+        meta.addWidget(date); meta.addStretch(); meta.addWidget(ratio)
+        lay.addLayout(meta)
+
+        card.mousePressEvent = lambda _ev, r=run: self.open_run.emit(r)
+        return card
+
+    # ── Section: brands quickstrip ──────────────────────────────────────────
+
+    def _build_brands_strip(self) -> QVBoxLayout:
+        block = QVBoxLayout(); block.setContentsMargins(0, 0, 0, 0); block.setSpacing(0)
+        head = QHBoxLayout(); head.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("Your brands"); title.setObjectName("H2")
+        manage = QPushButton("Manage  →")
+        manage.setStyleSheet(
+            f"background: transparent; border: none; color: {t.TEXT_MUTED}; "
+            f"font-size: 12px; font-weight: 500;"
+        )
+        manage.setCursor(Qt.PointingHandCursor)
+        manage.clicked.connect(self.open_brands.emit)
+        head.addWidget(title); head.addStretch(); head.addWidget(manage)
+        block.addLayout(head)
+        block.addSpacing(16)
+
+        self.brands_strip = QHBoxLayout(); self.brands_strip.setSpacing(24); self.brands_strip.setContentsMargins(0, 0, 0, 0)
+        self.brands_strip.addStretch()
+        block.addLayout(self.brands_strip)
+        return block
+
+    def _brand_circle(self, name: str, image: str | None = None) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(8)
+        wrap.setFixedWidth(64)
+
+        circle = QFrame()
+        circle.setFixedSize(52, 52)
+        if image and Path(image).exists():
+            from .widgets import round_pixmap
+            lbl = QLabel(circle)
+            lbl.setPixmap(round_pixmap(Path(image), 52, 52, 26))
+            lbl.setFixedSize(52, 52)
+        else:
+            circle.setStyleSheet(
+                f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+                f"stop:0 {t.CARD_LAVENDER}, stop:1 {t.ACCENT_BG});"
+                f"border: 1px solid {t.BORDER_MUTED}; border-radius: 26px;"
+            )
+        col.addWidget(circle, alignment=Qt.AlignCenter)
+
+        lbl = QLabel(name[:8])
+        lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px; font-weight: 500;")
+        lbl.setAlignment(Qt.AlignCenter)
+        col.addWidget(lbl)
+
+        wrap.setCursor(Qt.PointingHandCursor)
+        wrap.mousePressEvent = lambda _ev: self.open_brands.emit()
+        return wrap
+
+    def _add_brand_circle(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(8)
+        wrap.setFixedWidth(64)
+
+        circle = QFrame()
+        circle.setFixedSize(52, 52)
+        circle.setStyleSheet(
+            f"background: {t.BG_CANVAS}; "
+            f"border: 1px dashed {t.ACCENT}; border-radius: 26px;"
+        )
+        cl = QVBoxLayout(circle); cl.setContentsMargins(0, 0, 0, 0)
+        plus = QLabel("+")
+        plus.setAlignment(Qt.AlignCenter)
+        plus.setStyleSheet(f"color: {t.ACCENT_STRONG}; font-size: 22px; font-weight: 500;")
+        cl.addWidget(plus)
+        col.addWidget(circle, alignment=Qt.AlignCenter)
+
+        lbl = QLabel("Add")
+        lbl.setStyleSheet(f"color: {t.ACCENT_STRONG}; font-size: 12px; font-weight: 500;")
+        lbl.setAlignment(Qt.AlignCenter)
+        col.addWidget(lbl)
+
+        wrap.setCursor(Qt.PointingHandCursor)
+        wrap.mousePressEvent = lambda _ev: self.open_brands.emit()
+        return wrap
+
+    # ── Refresh ─────────────────────────────────────────────────────────────
 
     def refresh(self):
         runs = core.list_runs()
-        self._runs = runs
 
-        total_runs = len(runs)
-        total_vars = sum(sum(1 for r in run.get("results", []) if r.get("status") == "ok") for run in runs)
-        total_cost = sum(core.cost_for_run(r) for r in runs)
+        # Active provider chip
+        active = core.get_active_provider_name()
+        active_label = core.PROVIDER_LABELS.get(active, active.title())
+        self.provider_chip.setText(active_label)
 
-        # Stats row
-        while self.stats_row.count():
-            item = self.stats_row.takeAt(0)
+        # Spend (computed from runs filtered by period)
+        self._all_runs = runs
+        self._refresh_spend()
+
+        # Recent runs grid
+        while self.runs_grid.count():
+            item = self.runs_grid.takeAt(0)
             w = item.widget()
             if w: w.deleteLater()
+        for r in runs[:4]:
+            self.runs_grid.addWidget(self._run_card(r), 1)
+        # Pad with empty placeholders so grid stays at 4 cells
+        for _ in range(max(0, 4 - len(runs[:4]))):
+            placeholder = QFrame()
+            placeholder.setObjectName("RunCard")
+            placeholder.setMinimumHeight(220)
+            pl = QVBoxLayout(placeholder); pl.setContentsMargins(14, 14, 14, 14)
+            empty = QLabel("No run yet")
+            empty.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+            empty.setAlignment(Qt.AlignCenter)
+            pl.addStretch(); pl.addWidget(empty); pl.addStretch()
+            self.runs_grid.addWidget(placeholder, 1)
 
-        hero = StatCard("zap", "Variations", "All images generated", str(total_vars),
-                        hero=True, action="See details")
-        c1 = StatCard("wallet", "Total Spend", "Cumulative MuAPI cost",
-                      f"${total_cost:.2f}", trend=f"+{len(runs[:5])*0}%" if False else "+0%")
-        c1.findChild(QLabel, "HeroBig")  # noop
-        c2 = StatCard("chart", "Total Runs", "Batches launched", str(total_runs), trend="")
-        self.stats_row.addWidget(hero, 1)
-        self.stats_row.addWidget(c1, 1)
-        self.stats_row.addWidget(c2, 1)
-
-        # Chart
-        self.chart_wrap.removeWidget(self.chart)
-        self.chart.deleteLater()
-
-        now = datetime.now()
-        if self._tab == "monthly":
-            bins = []
-            for delta in range(6, -1, -1):
-                y = now.year; m = now.month - delta
-                while m <= 0:
-                    m += 12; y -= 1
-                bins.append((y, m, MONTHS[m - 1]))
-            counts = {f"{y}-{m}": 0 for y, m, _ in bins}
-            costs = {f"{y}-{m}": 0.0 for y, m, _ in bins}
-            for r in runs:
-                dt = core.parse_run_dt(r["timestamp"])
-                if not dt: continue
-                k = f"{dt.year}-{dt.month}"
-                if k in counts:
-                    done = sum(1 for rr in r.get("results", []) if rr.get("status") == "ok")
-                    counts[k] += done
-                    costs[k] += core.cost_for_run(r)
-            labels = [label for _, _, label in bins]
-            vals = [counts[f"{y}-{m}"] for y, m, _ in bins]
-            # highlight current month
-            hi = len(bins) - 1
-            unit = " imgs"
-            period_cost = sum(costs.values())
-        else:
-            bins = list(range(now.year - 4, now.year + 1))
-            counts = {y: 0 for y in bins}
-            costs = {y: 0.0 for y in bins}
-            for r in runs:
-                dt = core.parse_run_dt(r["timestamp"])
-                if not dt or dt.year not in counts: continue
-                done = sum(1 for rr in r.get("results", []) if rr.get("status") == "ok")
-                counts[dt.year] += done
-                costs[dt.year] += core.cost_for_run(r)
-            labels = [str(y) for y in bins]
-            vals = [counts[y] for y in bins]
-            hi = len(bins) - 1
-            unit = " imgs"
-            period_cost = sum(costs.values())
-
-        self.chart = BarChart(list(zip(labels, vals)), highlight_index=hi, unit=unit)
-        self.chart_wrap.addWidget(self.chart)
-        self.chart_total.setText(f"${period_cost:.2f}")
-
-        # Reference library (last 4 runs, thumb of ref)
-        while self.wallet_body.count():
-            item = self.wallet_body.takeAt(0)
+        # Brands strip
+        while self.brands_strip.count():
+            item = self.brands_strip.takeAt(0)
             w = item.widget()
             if w: w.deleteLater()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())[:6]
+        for n in names:
+            img = brands[n].get("product_image", "")
+            self.brands_strip.addWidget(self._brand_circle(n, img))
+        self.brands_strip.addWidget(self._add_brand_circle())
+        self.brands_strip.addStretch()
 
-        shown = runs[:4]
-        if not shown:
-            empty = QLabel("No runs yet. Click + New to generate your first batch.")
-            empty.setObjectName("Dim"); empty.setAlignment(Qt.AlignCenter)
-            empty.setStyleSheet(f"color: {t.TEXT_MUTED}; padding: 30px 0;")
-            self.wallet_body.addWidget(empty)
-        else:
-            for r in shown:
-                self.wallet_body.addWidget(self._library_row(r))
-
-        # Recent Runs table
-        self.table.setRowCount(0)
-        for r in runs[:8]:
-            self._insert_run_row(r)
-
-    def _library_row(self, r: dict) -> QWidget:
-        row = QFrame()
-        row.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
-        row.setFixedHeight(68)
-        rl = QHBoxLayout(row); rl.setContentsMargins(10, 10, 14, 10); rl.setSpacing(12)
-        img_path = r["images"][0] if r["images"] else None
-        thumb = ThumbLabel(img_path, 48, 48, 8) if img_path else QLabel()
-        if not img_path:
-            thumb.setFixedSize(48, 48)
-            thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
-        rl.addWidget(thumb)
-        tx = QVBoxLayout(); tx.setSpacing(2)
-        name = Path(r.get("reference") or "Reference").name or "Reference"
-        t1 = QLabel(name); t1.setStyleSheet(f"font-weight: 600; font-size: 13px;")
-        dt = core.parse_run_dt(r["timestamp"])
-        dt_txt = dt.strftime("%d %b %Y · %H:%M") if dt else r["timestamp"]
-        p = r.get("params", {})
-        t2 = QLabel(f"{dt_txt}  ·  {p.get('iterations','?')} var  ·  {p.get('resolution','?')}  ·  {p.get('aspect_ratio','?')}")
-        t2.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
-        tx.addWidget(t1); tx.addWidget(t2)
-        rl.addLayout(tx); rl.addStretch()
-        open_btn = icon_button("open", 14, t.TEXT_DIM, "Open folder")
-        open_btn.clicked.connect(lambda _=None, path=r["dir"]: open_path(path))
-        rl.addWidget(open_btn)
-        row.mouseDoubleClickEvent = lambda _ev, run=r: self.open_run.emit(run)
-        return row
-
-    def _insert_run_row(self, r: dict):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        dt = core.parse_run_dt(r["timestamp"])
-        name = Path(r.get("reference") or "Reference").name
-        p = r.get("params", {})
-        ok = sum(1 for rr in r.get("results", []) if rr.get("status") == "ok")
-        fail = sum(1 for rr in r.get("results", []) if rr.get("status") != "ok")
-        status_txt = "Completed" if fail == 0 and ok else ("Partial" if ok else "Failed")
-        color = t.GREEN if status_txt == "Completed" else (t.YELLOW if status_txt == "Partial" else t.RED)
-
-        cells = [
-            name,
-            dt.strftime("%d %b %Y · %H:%M") if dt else r["timestamp"],
-            f"{ok}/{p.get('iterations','?')}",
-            p.get("resolution", "—"),
-            p.get("aspect_ratio", "—"),
-        ]
-        for i, txt in enumerate(cells):
-            item = QTableWidgetItem(str(txt))
-            if i == 0:
-                item.setFont(QFont("Inter", 12, QFont.DemiBold))
-            else:
-                item.setForeground(QColor(t.TEXT_DIM))
-            item.setData(Qt.UserRole, r)
-            self.table.setItem(row, i, item)
-        pill = StatusPill(status_txt, color)
-        wrap = QWidget(); wl = QHBoxLayout(wrap); wl.setContentsMargins(8, 0, 8, 0)
-        wl.addWidget(pill); wl.addStretch()
-        self.table.setCellWidget(row, 5, wrap)
-
-    def _open_row(self, row: int, _col: int):
-        item = self.table.item(row, 0)
-        if not item: return
-        run = item.data(Qt.UserRole)
-        if run: self.open_run.emit(run)
+    def _refresh_spend(self):
+        """Compute spend over the selected period."""
+        from datetime import timedelta
+        runs = getattr(self, "_all_runs", []) or []
+        cutoff_days = {"1D": 1, "1W": 7, "1M": 30, "1Y": 365}.get(self._spend_period, 30)
+        cutoff = datetime.now() - timedelta(days=cutoff_days)
+        total = 0.0
+        for r in runs:
+            dt = core.parse_run_dt(r.get("timestamp", ""))
+            if dt and dt >= cutoff:
+                total += core.cost_for_run(r)
+        self.spend_amount.setText(f"${total:.2f}")
 
 
 # ─── Generate ───────────────────────────────────────────────────────────────

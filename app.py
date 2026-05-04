@@ -41,7 +41,7 @@ _bootstrap_frozen()
 
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -50,14 +50,26 @@ from gui import theme
 from gui.main import MainWindow
 
 
+def _load_fonts() -> None:
+    """Register Inter (4 weights) + Caveat from gui/fonts/."""
+    fonts_dir = Path(__file__).resolve().parent / "gui" / "fonts"
+    if not fonts_dir.exists():
+        return
+    for f in fonts_dir.iterdir():
+        if f.suffix.lower() in (".ttf", ".otf"):
+            QFontDatabase.addApplicationFont(str(f))
+
+
 def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
-    app.setApplicationName("Ad Variator")
-    app.setOrganizationName("ad-variator")
+    app.setApplicationName("Mimica")
+    app.setOrganizationName("mimica")
+
+    _load_fonts()
 
     f = QFont("Inter")
-    if f.exactMatch() is False:
+    if not f.exactMatch():
         f = QFont("SF Pro Display")
     f.setPointSize(12)
     app.setFont(f)
