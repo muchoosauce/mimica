@@ -27,6 +27,21 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
+class _VerticalOnlyScrollArea(QScrollArea):
+    """QScrollArea that ignores horizontal wheel/trackpad scrolling.
+
+    macOS trackpads emit horizontal wheel events alongside vertical ones;
+    even with the horizontal scrollbar policy set to AlwaysOff, the
+    underlying QAbstractScrollArea still consumes those deltas and shifts
+    the viewport. We intercept them and forward only the vertical part.
+    """
+    def wheelEvent(self, event):
+        if event.angleDelta().x() and not event.angleDelta().y():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+
 # ─── Dashboard ──────────────────────────────────────────────────────────────
 
 class DashboardPage(QWidget):
@@ -50,7 +65,7 @@ class DashboardPage(QWidget):
         outer.setContentsMargins(40, 16, 40, 32)
         outer.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = _VerticalOnlyScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -84,11 +99,13 @@ class DashboardPage(QWidget):
 
         self.welcome = QLabel("Welcome back, Sofiane")
         self.welcome.setObjectName("H1")
+        self.welcome.setWordWrap(True)
         left.addWidget(self.welcome)
         left.addSpacing(2)
 
         cursive = QLabel("ready when you are")
         cursive.setObjectName("Cursive")
+        cursive.setWordWrap(True)
         left.addWidget(cursive)
         left.addSpacing(14)
 

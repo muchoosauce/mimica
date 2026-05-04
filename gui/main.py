@@ -234,7 +234,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Mimica")
         self.resize(1280, 820)
-        self.setMinimumSize(1100, 720)
+        self.setMinimumSize(1200, 720)
 
         central = QWidget(); central.setObjectName("Root")
         root = QHBoxLayout(central); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)

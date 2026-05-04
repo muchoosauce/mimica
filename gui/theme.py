@@ -142,7 +142,7 @@ QFrame#ProviderStatusCard {{
 QPushButton#SidebarItem {{
     background: transparent;
     border: none;
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 10px 14px;
     text-align: left;
     color: {TEXT};
@@ -156,7 +156,7 @@ QPushButton#SidebarItem:hover {{
 QPushButton#SidebarItemActive {{
     background: {ACCENT_BG};
     border: none;
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 10px 14px;
     text-align: left;
     color: {ACCENT_STRONG};
@@ -169,7 +169,7 @@ QPushButton#SidebarItemActive {{
 QPushButton#PrimaryBtn {{
     background: {ACCENT};
     border: 1px solid transparent;
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 10px 18px;
     color: {TEXT_INVERSE};
     font-weight: 600;
@@ -189,7 +189,7 @@ QPushButton#PrimaryBtn:disabled {{
 QPushButton#GhostBtn {{
     background: transparent;
     border: 1px solid {BORDER};
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 9px 16px;
     color: {TEXT};
     font-weight: 500;
@@ -203,7 +203,7 @@ QPushButton#GhostBtn:hover {{
 QPushButton#OnCardBtn {{
     background: {BG_CANVAS};
     border: 1px solid transparent;
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 9px 16px;
     color: {TEXT};
     font-weight: 600;
@@ -216,7 +216,7 @@ QPushButton#OnCardBtn:hover {{
 QPushButton#SearchBtn {{
     background: {BG_ELEVATED};
     border: 1px solid transparent;
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 9px 14px;
     color: {TEXT_MUTED};
     font-weight: 500;
@@ -229,7 +229,7 @@ QPushButton#SearchBtn:hover {{
 QPushButton {{
     background: transparent;
     border: 1px solid {BORDER};
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 8px 14px;
     color: {TEXT};
     font-weight: 500;
@@ -245,7 +245,7 @@ QPushButton:hover {{
 QPushButton#ChipOff {{
     background: {BG_CANVAS};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 6px 12px;
     color: {TEXT_MUTED};
     font-weight: 500;
@@ -259,7 +259,7 @@ QPushButton#ChipOff:hover {{
 QPushButton#ChipOn {{
     background: {ACCENT_BG};
     border: 1px solid transparent;
-    border-radius: 9999px;
+    border-radius: 22px;
     padding: 6px 12px;
     color: {ACCENT_STRONG};
     font-weight: 600;
