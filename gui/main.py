@@ -181,6 +181,7 @@ class Sidebar(QWidget):
 class TopBar(QWidget):
     def __init__(self):
         super().__init__()
+        self.setObjectName("TopBar")
         self.setFixedHeight(56)
         self._current_icon = "dashboard"
         self._build()
@@ -241,7 +242,8 @@ class MainWindow(QMainWindow):
         self.sidebar = Sidebar("dashboard")
         root.addWidget(self.sidebar)
 
-        right = QVBoxLayout(); right.setContentsMargins(0, 0, 0, 0); right.setSpacing(0)
+        right_w = QWidget(); right_w.setObjectName("PageHost")
+        right = QVBoxLayout(right_w); right.setContentsMargins(0, 0, 0, 0); right.setSpacing(0)
         self.topbar = TopBar()
         right.addWidget(self.topbar)
 
@@ -259,7 +261,6 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
 
-        right_w = QWidget(); right_w.setLayout(right)
         root.addWidget(right_w, 1)
 
         self.setCentralWidget(central)

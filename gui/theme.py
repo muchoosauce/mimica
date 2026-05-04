@@ -62,11 +62,26 @@ STYLESHEET = f"""
     outline: none;
 }}
 
-QMainWindow, QWidget#Root {{ background: {BG_CANVAS}; }}
+QMainWindow, QWidget#Root, QWidget#TopBar, QWidget#PageHost {{
+    background: {BG_CANVAS};
+}}
+
+QStackedWidget, QStackedWidget > QWidget {{
+    background: {BG_CANVAS};
+}}
+
+QScrollArea, QScrollArea > QWidget, QScrollArea > QWidget > QWidget {{
+    background: {BG_CANVAS};
+    border: none;
+}}
 
 QWidget#Sidebar {{
     background: {BG_SIDEBAR};
     border-right: 1px solid {BORDER_MUTED};
+}}
+
+QWidget#Sidebar QPushButton#GhostBtn {{
+    background: transparent;
 }}
 
 QFrame#Card {{

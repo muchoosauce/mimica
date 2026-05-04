@@ -53,8 +53,10 @@ class DashboardPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         inner = QWidget()
+        inner.setObjectName("Root")
         root = QVBoxLayout(inner)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(32)
@@ -122,6 +124,8 @@ class DashboardPage(QWidget):
     def _build_stat_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("StatCard")
+        card.setMinimumWidth(320)
+        card.setMaximumWidth(440)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(24, 24, 24, 24)
         lay.setSpacing(16)
@@ -141,7 +145,7 @@ class DashboardPage(QWidget):
         prov_head.addWidget(topup1)
         prov_block.addLayout(prov_head)
 
-        prov_row = QHBoxLayout(); prov_row.setSpacing(10); prov_row.setContentsMargins(0, 0, 0, 0)
+        prov_row = QHBoxLayout(); prov_row.setSpacing(8); prov_row.setContentsMargins(0, 0, 0, 0)
         self.provider_chip = QLabel("MuAPI")
         self.provider_chip.setStyleSheet(
             f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
@@ -149,10 +153,17 @@ class DashboardPage(QWidget):
             f"font-size: 11px; font-weight: 600;"
         )
         self.provider_chip.setFixedHeight(22)
-        self.provider_balance = QLabel("$24.15  remaining")
-        self.provider_balance.setObjectName("BigNumber")
+        self.provider_balance = QLabel("$24.15")
+        self.provider_balance.setStyleSheet(
+            f"color: {t.TEXT}; font-size: 24px; font-weight: 700; letter-spacing: -0.02em;"
+        )
+        prov_remaining = QLabel("remaining")
+        prov_remaining.setStyleSheet(
+            f"color: {t.TEXT_MUTED}; font-size: 12px; font-weight: 500;"
+        )
         prov_row.addWidget(self.provider_chip, alignment=Qt.AlignVCenter)
         prov_row.addWidget(self.provider_balance, alignment=Qt.AlignVCenter)
+        prov_row.addWidget(prov_remaining, alignment=Qt.AlignVCenter)
         prov_row.addStretch()
         prov_block.addLayout(prov_row)
         lay.addLayout(prov_block)
@@ -174,7 +185,7 @@ class DashboardPage(QWidget):
         anth_head.addWidget(topup2)
         anth_block.addLayout(anth_head)
 
-        anth_row = QHBoxLayout(); anth_row.setSpacing(10); anth_row.setContentsMargins(0, 0, 0, 0)
+        anth_row = QHBoxLayout(); anth_row.setSpacing(8); anth_row.setContentsMargins(0, 0, 0, 0)
         self.anthropic_chip = QLabel("Anthropic")
         self.anthropic_chip.setStyleSheet(
             f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
@@ -182,10 +193,17 @@ class DashboardPage(QWidget):
             f"font-size: 11px; font-weight: 600;"
         )
         self.anthropic_chip.setFixedHeight(22)
-        self.anthropic_balance = QLabel("$11.80  remaining")
-        self.anthropic_balance.setObjectName("BigNumber")
+        self.anthropic_balance = QLabel("$11.80")
+        self.anthropic_balance.setStyleSheet(
+            f"color: {t.TEXT}; font-size: 24px; font-weight: 700; letter-spacing: -0.02em;"
+        )
+        anth_remaining = QLabel("remaining")
+        anth_remaining.setStyleSheet(
+            f"color: {t.TEXT_MUTED}; font-size: 12px; font-weight: 500;"
+        )
         anth_row.addWidget(self.anthropic_chip, alignment=Qt.AlignVCenter)
         anth_row.addWidget(self.anthropic_balance, alignment=Qt.AlignVCenter)
+        anth_row.addWidget(anth_remaining, alignment=Qt.AlignVCenter)
         anth_row.addStretch()
         anth_block.addLayout(anth_row)
         lay.addLayout(anth_block)
