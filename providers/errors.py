@@ -21,6 +21,10 @@ class CensorshipError(ProviderError):
 _TRANSIENT_MARKERS = (
     "nameresolutionerror", "max retries", "connection aborted",
     "connection reset", "timed out", "temporary failure", "remote end closed",
+    # Opaque upstream-server failures we've seen returned by MuAPI/Kie when
+    # an internal job dies for no documented reason — almost always retryable.
+    "unknown error", "internal server error", "internal error",
+    "service unavailable", "bad gateway", "gateway timeout",
 )
 
 _CENSORSHIP_MARKERS = (

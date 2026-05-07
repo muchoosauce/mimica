@@ -7,11 +7,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSizePolicy,
-    QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout,
-    QWidget
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
+    QSizePolicy, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit,
+    QVBoxLayout, QWidget
 )
 
 from . import core
@@ -2805,6 +2805,1362 @@ class AdaptPage(QWidget):
 
     def _open_folder(self):
         if self._out_dir: open_path(self._out_dir)
+
+    def _clear_grid(self):
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+
+
+# ─── B-Roll ─────────────────────────────────────────────────────────────────
+
+class BRollImageWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    out_dir_signal = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, brand_name, specs, counts, res, aspect, workers, output_root, image_model):
+        super().__init__()
+        self._args = (brand_name, specs, counts, res, aspect, workers)
+        self._output_root = output_root
+        self._image_model = image_model
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_broll_images(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            output_root=self._output_root,
+            image_model=self._image_model,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
+class BRollVideoWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    out_dir_signal = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, images_run_dir, approved_indexes, duration, aspect, workers,
+                 video_model, sound):
+        super().__init__()
+        self._args = (images_run_dir, approved_indexes, duration, aspect, workers)
+        self._video_model = video_model
+        self._sound = sound
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_broll_videos(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            video_model=self._video_model,
+            sound=self._sound,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
+class _ApprovalThumb(QFrame):
+    """Image thumbnail with an Approve / Reject toggle. Default = approved."""
+    toggled = Signal(int, bool)
+
+    def __init__(self, idx: int, path: Path, category: str, parent=None):
+        super().__init__(parent)
+        self.idx = idx
+        self._approved = True
+        self.setFixedSize(180, 220)
+        self.setStyleSheet(
+            f"background: {t.BG_INPUT}; border: 2px solid {t.GREEN}; border-radius: 14px;"
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8); lay.setSpacing(6)
+
+        thumb = ThumbLabel(path, 164, 164, 10)
+        thumb.clicked.connect(lambda p=path: open_path(p))
+        lay.addWidget(thumb, alignment=Qt.AlignCenter)
+
+        meta = QHBoxLayout(); meta.setSpacing(6); meta.setContentsMargins(0, 0, 0, 0)
+        cat_lbl = QLabel(core.BROLL_CATEGORY_LABELS.get(category, category.upper()))
+        cat_lbl.setStyleSheet(
+            f"color: {t.TEXT_DIM}; font-size: 10px; font-weight: 700; letter-spacing: 0.05em;"
+        )
+        meta.addWidget(cat_lbl)
+        meta.addStretch()
+        self.toggle_btn = QPushButton("Approved")
+        self.toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_btn.setFixedHeight(24)
+        self._restyle_btn()
+        self.toggle_btn.clicked.connect(self._toggle)
+        meta.addWidget(self.toggle_btn)
+        lay.addLayout(meta)
+
+    def _toggle(self):
+        self._approved = not self._approved
+        self._restyle_card()
+        self._restyle_btn()
+        self.toggled.emit(self.idx, self._approved)
+
+    def _restyle_card(self):
+        color = t.GREEN if self._approved else t.TEXT_MUTED
+        self.setStyleSheet(
+            f"background: {t.BG_INPUT}; border: 2px solid {color}; border-radius: 14px;"
+        )
+
+    def _restyle_btn(self):
+        if self._approved:
+            self.toggle_btn.setText("Approved")
+            self.toggle_btn.setStyleSheet(
+                f"QPushButton {{ background: {t.GREEN}22; color: {t.GREEN}; "
+                f"border: 1px solid {t.GREEN}55; border-radius: 12px; "
+                f"font-size: 10px; font-weight: 700; padding: 0 10px; }}"
+                f"QPushButton:hover {{ background: {t.GREEN}33; }}"
+            )
+        else:
+            self.toggle_btn.setText("Rejected")
+            self.toggle_btn.setStyleSheet(
+                f"QPushButton {{ background: {t.BG_HOVER}; color: {t.TEXT_DIM}; "
+                f"border: 1px solid {t.BORDER}; border-radius: 12px; "
+                f"font-size: 10px; font-weight: 700; padding: 0 10px; }}"
+                f"QPushButton:hover {{ background: {t.BG_HOVER}; }}"
+            )
+
+    def is_approved(self) -> bool:
+        return self._approved
+
+
+class BRollPage(QWidget):
+    open_brands = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._image_worker: BRollImageWorker | None = None
+        self._video_worker: BRollVideoWorker | None = None
+        self._thread: QThread | None = None
+
+        self._images_dir: Path | None = None
+        self._videos_dir: Path | None = None
+        self._image_results: list[dict] = []
+        self._approval_thumbs: dict[int, _ApprovalThumb] = {}
+        self._video_count = 0
+
+        self._build()
+        self.refresh_brands()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("B-Roll"); h1.setObjectName("H1")
+        sub = QLabel(
+            "Generate UGC-style still B-rolls from a Brand DNA, approve the keepers, "
+            "then animate them into Kling 3 clips."
+        )
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        self.stepper = QHBoxLayout()
+        self.stepper.setSpacing(8); self.stepper.setContentsMargins(0, 0, 0, 0)
+        self._step_pills: list[QLabel] = []
+        for name in ("1. Setup", "2. Approve", "3. Videos"):
+            pill = QLabel(name)
+            pill.setStyleSheet(
+                f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+            )
+            self._step_pills.append(pill)
+            self.stepper.addWidget(pill)
+        self.stepper.addStretch()
+        root.addLayout(self.stepper)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._build_setup_panel())
+        self.stack.addWidget(self._build_approve_panel())
+        self.stack.addWidget(self._build_videos_panel())
+        root.addWidget(self.stack, 1)
+
+        self._set_step(0)
+
+    def _set_step(self, idx: int):
+        self.stack.setCurrentIndex(idx)
+        for i, pill in enumerate(self._step_pills):
+            if i == idx:
+                pill.setStyleSheet(
+                    f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+            elif i < idx:
+                pill.setStyleSheet(
+                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+            else:
+                pill.setStyleSheet(
+                    f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+
+    def _build_setup_panel(self) -> QWidget:
+        wrap = QWidget()
+        body = QHBoxLayout(wrap); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(14)
+
+        form_card = Card()
+        form_card.setMinimumWidth(520)
+        card_lay = QVBoxLayout(form_card)
+        card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        form_inner = QWidget()
+        form = QVBoxLayout(form_inner)
+        form.setContentsMargins(22, 20, 22, 20); form.setSpacing(16)
+        scroll.setWidget(form_inner)
+        card_lay.addWidget(scroll)
+
+        bl = QLabel("BRAND DNA"); bl.setObjectName("Muted")
+        form.addWidget(bl)
+        brow = QHBoxLayout(); brow.setSpacing(8)
+        self.brand_combo = QComboBox()
+        brow.addWidget(self.brand_combo, 1)
+        manage_btn = QPushButton("Manage")
+        manage_btn.setObjectName("GhostBtn"); manage_btn.setCursor(Qt.PointingHandCursor)
+        manage_btn.clicked.connect(self.open_brands.emit)
+        brow.addWidget(manage_btn)
+        form.addLayout(brow)
+
+        self.brand_preview = QFrame()
+        self.brand_preview.setObjectName("CardFlat")
+        self.brand_preview.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
+        bp = QHBoxLayout(self.brand_preview); bp.setContentsMargins(12, 12, 12, 12); bp.setSpacing(12)
+        self.brand_thumb = QLabel()
+        self.brand_thumb.setFixedSize(52, 52)
+        self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        bp.addWidget(self.brand_thumb)
+        bdesc = QVBoxLayout(); bdesc.setSpacing(2)
+        self.brand_name_lbl = QLabel(""); self.brand_name_lbl.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.brand_dna_lbl = QLabel(""); self.brand_dna_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
+        self.brand_dna_lbl.setWordWrap(True)
+        bdesc.addWidget(self.brand_name_lbl); bdesc.addWidget(self.brand_dna_lbl)
+        bp.addLayout(bdesc, 1)
+        form.addWidget(self.brand_preview)
+
+        sl = QLabel("SPECIFICATIONS  ·  optional"); sl.setObjectName("Muted")
+        form.addWidget(sl)
+        self.specs = QTextEdit()
+        self.specs.setPlaceholderText(
+            "Optional notes on top of the Brand DNA: creator profile (skin tone, age, "
+            "style, clothing), location, mood directives, anything to avoid…"
+        )
+        self.specs.setMinimumHeight(96); self.specs.setMaximumHeight(140)
+        form.addWidget(self.specs)
+
+        cnt_l = QLabel("SHOTS PER CATEGORY"); cnt_l.setObjectName("Muted")
+        form.addWidget(cnt_l)
+        cnt_row = QHBoxLayout(); cnt_row.setSpacing(10)
+        self.cnt_usage = self._count_spinner("USAGE", 2)
+        self.cnt_pres = self._count_spinner("PRESENTATION", 2)
+        self.cnt_ecu = self._count_spinner("ECU", 2)
+        self.cnt_inact = self._count_spinner("IN-ACTION", 2)
+        for col in (self.cnt_usage, self.cnt_pres, self.cnt_ecu, self.cnt_inact):
+            cnt_row.addLayout(col["layout"], 1)
+        form.addLayout(cnt_row)
+
+        params_row = QHBoxLayout(); params_row.setSpacing(14)
+        col_w = QVBoxLayout(); col_w.setSpacing(6)
+        col_w.addWidget(_field_label("Workers"))
+        self.workers = QSpinBox(); self.workers.setRange(1, 16); self.workers.setValue(6)
+        col_w.addWidget(self.workers)
+        col_r = QVBoxLayout(); col_r.setSpacing(6)
+        col_r.addWidget(_field_label("Resolution"))
+        self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("1k")
+        col_r.addWidget(self.res)
+        col_a = QVBoxLayout(); col_a.setSpacing(6)
+        col_a.addWidget(_field_label("Aspect"))
+        self.asp = QComboBox(); self.asp.addItems(["9:16", "1:1", "4:5", "16:9"])
+        col_a.addWidget(self.asp)
+        params_row.addLayout(col_w, 1); params_row.addLayout(col_r, 1); params_row.addLayout(col_a, 1)
+        form.addLayout(params_row)
+
+        models_row = QHBoxLayout(); models_row.setSpacing(14)
+        col_im = QVBoxLayout(); col_im.setSpacing(6)
+        col_im.addWidget(_field_label("Image model"))
+        self.image_model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.image_model.addItem(label, userData=slug)
+        self.image_model.setCurrentIndex(0)
+        col_im.addWidget(self.image_model)
+        col_vm = QVBoxLayout(); col_vm.setSpacing(6)
+        col_vm.addWidget(_field_label("Video model (phase 2)"))
+        self.video_model = QComboBox()
+        for slug, label in core.VIDEO_MODEL_CHOICES:
+            self.video_model.addItem(label, userData=slug)
+        self.video_model.setCurrentIndex(0)
+        col_vm.addWidget(self.video_model)
+        models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1)
+        form.addLayout(models_row)
+
+        # Sound toggle — Kling 3.0 charges extra (~1.5×) when audio is on,
+        # so default is OFF. User can flip per run if they want native audio.
+        sound_row = QHBoxLayout(); sound_row.setContentsMargins(0, 0, 0, 0); sound_row.setSpacing(8)
+        self.sound_chk = QCheckBox("Generate native audio (Kling sound — costs more credits)")
+        self.sound_chk.setChecked(False)
+        self.sound_chk.setStyleSheet(f"QCheckBox {{ color: {t.TEXT_DIM}; font-size: 12px; }}")
+        sound_row.addWidget(self.sound_chk)
+        sound_row.addStretch()
+        form.addLayout(sound_row)
+
+        out_l = QLabel("OUTPUT FOLDER"); out_l.setObjectName("Muted")
+        form.addWidget(out_l)
+        self.out_row = OutputFolderRow()
+        form.addWidget(self.out_row)
+
+        self.cost_label = QLabel()
+        self.cost_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        form.addWidget(self.cost_label)
+        self._update_cost()
+        for s in (self.cnt_usage["spin"], self.cnt_pres["spin"],
+                  self.cnt_ecu["spin"], self.cnt_inact["spin"]):
+            s.valueChanged.connect(self._update_cost)
+        self.res.currentTextChanged.connect(self._update_cost)
+        self.image_model.currentIndexChanged.connect(self._update_cost)
+
+        form.addSpacing(8)
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        self.go_btn = QPushButton("Generate B-roll images")
+        self.go_btn.setObjectName("PrimaryBtn"); self.go_btn.setCursor(Qt.PointingHandCursor)
+        self.go_btn.clicked.connect(self._start_images)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("GhostBtn"); self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel_images); self.cancel_btn.hide()
+        btn_row.addWidget(self.go_btn); btn_row.addWidget(self.cancel_btn); btn_row.addStretch()
+        form.addLayout(btn_row)
+        form.addStretch()
+
+        body.addWidget(form_card, 5)
+
+        right = QVBoxLayout(); right.setSpacing(14)
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lhead = QHBoxLayout()
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        lhead.addWidget(lh); lhead.addStretch()
+        self.live_pill = StatusPill("Idle", t.TEXT_MUTED)
+        lhead.addWidget(self.live_pill)
+        llay.addLayout(lhead)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(180)
+        llay.addWidget(self.log)
+        right.addWidget(log_card, 1)
+
+        live_card = Card()
+        rlay = QVBoxLayout(live_card); rlay.setContentsMargins(20, 18, 20, 18); rlay.setSpacing(10)
+        rh = QLabel("Live previews"); rh.setObjectName("H2")
+        rlay.addWidget(rh)
+        scroll2 = QScrollArea(); scroll2.setWidgetResizable(True)
+        scroll2.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.live_grid_container = QWidget()
+        self.live_grid = QGridLayout(self.live_grid_container)
+        self.live_grid.setSpacing(10); self.live_grid.setContentsMargins(0, 0, 0, 0)
+        self.live_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll2.setWidget(self.live_grid_container)
+        scroll2.setMinimumHeight(220)
+        rlay.addWidget(scroll2)
+        right.addWidget(live_card, 2)
+
+        right_w = QWidget(); right_w.setLayout(right)
+        body.addWidget(right_w, 5)
+        return wrap
+
+    def _count_spinner(self, label_text: str, default: int) -> dict:
+        col = QVBoxLayout(); col.setSpacing(6)
+        col.addWidget(_field_label(label_text))
+        spin = QSpinBox(); spin.setRange(0, 12); spin.setValue(default)
+        col.addWidget(spin)
+        return {"layout": col, "spin": spin}
+
+    def _build_approve_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head_card = Card()
+        hl = QHBoxLayout(head_card); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Approve images for animation"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        self.approve_count_lbl = QLabel("")
+        self.approve_count_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        hl.addWidget(self.approve_count_lbl)
+        all_btn = QPushButton("Approve all")
+        all_btn.setObjectName("GhostBtn"); all_btn.setCursor(Qt.PointingHandCursor)
+        all_btn.clicked.connect(lambda: self._set_all_approved(True))
+        hl.addWidget(all_btn)
+        none_btn = QPushButton("Reject all")
+        none_btn.setObjectName("GhostBtn"); none_btn.setCursor(Qt.PointingHandCursor)
+        none_btn.clicked.connect(lambda: self._set_all_approved(False))
+        hl.addWidget(none_btn)
+        self.images_open_btn = QPushButton("Open folder")
+        self.images_open_btn.setObjectName("GhostBtn"); self.images_open_btn.setCursor(Qt.PointingHandCursor)
+        self.images_open_btn.clicked.connect(self._open_images_folder)
+        hl.addWidget(self.images_open_btn)
+        back_btn = QPushButton("← Back to setup")
+        back_btn.setObjectName("GhostBtn"); back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(back_btn)
+        self.animate_btn = QPushButton("Animate approved")
+        self.animate_btn.setObjectName("PrimaryBtn"); self.animate_btn.setCursor(Qt.PointingHandCursor)
+        self.animate_btn.clicked.connect(self._start_videos)
+        hl.addWidget(self.animate_btn)
+        col.addWidget(head_card)
+
+        grid_card = Card()
+        gl = QVBoxLayout(grid_card); gl.setContentsMargins(20, 18, 20, 18); gl.setSpacing(10)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.approve_grid_container = QWidget()
+        self.approve_grid = QGridLayout(self.approve_grid_container)
+        self.approve_grid.setSpacing(14); self.approve_grid.setContentsMargins(0, 0, 0, 0)
+        self.approve_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.approve_grid_container)
+        gl.addWidget(scroll)
+        col.addWidget(grid_card, 1)
+        return wrap
+
+    def _build_videos_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head_card = Card()
+        hl = QHBoxLayout(head_card); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Animated B-roll"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        self.video_pill = StatusPill("Idle", t.TEXT_MUTED)
+        hl.addWidget(self.video_pill)
+        self.video_cancel_btn = QPushButton("Cancel")
+        self.video_cancel_btn.setObjectName("GhostBtn"); self.video_cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.video_cancel_btn.clicked.connect(self._cancel_videos); self.video_cancel_btn.hide()
+        hl.addWidget(self.video_cancel_btn)
+        self.video_open_btn = QPushButton("Open folder")
+        self.video_open_btn.setObjectName("GhostBtn"); self.video_open_btn.setCursor(Qt.PointingHandCursor)
+        self.video_open_btn.setEnabled(False)
+        self.video_open_btn.clicked.connect(self._open_videos_folder)
+        hl.addWidget(self.video_open_btn)
+        back_btn = QPushButton("← Back to approve")
+        back_btn.setObjectName("GhostBtn"); back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.clicked.connect(lambda: self._set_step(1))
+        hl.addWidget(back_btn)
+        new_btn = QPushButton("New B-roll run")
+        new_btn.setObjectName("GhostBtn"); new_btn.setCursor(Qt.PointingHandCursor)
+        new_btn.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(new_btn)
+        col.addWidget(head_card)
+
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        llay.addWidget(lh)
+        self.video_log = QPlainTextEdit(); self.video_log.setReadOnly(True)
+        self.video_log.setMinimumHeight(140)
+        llay.addWidget(self.video_log)
+        col.addWidget(log_card, 1)
+
+        grid_card = Card()
+        gl = QVBoxLayout(grid_card); gl.setContentsMargins(20, 18, 20, 18); gl.setSpacing(10)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.video_grid_container = QWidget()
+        self.video_grid = QGridLayout(self.video_grid_container)
+        self.video_grid.setSpacing(12); self.video_grid.setContentsMargins(0, 0, 0, 0)
+        self.video_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.video_grid_container)
+        gl.addWidget(scroll)
+        col.addWidget(grid_card, 2)
+        return wrap
+
+    def refresh_brands(self):
+        current = self.brand_combo.currentText()
+        self.brand_combo.blockSignals(True)
+        self.brand_combo.clear()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())
+        if not names:
+            self.brand_combo.addItem("— No brands yet (Manage →) —")
+            self.brand_combo.setEnabled(False)
+        else:
+            self.brand_combo.setEnabled(True)
+            self.brand_combo.addItems(names)
+            if current in names:
+                self.brand_combo.setCurrentText(current)
+        self.brand_combo.blockSignals(False)
+        if not getattr(self, "_brand_combo_wired", False):
+            self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
+            self._brand_combo_wired = True
+        self._on_brand_changed()
+
+    def _on_brand_changed(self):
+        brands = core.load_brands()
+        name = self.brand_combo.currentText() if self.brand_combo.isEnabled() else ""
+        b = brands.get(name)
+        if not b:
+            self.brand_name_lbl.setText("No brand selected")
+            self.brand_dna_lbl.setText("Create a Brand DNA from the Brands page first.")
+            self.brand_thumb.clear()
+            self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        else:
+            self.brand_name_lbl.setText(b["name"])
+            dna = b["dna"].replace("\n", " ")
+            self.brand_dna_lbl.setText((dna[:140] + "…") if len(dna) > 140 else dna)
+            pi = b.get("product_image", "")
+            if pi and Path(pi).exists():
+                from .widgets import round_pixmap
+                self.brand_thumb.setPixmap(round_pixmap(Path(pi), 52, 52, 8))
+                self.brand_thumb.setStyleSheet("background: transparent;")
+            else:
+                self.brand_thumb.clear()
+                self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+
+    def _counts(self) -> dict[str, int]:
+        return {
+            "usage": self.cnt_usage["spin"].value(),
+            "presentation": self.cnt_pres["spin"].value(),
+            "ecu": self.cnt_ecu["spin"].value(),
+            "in_action": self.cnt_inact["spin"].value(),
+        }
+
+    def _update_cost(self):
+        counts = self._counts()
+        total = sum(counts.values())
+        provider = core.get_active_provider_name()
+        model = self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL
+        price = core.cost_per_image(provider, model, self.res.currentText())
+        if total <= 0:
+            self.cost_label.setText("Pick at least one shot count to estimate cost.")
+        else:
+            self.cost_label.setText(
+                f"{total} images  ·  estimated ${total * price:.2f} (+ 1 LLM call)  ·  "
+                f"phase 2 video cost shown after approval."
+            )
+
+    def _start_images(self):
+        if not self.brand_combo.isEnabled():
+            QMessageBox.warning(self, "No brand", "Create a Brand DNA first."); return
+        counts = self._counts()
+        if sum(counts.values()) <= 0:
+            QMessageBox.warning(self, "No shots", "Pick at least one shot count > 0."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self._clear_live_grid()
+        self.log.clear()
+        self._images_dir = None
+        self._image_results = []
+        self.go_btn.hide(); self.cancel_btn.show()
+        self.live_pill.setText("Running")
+        self.live_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+
+        self._thread = QThread()
+        self._image_worker = BRollImageWorker(
+            self.brand_combo.currentText(),
+            self.specs.toPlainText(),
+            counts,
+            self.res.currentText(),
+            self.asp.currentText(),
+            self.workers.value(),
+            self.out_row.path(),
+            self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+        )
+        self._image_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._image_worker.run)
+        self._image_worker.log.connect(self._on_image_log)
+        self._image_worker.result.connect(self._on_image_result)
+        self._image_worker.out_dir_signal.connect(self._on_images_out_dir)
+        self._image_worker.finished.connect(self._on_images_finished)
+        self._thread.start()
+
+    def _cancel_images(self):
+        if self._image_worker:
+            self._image_worker.cancel()
+        self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
+
+    def _on_image_log(self, level: str, msg: str):
+        self._append_log(self.log, level, msg)
+
+    def _on_image_result(self, r: dict):
+        self._image_results.append(r)
+        if r.get("status") != "ok":
+            return
+        if not self._images_dir:
+            return
+        local = self._images_dir / r.get("file", "")
+        if not local.exists():
+            return
+        thumb = ThumbLabel(local, 140, 140, 10)
+        thumb.clicked.connect(lambda p=local: open_path(p))
+        n = sum(1 for x in self._image_results if x.get("status") == "ok")
+        row = (n - 1) // 4
+        col = (n - 1) % 4
+        self.live_grid.addWidget(thumb, row, col)
+
+    def _on_images_out_dir(self, p: str):
+        self._images_dir = Path(p)
+
+    def _on_images_finished(self, out_dir: str):
+        self._thread.quit(); self._thread.wait()
+        self.go_btn.show(); self.cancel_btn.hide()
+        self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
+        self.live_pill.setText("Done")
+        self.live_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        if out_dir:
+            self._images_dir = Path(out_dir)
+        self._populate_approval_grid()
+        self._set_step(1)
+
+    def _populate_approval_grid(self):
+        while self.approve_grid.count():
+            item = self.approve_grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        self._approval_thumbs.clear()
+
+        ok_results = sorted(
+            (r for r in self._image_results if r.get("status") == "ok"),
+            key=lambda r: r.get("index", 0),
+        )
+        for i, r in enumerate(ok_results):
+            local = (self._images_dir / r.get("file", "")) if self._images_dir else None
+            if not local or not local.exists():
+                continue
+            tile = _ApprovalThumb(r["index"], local, r.get("category", "usage"))
+            tile.toggled.connect(self._on_approval_toggled)
+            row = i // 5
+            col = i % 5
+            self.approve_grid.addWidget(tile, row, col)
+            self._approval_thumbs[r["index"]] = tile
+        self._refresh_approval_count()
+
+    def _on_approval_toggled(self, _idx: int, _approved: bool):
+        self._refresh_approval_count()
+
+    def _refresh_approval_count(self):
+        approved = sum(1 for tile in self._approval_thumbs.values() if tile.is_approved())
+        total = len(self._approval_thumbs)
+        provider = core.get_active_provider_name()
+        video_model = self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL
+        price = core.cost_per_video(provider, video_model, 5)
+        self.approve_count_lbl.setText(
+            f"{approved}/{total} approved  ·  estimated ${approved * price:.2f} for phase 2 (5s clips)"
+        )
+        self.animate_btn.setEnabled(approved > 0)
+
+    def _set_all_approved(self, approved: bool):
+        for tile in self._approval_thumbs.values():
+            if tile.is_approved() != approved:
+                tile._toggle()
+
+    def _start_videos(self):
+        approved = [idx for idx, tile in self._approval_thumbs.items() if tile.is_approved()]
+        if not approved:
+            QMessageBox.warning(self, "No approved", "Approve at least one image."); return
+        if not self._images_dir:
+            QMessageBox.warning(self, "No run", "Image run not found."); return
+
+        self.video_log.clear()
+        self._clear_video_grid()
+        self._videos_dir = None
+        self._video_count = 0
+        self.video_open_btn.setEnabled(False)
+        self.animate_btn.setEnabled(False)
+        self.video_cancel_btn.show()
+        self.video_cancel_btn.setEnabled(True); self.video_cancel_btn.setText("Cancel")
+        self.video_pill.setText("Running")
+        self.video_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        self._set_step(2)
+
+        self._thread = QThread()
+        self._video_worker = BRollVideoWorker(
+            str(self._images_dir),
+            sorted(approved),
+            5,
+            self.asp.currentText(),
+            min(4, self.workers.value()),
+            self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
+            self.sound_chk.isChecked(),
+        )
+        self._video_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._video_worker.run)
+        self._video_worker.log.connect(self._on_video_log)
+        self._video_worker.result.connect(self._on_video_result)
+        self._video_worker.out_dir_signal.connect(self._on_videos_out_dir)
+        self._video_worker.finished.connect(self._on_videos_finished)
+        self._thread.start()
+
+    def _cancel_videos(self):
+        if self._video_worker:
+            self._video_worker.cancel()
+        self.video_cancel_btn.setEnabled(False); self.video_cancel_btn.setText("Cancelling…")
+
+    def _on_video_log(self, level: str, msg: str):
+        self._append_log(self.video_log, level, msg)
+
+    def _on_video_result(self, r: dict):
+        if r.get("status") != "ok":
+            return
+        if not self._videos_dir:
+            return
+        local = self._videos_dir / r.get("file", "")
+        if not local.exists():
+            return
+        self._video_count += 1
+        src_thumb: Path | None = None
+        src_file = r.get("source_file", "")
+        if self._images_dir and src_file:
+            cand = self._images_dir / src_file
+            if cand.exists():
+                src_thumb = cand
+
+        tile = QFrame()
+        tile.setFixedSize(180, 220)
+        tile.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 14px;")
+        tlay = QVBoxLayout(tile); tlay.setContentsMargins(8, 8, 8, 8); tlay.setSpacing(6)
+        if src_thumb:
+            thumb = ThumbLabel(src_thumb, 164, 164, 10)
+            thumb.clicked.connect(lambda p=local: open_path(p))
+            tlay.addWidget(thumb, alignment=Qt.AlignCenter)
+        else:
+            ph = QLabel("Video")
+            ph.setFixedSize(164, 164); ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(f"background: {t.BORDER}; color: {t.TEXT}; border-radius: 10px; font-weight: 700;")
+            tlay.addWidget(ph, alignment=Qt.AlignCenter)
+        play = QPushButton(f"▶  {local.name}")
+        play.setCursor(Qt.PointingHandCursor)
+        play.setStyleSheet(
+            f"QPushButton {{ background: {t.BG_HOVER}; color: {t.TEXT}; "
+            f"border: 1px solid {t.BORDER}; border-radius: 10px; "
+            f"font-size: 10px; font-weight: 700; padding: 4px 8px; }}"
+            f"QPushButton:hover {{ background: {t.ACCENT}22; color: {t.ACCENT}; border-color: {t.ACCENT}55; }}"
+        )
+        play.clicked.connect(lambda p=local: open_path(p))
+        tlay.addWidget(play)
+
+        row = (self._video_count - 1) // 4
+        col = (self._video_count - 1) % 4
+        self.video_grid.addWidget(tile, row, col)
+
+    def _on_videos_out_dir(self, p: str):
+        self._videos_dir = Path(p)
+        self.video_open_btn.setEnabled(True)
+
+    def _on_videos_finished(self, out_dir: str):
+        self._thread.quit(); self._thread.wait()
+        self.video_cancel_btn.hide()
+        self.animate_btn.setEnabled(True)
+        self.video_pill.setText("Done")
+        self.video_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        if out_dir:
+            self._videos_dir = Path(out_dir)
+            self.video_open_btn.setEnabled(True)
+
+    def _open_videos_folder(self):
+        if self._videos_dir:
+            open_path(self._videos_dir)
+
+    def _open_images_folder(self):
+        if self._images_dir:
+            open_path(self._images_dir)
+
+    def _append_log(self, target: QPlainTextEdit, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        target.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _clear_live_grid(self):
+        while self.live_grid.count():
+            item = self.live_grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+
+    def _clear_video_grid(self):
+        while self.video_grid.count():
+            item = self.video_grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+
+
+# ─── Funnel Ads ─────────────────────────────────────────────────────────────
+
+class FunnelAdsWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    out_dir_signal = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, brand_name, funnel_stage, form_fields, resolution, aspect,
+                 workers, output_root, image_model):
+        super().__init__()
+        self._args = (brand_name, funnel_stage, form_fields, resolution, aspect, workers)
+        self._output_root = output_root
+        self._image_model = image_model
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_funnel_ads(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            output_root=self._output_root,
+            image_model=self._image_model,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
+class FunnelAdsPage(QWidget):
+    open_brands = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._worker: FunnelAdsWorker | None = None
+        self._thread: QThread | None = None
+        self._out_dir: Path | None = None
+        self._results_count = 0
+        self._stage = "TOF"
+        self._build()
+        self.refresh_brands()
+
+    # ── Build ───────────────────────────────────────────────────────────────
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Funnel Ads"); h1.setObjectName("H1")
+        sub = QLabel(
+            "Generate static ads for a specific funnel stage — Top, Middle or Bottom — "
+            "from a Brand DNA. Pick a segment, dial in the angle, get N scroll-stop creatives."
+        )
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        # Stage selector — segmented control
+        stage_row = QHBoxLayout(); stage_row.setSpacing(8); stage_row.setContentsMargins(0, 0, 0, 0)
+        self._stage_btns: dict[str, QPushButton] = {}
+        for stage in core.FUNNEL_STAGES:
+            btn = QPushButton(f"{stage}  ·  {core.FUNNEL_LABELS.get(stage, stage)}")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(36)
+            btn.clicked.connect(lambda _=False, s=stage: self._set_stage(s))
+            stage_row.addWidget(btn, 1)
+            self._stage_btns[stage] = btn
+        stage_row.addStretch()
+        root.addLayout(stage_row)
+
+        body = QHBoxLayout(); body.setSpacing(14)
+
+        # Left: form
+        form_card = Card()
+        form_card.setMinimumWidth(560)
+        card_lay = QVBoxLayout(form_card)
+        card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        form_inner = QWidget()
+        form = QVBoxLayout(form_inner)
+        form.setContentsMargins(22, 20, 22, 20); form.setSpacing(16)
+        scroll.setWidget(form_inner)
+        card_lay.addWidget(scroll)
+
+        # Brand DNA picker (same pattern as Adapt / B-Roll)
+        bl = QLabel("BRAND DNA"); bl.setObjectName("Muted")
+        form.addWidget(bl)
+        brow = QHBoxLayout(); brow.setSpacing(8)
+        self.brand_combo = QComboBox()
+        brow.addWidget(self.brand_combo, 1)
+        manage_btn = QPushButton("Manage")
+        manage_btn.setObjectName("GhostBtn"); manage_btn.setCursor(Qt.PointingHandCursor)
+        manage_btn.clicked.connect(self.open_brands.emit)
+        brow.addWidget(manage_btn)
+        form.addLayout(brow)
+
+        self.brand_preview = QFrame()
+        self.brand_preview.setObjectName("CardFlat")
+        self.brand_preview.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
+        bp = QHBoxLayout(self.brand_preview); bp.setContentsMargins(12, 12, 12, 12); bp.setSpacing(12)
+        self.brand_thumb = QLabel()
+        self.brand_thumb.setFixedSize(52, 52)
+        self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        bp.addWidget(self.brand_thumb)
+        bdesc = QVBoxLayout(); bdesc.setSpacing(2)
+        self.brand_name_lbl = QLabel(""); self.brand_name_lbl.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.brand_dna_lbl = QLabel(""); self.brand_dna_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
+        self.brand_dna_lbl.setWordWrap(True)
+        bdesc.addWidget(self.brand_name_lbl); bdesc.addWidget(self.brand_dna_lbl)
+        bp.addLayout(bdesc, 1)
+        form.addWidget(self.brand_preview)
+
+        # Segments — checkable list with per-segment count
+        seg_head = QHBoxLayout(); seg_head.setContentsMargins(0, 0, 0, 0)
+        seg_l = QLabel("SEGMENTS  ·  cocher et choisir le nombre de creas par segment")
+        seg_l.setObjectName("Muted")
+        seg_head.addWidget(seg_l); seg_head.addStretch()
+        self.seg_total_lbl = QLabel("Total : 0 creas")
+        self.seg_total_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px; font-weight: 600;")
+        seg_head.addWidget(self.seg_total_lbl)
+        form.addLayout(seg_head)
+
+        self._segments_card = QFrame()
+        self._segments_card.setObjectName("CardFlat")
+        self._segments_card.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
+        self._segments_layout = QVBoxLayout(self._segments_card)
+        self._segments_layout.setContentsMargins(12, 8, 12, 8)
+        self._segments_layout.setSpacing(2)
+        self._segment_rows: dict[str, dict] = {}
+        # Filled by _set_stage()
+        form.addWidget(self._segments_card)
+
+        params_row = QHBoxLayout(); params_row.setSpacing(14)
+        col_a = QVBoxLayout(); col_a.setSpacing(6)
+        col_a.addWidget(_field_label("Aspect"))
+        self.asp = QComboBox(); self.asp.addItems(core.FUNNEL_ASPECTS); self.asp.setCurrentText("1:1")
+        col_a.addWidget(self.asp)
+        col_r = QVBoxLayout(); col_r.setSpacing(6)
+        col_r.addWidget(_field_label("Resolution"))
+        self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("1k")
+        col_r.addWidget(self.res)
+        col_w = QVBoxLayout(); col_w.setSpacing(6)
+        col_w.addWidget(_field_label("Workers"))
+        self.workers = QSpinBox(); self.workers.setRange(1, 16); self.workers.setValue(6)
+        col_w.addWidget(self.workers)
+        params_row.addLayout(col_a, 1); params_row.addLayout(col_r, 1); params_row.addLayout(col_w, 1)
+        form.addLayout(params_row)
+
+        plang_row = QHBoxLayout(); plang_row.setSpacing(14)
+        col_pf = QVBoxLayout(); col_pf.setSpacing(6)
+        col_pf.addWidget(_field_label("Platform"))
+        self.platform = QComboBox(); self.platform.addItems(core.FUNNEL_PLATFORMS)
+        self.platform.setCurrentText("Meta")
+        col_pf.addWidget(self.platform)
+        col_lg = QVBoxLayout(); col_lg.setSpacing(6)
+        col_lg.addWidget(_field_label("Language"))
+        self.language = QComboBox(); self.language.addItems(core.FUNNEL_LANGUAGES)
+        self.language.setCurrentText("English")
+        col_lg.addWidget(self.language)
+        col_im = QVBoxLayout(); col_im.setSpacing(6)
+        col_im.addWidget(_field_label("Image model"))
+        self.image_model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.image_model.addItem(label, userData=slug)
+        self.image_model.setCurrentIndex(0)
+        col_im.addWidget(self.image_model)
+        plang_row.addLayout(col_pf, 1); plang_row.addLayout(col_lg, 1); plang_row.addLayout(col_im, 1)
+        form.addLayout(plang_row)
+
+        # Free-text fields
+        form.addWidget(self._textarea_label("MARKETING ANGLE  ·  optional"))
+        self.marketing_angle = self._textarea(
+            "Strategic angle for this batch. Ex: 'Mirror the daily frustration' / 'Lead with the BOGO offer'"
+        )
+        form.addWidget(self.marketing_angle)
+
+        form.addWidget(self._textarea_label("TARGET PERSONA  ·  optional"))
+        self.target_persona = self._textarea(
+            "Avatar name from Brand DNA, or 'Mix'. Ex: 'The Frustrated Fighter' / 'Mix'"
+        )
+        form.addWidget(self.target_persona)
+
+        form.addWidget(self._textarea_label("SPECIFICATIONS  ·  optional"))
+        self.specifications = self._textarea(
+            "Additional creative direction. Ex: 'Bold typography only' / 'Dark backgrounds' / 'Native screenshot aesthetic'"
+        )
+        form.addWidget(self.specifications)
+
+        form.addWidget(self._textarea_label("CLAIMS / HEADLINES REFERENCES  ·  optional"))
+        self.claims_refs = self._textarea(
+            "Specific claims or hooks to prioritize. Ex: '47 massage points' / '97% saw results'"
+        )
+        form.addWidget(self.claims_refs)
+
+        # BOF-only fields (created always, hidden/shown by _set_stage)
+        self.promo_label = self._textarea_label("PROMOTIONAL OFFER  ·  optional · BOF only")
+        form.addWidget(self.promo_label)
+        self.promotional_offer = self._textarea(
+            "Active offer. Ex: 'BUY 1 GET 1 FREE — $49.90 for 2' / '50% OFF — was $69.90 now $34.95'"
+        )
+        form.addWidget(self.promotional_offer)
+
+        self.guarantee_label = self._textarea_label("GUARANTEE  ·  optional · BOF only")
+        form.addWidget(self.guarantee_label)
+        self.guarantee = self._textarea(
+            "Guarantee badge. Ex: '90-day satisfaction guarantee — full refund, no questions asked'"
+        )
+        form.addWidget(self.guarantee)
+
+        # Output folder
+        out_l = QLabel("OUTPUT FOLDER"); out_l.setObjectName("Muted")
+        form.addWidget(out_l)
+        self.out_row = OutputFolderRow()
+        form.addWidget(self.out_row)
+
+        self.cost_label = QLabel()
+        self.cost_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        form.addWidget(self.cost_label)
+        self._update_cost()
+        self.res.currentTextChanged.connect(self._update_cost)
+        self.image_model.currentIndexChanged.connect(self._update_cost)
+
+        form.addSpacing(8)
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        self.go_btn = QPushButton("Generate funnel ads")
+        self.go_btn.setObjectName("PrimaryBtn"); self.go_btn.setCursor(Qt.PointingHandCursor)
+        self.go_btn.clicked.connect(self._start)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("GhostBtn"); self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel); self.cancel_btn.hide()
+        btn_row.addWidget(self.go_btn); btn_row.addWidget(self.cancel_btn); btn_row.addStretch()
+        form.addLayout(btn_row)
+        form.addStretch()
+
+        body.addWidget(form_card, 5)
+
+        # Right: log + result grid
+        right = QVBoxLayout(); right.setSpacing(14)
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lhead = QHBoxLayout()
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        lhead.addWidget(lh); lhead.addStretch()
+        self.live_pill = StatusPill("Idle", t.TEXT_MUTED)
+        lhead.addWidget(self.live_pill)
+        llay.addLayout(lhead)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(180)
+        llay.addWidget(self.log)
+        right.addWidget(log_card, 1)
+
+        res_card = Card()
+        rlay = QVBoxLayout(res_card); rlay.setContentsMargins(20, 18, 20, 18); rlay.setSpacing(10)
+        rhead = QHBoxLayout()
+        rh = QLabel("Results"); rh.setObjectName("H2")
+        rhead.addWidget(rh); rhead.addStretch()
+        self.open_folder_btn = QPushButton("Open folder")
+        self.open_folder_btn.setObjectName("GhostBtn"); self.open_folder_btn.setCursor(Qt.PointingHandCursor)
+        self.open_folder_btn.setEnabled(False)
+        self.open_folder_btn.clicked.connect(self._open_folder)
+        rhead.addWidget(self.open_folder_btn)
+        rlay.addLayout(rhead)
+
+        scroll2 = QScrollArea(); scroll2.setWidgetResizable(True)
+        scroll2.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.grid_container = QWidget()
+        self.grid = QGridLayout(self.grid_container)
+        self.grid.setSpacing(12); self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll2.setWidget(self.grid_container)
+        scroll2.setMinimumHeight(220)
+        rlay.addWidget(scroll2)
+        right.addWidget(res_card, 2)
+
+        right_w = QWidget(); right_w.setLayout(right)
+        body.addWidget(right_w, 5)
+        root.addLayout(body, 1)
+
+        self._set_stage("TOF")
+
+    def _textarea(self, placeholder: str) -> QTextEdit:
+        ta = QTextEdit()
+        ta.setPlaceholderText(placeholder)
+        ta.setMinimumHeight(64); ta.setMaximumHeight(96)
+        return ta
+
+    def _textarea_label(self, txt: str) -> QLabel:
+        l = QLabel(txt); l.setObjectName("Muted")
+        return l
+
+    # ── Stage switching ─────────────────────────────────────────────────────
+
+    def _set_stage(self, stage: str):
+        self._stage = stage
+        for s, btn in self._stage_btns.items():
+            active = (s == stage)
+            btn.setChecked(active)
+            if active:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background: {t.ACCENT}22; color: {t.ACCENT}; "
+                    f"border: 1.5px solid {t.ACCENT}; border-radius: 12px; "
+                    f"font-size: 12px; font-weight: 700; padding: 0 16px; }}"
+                )
+            else:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background: {t.BG_INPUT}; color: {t.TEXT_DIM}; "
+                    f"border: 1.5px solid {t.BORDER}; border-radius: 12px; "
+                    f"font-size: 12px; font-weight: 600; padding: 0 16px; }}"
+                    f"QPushButton:hover {{ background: {t.BG_HOVER}; color: {t.TEXT}; }}"
+                )
+
+        # Rebuild segment rows for the chosen stage. Preserve previously
+        # checked segments + their counts so switching back keeps selections.
+        prev_state: dict[str, tuple[bool, int]] = {
+            name: (row["chk"].isChecked(), row["spin"].value())
+            for name, row in self._segment_rows.items()
+        }
+        # Clear out current rows
+        while self._segments_layout.count():
+            item = self._segments_layout.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        self._segment_rows = {}
+
+        segments = core.FUNNEL_SEGMENTS.get(stage, ["Mix"])
+        for name in segments:
+            row_w = QWidget()
+            row = QHBoxLayout(row_w); row.setContentsMargins(0, 4, 0, 4); row.setSpacing(10)
+            chk = QCheckBox(name)
+            chk.setCursor(Qt.PointingHandCursor)
+            chk.setStyleSheet(f"QCheckBox {{ color: {t.TEXT}; font-size: 12px; }}")
+            row.addWidget(chk, 1)
+            spin = QSpinBox(); spin.setRange(1, 12); spin.setValue(1)
+            spin.setFixedWidth(72)
+            spin.setEnabled(False)
+            row.addWidget(spin)
+            self._segments_layout.addWidget(row_w)
+            self._segment_rows[name] = {"chk": chk, "spin": spin}
+
+            # Re-apply previous state if this segment existed before.
+            was_checked, was_value = prev_state.get(name, (False, 1))
+            chk.setChecked(was_checked)
+            spin.setValue(was_value)
+            spin.setEnabled(was_checked)
+            chk.toggled.connect(lambda on, s=spin: (s.setEnabled(on), self._update_segment_total()))
+            spin.valueChanged.connect(self._update_segment_total)
+        self._update_segment_total()
+
+        # Show / hide BOF-only fields
+        bof = (stage == "BOF")
+        for w in (self.promo_label, self.promotional_offer, self.guarantee_label, self.guarantee):
+            w.setVisible(bof)
+
+    def _segment_breakdown(self) -> list[dict]:
+        """Return [{name, count}] for every checked segment with count > 0."""
+        out = []
+        for name, row in self._segment_rows.items():
+            if row["chk"].isChecked() and row["spin"].value() > 0:
+                out.append({"name": name, "count": row["spin"].value()})
+        return out
+
+    def _segment_total(self) -> int:
+        return sum(item["count"] for item in self._segment_breakdown())
+
+    def _update_segment_total(self):
+        total = self._segment_total()
+        self.seg_total_lbl.setText(f"Total : {total} crea{'s' if total > 1 else ''}")
+        self._update_cost()
+
+    # ── Brand picker ────────────────────────────────────────────────────────
+
+    def refresh_brands(self):
+        current = self.brand_combo.currentText()
+        self.brand_combo.blockSignals(True)
+        self.brand_combo.clear()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())
+        if not names:
+            self.brand_combo.addItem("— No brands yet (Manage →) —")
+            self.brand_combo.setEnabled(False)
+        else:
+            self.brand_combo.setEnabled(True)
+            self.brand_combo.addItems(names)
+            if current in names:
+                self.brand_combo.setCurrentText(current)
+        self.brand_combo.blockSignals(False)
+        if not getattr(self, "_brand_combo_wired", False):
+            self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
+            self._brand_combo_wired = True
+        self._on_brand_changed()
+
+    def _on_brand_changed(self):
+        brands = core.load_brands()
+        name = self.brand_combo.currentText() if self.brand_combo.isEnabled() else ""
+        b = brands.get(name)
+        if not b:
+            self.brand_name_lbl.setText("No brand selected")
+            self.brand_dna_lbl.setText("Create a Brand DNA from the Brands page first.")
+            self.brand_thumb.clear()
+            self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        else:
+            self.brand_name_lbl.setText(b["name"])
+            dna = b["dna"].replace("\n", " ")
+            self.brand_dna_lbl.setText((dna[:140] + "…") if len(dna) > 140 else dna)
+            pi = b.get("product_image", "")
+            if pi and Path(pi).exists():
+                from .widgets import round_pixmap
+                self.brand_thumb.setPixmap(round_pixmap(Path(pi), 52, 52, 8))
+                self.brand_thumb.setStyleSheet("background: transparent;")
+            else:
+                self.brand_thumb.clear()
+                self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+
+    # ── Cost ────────────────────────────────────────────────────────────────
+
+    def _update_cost(self):
+        n = self._segment_total()
+        provider = core.get_active_provider_name()
+        model = self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL
+        price = core.cost_per_image(provider, model, self.res.currentText())
+        if n <= 0:
+            self.cost_label.setText("Coche au moins un segment et choisis un nombre.")
+        else:
+            self.cost_label.setText(
+                f"{n} image{'s' if n > 1 else ''}  ·  estimated ${n * price:.2f}  (+ 1 LLM call)"
+            )
+
+    # ── Run ─────────────────────────────────────────────────────────────────
+
+    def _form_fields(self) -> dict:
+        breakdown = self._segment_breakdown()
+        return {
+            "segment_breakdown": breakdown,
+            "n_creatives": sum(item["count"] for item in breakdown),
+            "marketing_angle": self.marketing_angle.toPlainText(),
+            "aspect_ratio": self.asp.currentText(),
+            "platform": self.platform.currentText(),
+            "target_persona": self.target_persona.toPlainText(),
+            "specifications": self.specifications.toPlainText(),
+            "claims_refs": self.claims_refs.toPlainText(),
+            "language": self.language.currentText(),
+            "promotional_offer": self.promotional_offer.toPlainText() if self._stage == "BOF" else "",
+            "guarantee": self.guarantee.toPlainText() if self._stage == "BOF" else "",
+        }
+
+    def _start(self):
+        if not self.brand_combo.isEnabled():
+            QMessageBox.warning(self, "No brand", "Create a Brand DNA first."); return
+        if self._segment_total() <= 0:
+            QMessageBox.warning(
+                self, "No segment",
+                "Coche au moins un segment et choisis le nombre de creas voulues."
+            ); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self._clear_grid()
+        self.log.clear()
+        self._out_dir = None
+        self._results_count = 0
+        self.open_folder_btn.setEnabled(False)
+        self.go_btn.hide(); self.cancel_btn.show()
+        self.live_pill.setText("Running")
+        self.live_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+
+        self._thread = QThread()
+        self._worker = FunnelAdsWorker(
+            self.brand_combo.currentText(),
+            self._stage,
+            self._form_fields(),
+            self.res.currentText(),
+            self.asp.currentText(),
+            self.workers.value(),
+            self.out_row.path(),
+            self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._on_log)
+        self._worker.result.connect(self._on_result)
+        self._worker.out_dir_signal.connect(self._on_out_dir)
+        self._worker.finished.connect(self._on_finished)
+        self._thread.start()
+
+    def _cancel(self):
+        if self._worker:
+            self._worker.cancel()
+        self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
+
+    def _on_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        self.log.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _on_result(self, r: dict):
+        if r.get("status") != "ok":
+            return
+        self._results_count += 1
+        if self._out_dir:
+            local = self._out_dir / r.get("file", "")
+            if local.exists():
+                thumb = ThumbLabel(local, 160, 160, 10)
+                thumb.clicked.connect(lambda path=local: open_path(path))
+                row = (self._results_count - 1) // 4
+                col = (self._results_count - 1) % 4
+                self.grid.addWidget(thumb, row, col)
+
+    def _on_out_dir(self, p: str):
+        self._out_dir = Path(p)
+        self.open_folder_btn.setEnabled(True)
+
+    def _on_finished(self, out_dir: str):
+        self._thread.quit(); self._thread.wait()
+        self.go_btn.show(); self.cancel_btn.hide()
+        self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
+        self.live_pill.setText("Done")
+        self.live_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        if out_dir:
+            self._out_dir = Path(out_dir)
+            self.open_folder_btn.setEnabled(True)
+
+    def _open_folder(self):
+        if self._out_dir:
+            open_path(self._out_dir)
 
     def _clear_grid(self):
         while self.grid.count():

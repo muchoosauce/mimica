@@ -80,5 +80,22 @@ class Provider(ABC):
         label: str = "llm",
     ) -> str: ...
 
+    def call_video(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        image_url: str,
+        duration: int = 5,
+        aspect_ratio: str = "9:16",
+        sound: bool = False,
+        label: str = "video",
+    ) -> str:
+        """Animate one image into a video clip. Default raises so existing
+        providers don't break until they opt-in by overriding."""
+        raise NotImplementedError(
+            f"{self.display_name} does not implement video generation yet."
+        )
+
     def download(self, url: str, dest: Path) -> None:
         download_to(url, dest)

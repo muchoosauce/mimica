@@ -37,28 +37,53 @@ from .kie import KieProvider
 PROVIDERS = ["muapi", "kie"]
 PROVIDER_LABELS = {"muapi": "MuAPI", "kie": "Kie"}
 
-IMAGE_MODELS = ["nano_banana_2", "gpt_image_2"]
+IMAGE_MODELS = ["gpt_image_2", "nano_banana_2", "nano_banana_pro"]
 IMAGE_MODEL_LABELS = {
-    "nano_banana_2": "Nano Banana 2",
-    "gpt_image_2": "GPT Image 2",
+    "nano_banana_2":   "Nano Banana 2",
+    "nano_banana_pro": "Nano Banana Pro",
+    "gpt_image_2":     "GPT Image 2",
 }
 IMAGE_MODEL_CHOICES = [(m, IMAGE_MODEL_LABELS[m]) for m in IMAGE_MODELS]
+
+VIDEO_MODELS = ["kling_3_std", "kling_3_pro"]
+VIDEO_MODEL_LABELS = {
+    "kling_3_std": "Kling 3.0 Standard",
+    "kling_3_pro": "Kling 3.0 Pro",
+}
+VIDEO_MODEL_CHOICES = [(m, VIDEO_MODEL_LABELS[m]) for m in VIDEO_MODELS]
 
 
 # Pricing per image (USD). Keyed by (provider, image_model). Each value is a
 # {resolution -> price} dict. Verified on each provider's pricing page.
 # MuAPI gpt-image-2 is a flat rate regardless of resolution.
 COST_PER_IMAGE: dict[tuple[str, str], dict[str, float]] = {
-    ("muapi", "nano_banana_2"): {"1k": 0.06, "2k": 0.09, "4k": 0.12},
-    ("muapi", "gpt_image_2"):   {"1k": 0.09, "2k": 0.09, "4k": 0.09},
-    ("kie",   "nano_banana_2"): {"1k": 0.04, "2k": 0.06, "4k": 0.09},
-    ("kie",   "gpt_image_2"):   {"1k": 0.03, "2k": 0.05, "4k": 0.08},
+    ("muapi", "nano_banana_2"):   {"1k": 0.06, "2k": 0.09, "4k": 0.12},
+    ("muapi", "nano_banana_pro"): {"1k": 0.10, "2k": 0.13, "4k": 0.18},
+    ("muapi", "gpt_image_2"):     {"1k": 0.09, "2k": 0.09, "4k": 0.09},
+    ("kie",   "nano_banana_2"):   {"1k": 0.04, "2k": 0.06, "4k": 0.09},
+    ("kie",   "nano_banana_pro"): {"1k": 0.07, "2k": 0.10, "4k": 0.14},
+    ("kie",   "gpt_image_2"):     {"1k": 0.03, "2k": 0.05, "4k": 0.08},
 }
 
 
 def cost_per_image(provider: str, model: str, resolution: str) -> float:
     table = COST_PER_IMAGE.get((provider, model)) or COST_PER_IMAGE[("muapi", "nano_banana_2")]
     return table.get(resolution, table.get("1k", 0.06))
+
+
+# Pricing per second of generated video (USD). Kling tasks bill on output
+# duration; the UI multiplies by clip length × clip count.
+COST_PER_VIDEO_SECOND: dict[tuple[str, str], float] = {
+    ("muapi", "kling_3_std"): 0.06,
+    ("muapi", "kling_3_pro"): 0.18,
+    ("kie",   "kling_3_std"): 0.04,
+    ("kie",   "kling_3_pro"): 0.14,
+}
+
+
+def cost_per_video(provider: str, model: str, duration_s: int) -> float:
+    rate = COST_PER_VIDEO_SECOND.get((provider, model), 0.10)
+    return rate * max(1, duration_s)
 
 
 def get_provider(name: str, on_log: Optional[Callable[[str, str], None]] = None) -> Provider:
@@ -95,8 +120,13 @@ __all__ = [
     "IMAGE_MODELS",
     "IMAGE_MODEL_LABELS",
     "IMAGE_MODEL_CHOICES",
+    "VIDEO_MODELS",
+    "VIDEO_MODEL_LABELS",
+    "VIDEO_MODEL_CHOICES",
     "COST_PER_IMAGE",
+    "COST_PER_VIDEO_SECOND",
     "cost_per_image",
+    "cost_per_video",
     "ProviderError",
     "TransientError",
     "CensorshipError",

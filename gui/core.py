@@ -24,7 +24,11 @@ from providers import (
     PROVIDER_LABELS,
     PROVIDERS,
     Provider,
+    VIDEO_MODEL_CHOICES,
+    VIDEO_MODEL_LABELS,
+    VIDEO_MODELS,
     cost_per_image,
+    cost_per_video,
     get_active_provider,
     get_active_provider_name,
     get_provider,
@@ -32,6 +36,13 @@ from providers import (
 )
 from providers.prompts import (
     ADAPT_SYSTEM_PROMPT,
+    FUNNEL_LABELS,
+    FUNNEL_SEGMENTS,
+    FUNNEL_STAGES,
+    FUNNEL_SYSTEM_PROMPTS,
+    generate_broll_image_prompts as _gen_broll_img_prompts,
+    generate_broll_video_prompt as _gen_broll_vid_prompt,
+    generate_funnel_creatives as _gen_funnel_creatives,
     generate_prompts as _gen_prompts,
     soften_prompt as _soften,
 )
@@ -72,7 +83,7 @@ LANG_SLUG = {
 }
 AD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
-DEFAULT_IMAGE_MODEL = "nano_banana_2"
+DEFAULT_IMAGE_MODEL = "gpt_image_2"
 
 BRANDS_FILE = USER_DATA_DIR / "brands.json"
 BRANDS_IMG_DIR = USER_DATA_DIR / "brands" / "images"
@@ -164,16 +175,24 @@ def save_output_dir(path: str) -> None:
 
 def cost_for_run(run: dict) -> float:
     params = run.get("params") or {}
-    res = params.get("resolution", "1k")
     provider = params.get("provider", "muapi")
+    done = sum(1 for r in run.get("results", []) if r.get("status") == "ok")
+
+    if run.get("type") == "broll_videos":
+        video_model = params.get("video_model", "kling_3_std")
+        duration = int(params.get("duration", 5) or 5)
+        return cost_per_video(provider, video_model, duration) * done
+
+    res = params.get("resolution", "1k")
     image_model = params.get("image_model", DEFAULT_IMAGE_MODEL)
-    if image_model.startswith("nano-banana"):
+    if image_model == "nano-banana-2":
         image_model = "nano_banana_2"
+    elif image_model == "nano-banana-pro":
+        image_model = "nano_banana_pro"
     elif image_model.startswith("gpt-image"):
         image_model = "gpt_image_2"
     elif image_model not in IMAGE_MODELS:
         image_model = DEFAULT_IMAGE_MODEL
-    done = sum(1 for r in run.get("results", []) if r.get("status") == "ok")
     return cost_per_image(provider, image_model, res) * done
 
 
@@ -193,7 +212,10 @@ def list_runs(root: Optional[Path] = None) -> list[dict]:
         except Exception:
             continue
         images = (sorted(d.glob("variation_*.png")) + sorted(d.glob("variation_*.jpg"))
-                  + sorted(d.glob("adapt_*.png")) + sorted(d.glob("adapt_*.jpg")))
+                  + sorted(d.glob("adapt_*.png")) + sorted(d.glob("adapt_*.jpg"))
+                  + sorted(d.glob("broll_*.png")) + sorted(d.glob("broll_*.jpg"))
+                  + sorted(d.glob("broll_*.mp4"))
+                  + sorted(d.glob("funnel_*.png")) + sorted(d.glob("funnel_*.jpg")))
         runs.append({
             "dir": d,
             "timestamp": data.get("timestamp", d.name),
@@ -1044,3 +1066,566 @@ def run_batch_fix(
     except Exception as e:
         on_log("ERR", str(e))
         return []
+
+
+# ─── B-Roll pipeline ────────────────────────────────────────────────────────
+
+DEFAULT_VIDEO_MODEL = "kling_3_std"
+BROLL_CATEGORIES = ["usage", "presentation", "ecu", "in_action"]
+BROLL_CATEGORY_LABELS = {
+    "usage": "USAGE",
+    "presentation": "PRESENTATION",
+    "ecu": "ECU",
+    "in_action": "IN-ACTION",
+}
+
+
+def run_broll_images(
+    brand_name: str,
+    specifications: str,
+    counts: dict[str, int],
+    resolution: str,
+    aspect: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Phase 1 of the B-Roll workflow: generate N still images.
+
+    Writes a report.json with type="broll_images" and an entry per image.
+    The report is the handoff to phase 2 (animation): each ok entry includes
+    the image_url, prompt, and category, ready to be replayed.
+    """
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+
+    brands = load_brands()
+    brand = brands.get(brand_name)
+    if not brand:
+        on_log("ERR", f"Brand '{brand_name}' not found.")
+        return None
+
+    product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+    if not product_paths:
+        on_log("ERR", "Brand has no product image on disk.")
+        return None
+
+    total = sum(max(0, int(counts.get(c, 0))) for c in BROLL_CATEGORIES)
+    if total <= 0:
+        on_log("ERR", "Pick at least one B-roll category count > 0.")
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    out_dir = base / f"{ts}_broll_{_safe_name(brand_name)}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+    on_log("INFO", f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]}")
+    breakdown = ", ".join(
+        f"{counts.get(c, 0)} {BROLL_CATEGORY_LABELS[c]}" for c in BROLL_CATEGORIES if counts.get(c, 0)
+    )
+    on_log("INFO", f"Generating {total} B-roll images ({breakdown}, {workers} workers)")
+
+    try:
+        on_log("INFO", f"Uploading {len(product_paths)} product reference image(s)...")
+        product_urls = [provider.upload_image(pp) for pp in product_paths]
+        if should_cancel():
+            on_log("WARN", "Cancelled during upload.")
+            return out_dir
+
+        on_log("INFO", "Generating B-roll prompts...")
+        prompts = _gen_broll_img_prompts(
+            provider,
+            brand_dna=brand["dna"],
+            specifications=specifications,
+            counts=counts,
+            reference_image_url=product_urls[0],
+        )
+        if should_cancel():
+            on_log("WARN", "Cancelled after prompt generation.")
+            return out_dir
+
+        # Tag each prompt with its category so the UI can group by section.
+        category_order: list[str] = []
+        for c in BROLL_CATEGORIES:
+            category_order.extend([c] * max(0, int(counts.get(c, 0))))
+        # Defensive: align lengths in case the LLM under/over-produced.
+        while len(category_order) < len(prompts):
+            category_order.append("usage")
+        category_order = category_order[: len(prompts)]
+
+        (out_dir / "prompts.txt").write_text(
+            "\n\n".join(
+                f"=== {BROLL_CATEGORY_LABELS[cat]} · {i:02d} ===\n{p}"
+                for i, (p, cat) in enumerate(zip(prompts, category_order), 1)
+            )
+        )
+
+        def one(idx: int, prompt: str, category: str) -> dict:
+            label = f"broll_{idx:02d}_{category}"
+            provider._log("INFO", f"[{label}] generating...")
+            softened = False
+            try:
+                try:
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt, image_urls=product_urls,
+                        resolution=resolution, aspect_ratio=aspect, label=label,
+                    )
+                except CensorshipError:
+                    provider._log("WARN", f"[{label}] blocked by content filter — softening")
+                    prompt = _soften(provider, prompt, product_urls[0])
+                    softened = True
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt, image_urls=product_urls,
+                        resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+                    )
+                file_name = f"broll_{idx:02d}_{category}.png"
+                dest = out_dir / file_name
+                provider.download(img_url, dest)
+                provider._log(
+                    "OK",
+                    f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+                )
+                return {
+                    "index": idx, "category": category, "status": "ok",
+                    "prompt": prompt, "image_url": img_url, "file": dest.name,
+                    "softened": softened,
+                }
+            except Exception as e:
+                if is_censorship_error(e):
+                    provider._log("ERR", f"[{label}] blocked by content filter (after retry).")
+                else:
+                    provider._log("ERR", f"[{label}] {e}")
+                return {
+                    "index": idx, "category": category, "status": "error",
+                    "prompt": prompt, "error": str(e),
+                }
+
+        results: list[dict] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            jobs = [(i + 1, p, c) for i, (p, c) in enumerate(zip(prompts, category_order))]
+            for fut in as_completed([pool.submit(one, *j) for j in jobs]):
+                if should_cancel():
+                    break
+                r = fut.result()
+                results.append(r)
+                on_result(r)
+
+        results.sort(key=lambda r: r["index"])
+        report = {
+            "type": "broll_images",
+            "timestamp": ts,
+            "brand": brand_name,
+            "brand_dna": brand["dna"],
+            "specifications": specifications,
+            "product_images": [str(p) for p in product_paths],
+            "counts": {c: int(counts.get(c, 0)) for c in BROLL_CATEGORIES},
+            "params": {
+                "resolution": resolution,
+                "aspects": [aspect],
+                "aspect_ratio": aspect,
+                "workers": workers,
+                "provider": provider.name,
+                "image_model": image_model,
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": results,
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        on_log("OK", f"B-roll images done: {ok}/{len(results)} succeeded.")
+        return out_dir
+    except Exception as e:
+        on_log("ERR", str(e))
+        return out_dir
+
+
+def run_broll_videos(
+    images_run_dir: str,
+    approved_indexes: list[int],
+    duration: int,
+    aspect: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    *,
+    video_model: str = DEFAULT_VIDEO_MODEL,
+    provider_name: Optional[str] = None,
+    sound: bool = False,
+) -> Optional[Path]:
+    """Phase 2 of the B-Roll workflow: animate approved images into clips.
+
+    Reads images_run_dir/report.json (must be a broll_images run), animates
+    every approved image via LLM2 + Kling 3, writes results into a sibling
+    directory named <ts>_broll_videos_<brand> alongside the images run.
+    """
+    images_dir = Path(images_run_dir).expanduser().resolve()
+    report_path = images_dir / "report.json"
+    if not report_path.exists():
+        on_log("ERR", f"No report.json found in {images_dir}")
+        return None
+
+    try:
+        img_report = json.loads(report_path.read_text())
+    except Exception as e:
+        on_log("ERR", f"Could not read images report: {e}")
+        return None
+
+    if img_report.get("type") != "broll_images":
+        on_log("ERR", f"Run at {images_dir} is not a B-roll images run.")
+        return None
+
+    brand_name = img_report.get("brand") or ""
+    brand_dna = img_report.get("brand_dna") or ""
+    img_results = img_report.get("results") or []
+    by_index = {r["index"]: r for r in img_results if r.get("status") == "ok"}
+
+    approved: list[dict] = []
+    for idx in approved_indexes:
+        if idx in by_index:
+            entry = by_index[idx]
+            local = images_dir / entry.get("file", "")
+            if local.exists():
+                approved.append({**entry, "_local_path": local})
+    if not approved:
+        on_log("ERR", "No approved images found to animate.")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+    if video_model not in VIDEO_MODELS:
+        on_log("ERR", f"Unknown video model: {video_model!r}")
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = images_dir.parent / f"{ts}_broll_videos_{_safe_name(brand_name) or 'brand'}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+    on_log(
+        "INFO",
+        f"Provider: {provider.display_name} · Model: {VIDEO_MODEL_LABELS[video_model]} · "
+        f"{len(approved)} approved clips · {duration}s · {aspect}",
+    )
+
+    try:
+        # Re-upload approved local images so the video provider has a fresh
+        # URL it can read (image URLs in the images report may be transient).
+        on_log("INFO", "Uploading approved images to video provider...")
+        upload_urls: dict[int, str] = {}
+
+        def upload_one(entry: dict) -> tuple[int, Optional[str]]:
+            if should_cancel():
+                return entry["index"], None
+            try:
+                return entry["index"], provider.upload_image(entry["_local_path"])
+            except Exception as e:
+                provider._log("ERR", f"[broll_v_{entry['index']:02d}] upload {e}")
+                return entry["index"], None
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(upload_one, e) for e in approved]):
+                idx, url = fut.result()
+                if url:
+                    upload_urls[idx] = url
+        if should_cancel():
+            on_log("WARN", "Cancelled during upload.")
+            return out_dir
+
+        def animate(entry: dict) -> dict:
+            idx = entry["index"]
+            category = entry.get("category", "")
+            label = f"broll_v_{idx:02d}_{category}"
+            ref_url = upload_urls.get(idx)
+            if not ref_url:
+                return {
+                    "index": idx, "category": category, "status": "error",
+                    "error": "upload failed", "source_file": entry.get("file"),
+                }
+            try:
+                provider._log("INFO", f"[{label}] generating animation prompt...")
+                vid_prompt = _gen_broll_vid_prompt(provider, brand_dna, ref_url)
+                if should_cancel():
+                    return {"index": idx, "category": category, "status": "cancelled"}
+                provider._log("INFO", f"[{label}] rendering Kling clip...")
+                video_url = provider.call_video(
+                    model=video_model, prompt=vid_prompt, image_url=ref_url,
+                    duration=duration, aspect_ratio=aspect, sound=sound, label=label,
+                )
+                file_name = f"broll_{idx:02d}_{category}.mp4"
+                dest = out_dir / file_name
+                provider.download(video_url, dest)
+                provider._log("OK", f"[{label}] saved {dest.name}")
+                return {
+                    "index": idx, "category": category, "status": "ok",
+                    "prompt": vid_prompt, "video_url": video_url, "file": dest.name,
+                    "source_file": entry.get("file"),
+                }
+            except Exception as e:
+                provider._log("ERR", f"[{label}] {e}")
+                return {
+                    "index": idx, "category": category, "status": "error",
+                    "error": str(e), "source_file": entry.get("file"),
+                }
+
+        results: list[dict] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(animate, e) for e in approved]):
+                if should_cancel():
+                    break
+                r = fut.result()
+                results.append(r)
+                on_result(r)
+
+        results.sort(key=lambda r: r["index"])
+        (out_dir / "video_prompts.txt").write_text(
+            "\n\n".join(
+                f"=== broll_{r['index']:02d}_{r.get('category', '')} ===\n{r.get('prompt', '')}"
+                for r in results if r.get("status") == "ok"
+            )
+        )
+        report = {
+            "type": "broll_videos",
+            "timestamp": ts,
+            "brand": brand_name,
+            "brand_dna": brand_dna,
+            "images_run": str(images_dir),
+            "params": {
+                "duration": duration,
+                "aspect_ratio": aspect,
+                "workers": workers,
+                "provider": provider.name,
+                "video_model": video_model,
+                "sound": bool(sound),
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": results,
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        on_log("OK", f"B-roll videos done: {ok}/{len(results)} animated.")
+        return out_dir
+    except Exception as e:
+        on_log("ERR", str(e))
+        return out_dir
+
+
+# ─── Funnel Ads pipeline ────────────────────────────────────────────────────
+
+FUNNEL_PLATFORMS = ["Meta", "TikTok", "Both"]
+FUNNEL_LANGUAGES = ["English", "French", "Both"]
+FUNNEL_ASPECTS = ["1:1", "4:5", "9:16"]
+
+
+def run_funnel_ads(
+    brand_name: str,
+    funnel_stage: str,
+    form_fields: dict,
+    resolution: str,
+    aspect: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Generate funnel-stage static ads from a Brand DNA via LLM2 + NanoBanana.
+
+    Phase 1 (single LLM call): produce N creative blocks separated by ^.
+    Phase 2 (per creative): extract the PROMPT line and render via image model.
+
+    form_fields keys (see providers.prompts.generate_funnel_creatives docstring).
+    """
+    stage = (funnel_stage or "").upper().strip()
+    if stage not in FUNNEL_STAGES:
+        on_log("ERR", f"Unknown funnel stage: {funnel_stage!r}")
+        return None
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    brands = load_brands()
+    brand = brands.get(brand_name)
+    if not brand:
+        on_log("ERR", f"Brand '{brand_name}' not found.")
+        return None
+    product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+    if not product_paths:
+        on_log("ERR", "Brand has no product image on disk.")
+        return None
+
+    breakdown = form_fields.get("segment_breakdown") or []
+    breakdown = [
+        {"name": str(b.get("name", "")).strip(), "count": max(0, int(b.get("count", 0) or 0))}
+        for b in breakdown if b.get("name")
+    ]
+    breakdown = [b for b in breakdown if b["count"] > 0]
+    n = sum(b["count"] for b in breakdown)
+    if n <= 0:
+        on_log("ERR", "Pick at least one segment with count > 0.")
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    out_dir = base / f"{ts}_funnel_{stage.lower()}_{_safe_name(brand_name)}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+    on_log(
+        "INFO",
+        f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]} · "
+        f"Stage: {stage} ({FUNNEL_LABELS.get(stage, stage)})",
+    )
+    breakdown_str = ", ".join(f"{b['count']} {b['name']}" for b in breakdown)
+    on_log(
+        "INFO",
+        f"Generating {n} {stage} creatives ({breakdown_str}) · "
+        f"aspect {aspect} · {form_fields.get('language', 'English')}",
+    )
+
+    try:
+        on_log("INFO", f"Uploading {len(product_paths)} product reference image(s)...")
+        product_urls = [provider.upload_image(pp) for pp in product_paths]
+        if should_cancel():
+            on_log("WARN", "Cancelled during upload.")
+            return out_dir
+
+        on_log("INFO", "Calling LLM2 to generate creative prompts...")
+        # Inject the form's aspect into form_fields so the LLM uses the right one in metadata.
+        form_with_aspect = {
+            **form_fields,
+            "aspect_ratio": aspect,
+            "n_creatives": n,
+            "segment_breakdown": breakdown,
+        }
+        creatives = _gen_funnel_creatives(
+            provider,
+            brand_dna=brand["dna"],
+            funnel_stage=stage,
+            form_fields=form_with_aspect,
+            product_image_url=product_urls[0],
+        )
+        if should_cancel():
+            on_log("WARN", "Cancelled after prompt generation.")
+            return out_dir
+
+        # Persist the full LLM output (metadata + prompt) for later analysis.
+        (out_dir / "prompts.txt").write_text(
+            "\n\n".join(
+                f"=== CREATIVE {i:02d} ===\n{c['metadata']}"
+                for i, c in enumerate(creatives, 1)
+            )
+        )
+
+        def render_one(idx: int, creative: dict) -> dict:
+            prompt = creative["prompt"]
+            label = f"funnel_{stage.lower()}_{idx:02d}"
+            provider._log("INFO", f"[{label}] rendering...")
+            softened = False
+            try:
+                try:
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt, image_urls=product_urls,
+                        resolution=resolution, aspect_ratio=aspect, label=label,
+                    )
+                except CensorshipError:
+                    provider._log("WARN", f"[{label}] blocked by content filter — softening")
+                    prompt = _soften(provider, prompt, product_urls[0])
+                    softened = True
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt, image_urls=product_urls,
+                        resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+                    )
+                file_name = f"funnel_{stage.lower()}_{idx:02d}.png"
+                dest = out_dir / file_name
+                provider.download(img_url, dest)
+                provider._log(
+                    "OK",
+                    f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+                )
+                return {
+                    "index": idx, "stage": stage, "status": "ok",
+                    "prompt": prompt, "metadata": creative["metadata"],
+                    "image_url": img_url, "file": dest.name, "softened": softened,
+                }
+            except Exception as e:
+                if is_censorship_error(e):
+                    provider._log("ERR", f"[{label}] blocked by content filter (after retry).")
+                else:
+                    provider._log("ERR", f"[{label}] {e}")
+                return {
+                    "index": idx, "stage": stage, "status": "error",
+                    "prompt": prompt, "metadata": creative["metadata"],
+                    "error": str(e),
+                }
+
+        results: list[dict] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            jobs = [(i + 1, c) for i, c in enumerate(creatives)]
+            for fut in as_completed([pool.submit(render_one, *j) for j in jobs]):
+                if should_cancel():
+                    break
+                r = fut.result()
+                results.append(r)
+                on_result(r)
+
+        results.sort(key=lambda r: r["index"])
+        report = {
+            "type": "funnel_ads",
+            "timestamp": ts,
+            "brand": brand_name,
+            "brand_dna": brand["dna"],
+            "funnel_stage": stage,
+            "funnel_label": FUNNEL_LABELS.get(stage, stage),
+            "form_fields": form_with_aspect,
+            "product_images": [str(p) for p in product_paths],
+            "params": {
+                "iterations": n,
+                "resolution": resolution,
+                "aspects": [aspect],
+                "aspect_ratio": aspect,
+                "language": form_fields.get("language", "English"),
+                "platform": form_fields.get("platform", "Meta"),
+                "segment_breakdown": breakdown,
+                "workers": workers,
+                "provider": provider.name,
+                "image_model": image_model,
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": results,
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        on_log("OK", f"Funnel ads done: {ok}/{len(results)} succeeded.")
+        return out_dir
+    except Exception as e:
+        on_log("ERR", str(e))
+        return out_dir

@@ -36,8 +36,22 @@ _UPLOAD_LIMIT = 10 * 1024 * 1024  # MuAPI rejects >10MB uploads
 
 
 _IMAGE_SLUGS = {
-    "nano_banana_2": "nano-banana-2-edit",
-    "gpt_image_2":   "gpt-image-2-image-to-image",
+    "nano_banana_2":   "nano-banana-2-edit",
+    "nano_banana_pro": "nano-banana-pro-edit",
+    "gpt_image_2":     "gpt-image-2-image-to-image",
+}
+# Per-model accepted aspect ratios. Used to remap unsupported user choices
+# to the closest neighbour so the API doesn't reject the request.
+_GPT_IMAGE_2_ASPECTS = {"auto", "1:1", "16:9", "9:16", "4:3", "3:4"}
+_GPT_IMAGE_2_ASPECT_FALLBACK = {
+    "4:5": "3:4",   # vertical feed → closest portrait
+    "5:4": "4:3",
+    "2:3": "3:4",
+    "3:2": "4:3",
+}
+_VIDEO_SLUGS = {
+    "kling_3_std": "kling-v3.0-standard-image-to-video",
+    "kling_3_pro": "kling-v3.0-pro-image-to-video",
 }
 _LLM_SLUG = "claude-sonnet-4-6"
 
@@ -242,11 +256,27 @@ class MuApiProvider(Provider):
                 resolution.lower() if resolution and resolution[-1].lower() == "k"
                 else (resolution or "1k")
             )
+        # Remap aspects the upstream model can't accept (see _GPT_IMAGE_2_*).
+        normalized_aspect = aspect_ratio
+        if model == "gpt_image_2" and aspect_ratio not in _GPT_IMAGE_2_ASPECTS:
+            fallback = _GPT_IMAGE_2_ASPECT_FALLBACK.get(aspect_ratio)
+            if fallback:
+                self._log(
+                    "WARN",
+                    f"[{label}] GPT Image 2 doesn't accept {aspect_ratio} — using {fallback}",
+                )
+                normalized_aspect = fallback
+            else:
+                self._log(
+                    "WARN",
+                    f"[{label}] GPT Image 2 doesn't accept {aspect_ratio} — falling back to 1:1",
+                )
+                normalized_aspect = "1:1"
         payload = {
             "prompt": prompt,
             "images_list": list(image_urls),
             "resolution": normalized_res,
-            "aspect_ratio": aspect_ratio,
+            "aspect_ratio": normalized_aspect,
             "output_format": output_format,
         }
         out = self._call_prediction(slug, payload, label)
@@ -268,3 +298,33 @@ class MuApiProvider(Provider):
             payload["image_url"] = image_url
         out = self._call_prediction(_LLM_SLUG, payload, label)
         return coerce_text(out)
+
+    def call_video(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        image_url: str,
+        duration: int = 5,
+        aspect_ratio: str = "9:16",
+        sound: bool = False,
+        label: str = "video",
+    ) -> str:
+        slug = _VIDEO_SLUGS.get(model)
+        if not slug:
+            raise ProviderError(f"MuAPI does not support video model {model!r}")
+        # MuAPI's Kling 3 default is "sound on" in practice (despite WaveSpeed
+        # docs claiming the opposite), so we always send the boolean explicitly.
+        payload: dict = {
+            "prompt": prompt,
+            "image_url": image_url,
+            "duration": int(duration),
+            "aspect_ratio": aspect_ratio,
+            "sound": bool(sound),
+        }
+        self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
+        out = self._call_prediction(slug, payload, label)
+        url = first_url(out)
+        if not url:
+            raise ProviderError(f"{label}: no video URL in output: {out}")
+        return url

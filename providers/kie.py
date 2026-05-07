@@ -42,13 +42,24 @@ _UPLOAD_LIMIT = 30 * 1024 * 1024  # base64 endpoint accepts up to ~32MB raw
 
 
 _IMAGE_SLUGS = {
-    "nano_banana_2": "nano-banana-2",
-    "gpt_image_2":   "gpt-image-2-image-to-image",
+    "nano_banana_2":   "nano-banana-2",
+    "nano_banana_pro": "nano-banana-pro",
+    "gpt_image_2":     "gpt-image-2-image-to-image",
 }
-# Per-model cap on input images. gpt-image-2-image-to-image documents max 16.
+# Per-model cap on input images. gpt-image-2-image-to-image documents max 16,
+# nano-banana-pro accepts up to 8.
 _IMAGE_INPUT_CAPS = {
-    "nano_banana_2": 14,
-    "gpt_image_2":   16,
+    "nano_banana_2":   14,
+    "nano_banana_pro": 8,
+    "gpt_image_2":     16,
+}
+_VIDEO_SLUGS = {
+    "kling_3_std": "kling-3.0/video",
+    "kling_3_pro": "kling-3.0/video",
+}
+_VIDEO_MODES = {
+    "kling_3_std": "std",
+    "kling_3_pro": "pro",
 }
 _LLM_SLUG = "claude-sonnet-4-6"
 
@@ -249,6 +260,12 @@ class KieProvider(Provider):
                 "image_input": list(image_urls),
                 "output_format": output_format,
             }
+        if model == "nano_banana_pro":
+            return {
+                **common,
+                "image_input": list(image_urls),
+                "output_format": output_format,
+            }
         if model == "gpt_image_2":
             return {
                 **common,
@@ -296,6 +313,43 @@ class KieProvider(Provider):
         if image_url:
             out["image_url"] = image_url
         return out
+
+    def call_video(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        image_url: str,
+        duration: int = 5,
+        aspect_ratio: str = "9:16",
+        sound: bool = False,
+        label: str = "video",
+    ) -> str:
+        slug = _VIDEO_SLUGS.get(model)
+        mode = _VIDEO_MODES.get(model)
+        if not slug or not mode:
+            raise ProviderError(f"Kie does not support video model {model!r}")
+        input_payload: dict = {
+            "prompt": prompt,
+            "image_urls": [image_url],
+            "duration": str(duration),
+            "aspect_ratio": aspect_ratio,
+            "mode": mode,
+            "sound": bool(sound),
+            "multi_shots": False,
+        }
+        self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
+        try:
+            task_id = self._create_task(slug, input_payload, label)
+            record = self._poll_task(task_id, label)
+        except ProviderError as e:
+            if is_censorship_error(e):
+                raise CensorshipError(str(e)) from e
+            raise
+        urls = self._parse_result_urls(record)
+        if not urls:
+            raise ProviderError(f"{label}: success without resultUrls in record: {record}")
+        return urls[0]
 
     def call_llm(
         self,
