@@ -4167,3 +4167,675 @@ class FunnelAdsPage(QWidget):
             item = self.grid.takeAt(0)
             w = item.widget()
             if w: w.deleteLater()
+
+
+# ─── Twin ───────────────────────────────────────────────────────────────────
+
+class TwinAnalyzeWorker(QObject):
+    log = Signal(str, str)
+    finished = Signal(str)  # emits the generated prompt, or "" on error
+
+    def __init__(self, image_path: str, hint: str):
+        super().__init__()
+        self._image_path = image_path
+        self._hint = hint
+
+    def run(self):
+        prompt = core.run_twin_analyze(
+            self._image_path,
+            self._hint,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+        ) or ""
+        self.finished.emit(prompt)
+
+
+class TwinGenerateWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    out_dir_signal = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, image_path, prompt, n_variants, resolution, aspect, workers,
+                 output_root, image_model, hint):
+        super().__init__()
+        self._args = (image_path, prompt, n_variants, resolution, aspect, workers)
+        self._output_root = output_root
+        self._image_model = image_model
+        self._hint = hint
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_twin_generate(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            output_root=self._output_root,
+            image_model=self._image_model,
+            hint=self._hint,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
+class TwinPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._analyze_worker: TwinAnalyzeWorker | None = None
+        self._generate_worker: TwinGenerateWorker | None = None
+        self._video_worker: BRollVideoWorker | None = None
+        self._thread: QThread | None = None
+
+        self._images_dir: Path | None = None
+        self._videos_dir: Path | None = None
+        self._image_results: list[dict] = []
+        self._approval_thumbs: dict[int, _ApprovalThumb] = {}
+        self._video_count = 0
+
+        self._build()
+
+    # ── Build ───────────────────────────────────────────────────────────────
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Twin"); h1.setObjectName("H1")
+        sub = QLabel(
+            "Drop any reference image. The LLM analyzes its style, you review the "
+            "generated text-to-image prompt, then N variants are recreated from scratch — "
+            "and animated with Kling 3 if you want."
+        )
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        self.stepper = QHBoxLayout()
+        self.stepper.setSpacing(8); self.stepper.setContentsMargins(0, 0, 0, 0)
+        self._step_pills: list[QLabel] = []
+        for name in ("1. Setup", "2. Review prompt", "3. Approve", "4. Videos"):
+            pill = QLabel(name)
+            pill.setStyleSheet(
+                f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+            )
+            self._step_pills.append(pill)
+            self.stepper.addWidget(pill)
+        self.stepper.addStretch()
+        root.addLayout(self.stepper)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._build_setup_panel())
+        self.stack.addWidget(self._build_review_panel())
+        self.stack.addWidget(self._build_approve_panel())
+        self.stack.addWidget(self._build_videos_panel())
+        root.addWidget(self.stack, 1)
+        self._set_step(0)
+
+    def _set_step(self, idx: int):
+        self.stack.setCurrentIndex(idx)
+        for i, pill in enumerate(self._step_pills):
+            if i == idx:
+                pill.setStyleSheet(
+                    f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+            elif i < idx:
+                pill.setStyleSheet(
+                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+            else:
+                pill.setStyleSheet(
+                    f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+
+    # ── Step 1: Setup ───────────────────────────────────────────────────────
+
+    def _build_setup_panel(self) -> QWidget:
+        wrap = QWidget()
+        body = QHBoxLayout(wrap); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(14)
+
+        form_card = Card()
+        form_card.setMinimumWidth(520)
+        card_lay = QVBoxLayout(form_card)
+        card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        form_inner = QWidget()
+        form = QVBoxLayout(form_inner)
+        form.setContentsMargins(22, 20, 22, 20); form.setSpacing(16)
+        scroll.setWidget(form_inner)
+        card_lay.addWidget(scroll)
+
+        ref_l = QLabel("REFERENCE IMAGE"); ref_l.setObjectName("Muted")
+        form.addWidget(ref_l)
+        self.drop = DropZone()
+        form.addWidget(self.drop)
+
+        hint_l = QLabel("HINT  ·  optional"); hint_l.setObjectName("Muted")
+        form.addWidget(hint_l)
+        self.hint = QTextEdit()
+        self.hint.setPlaceholderText(
+            "Optional directive applied during analysis. Ex: 'use a blue/orange palette' / "
+            "'make the subject male' / 'wider shot showing more environment' / 'shift to night scene'"
+        )
+        self.hint.setMinimumHeight(64); self.hint.setMaximumHeight(96)
+        form.addWidget(self.hint)
+
+        params_row = QHBoxLayout(); params_row.setSpacing(14)
+        col_n = QVBoxLayout(); col_n.setSpacing(6)
+        col_n.addWidget(_field_label("Variants"))
+        self.n = QSpinBox(); self.n.setRange(1, 12); self.n.setValue(4)
+        col_n.addWidget(self.n)
+        col_a = QVBoxLayout(); col_a.setSpacing(6)
+        col_a.addWidget(_field_label("Aspect"))
+        self.asp = QComboBox(); self.asp.addItems(["1:1", "4:5", "9:16", "16:9", "3:4", "4:3"])
+        self.asp.setCurrentText("1:1")
+        col_a.addWidget(self.asp)
+        col_r = QVBoxLayout(); col_r.setSpacing(6)
+        col_r.addWidget(_field_label("Resolution"))
+        self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("1k")
+        col_r.addWidget(self.res)
+        col_w = QVBoxLayout(); col_w.setSpacing(6)
+        col_w.addWidget(_field_label("Workers"))
+        self.workers = QSpinBox(); self.workers.setRange(1, 16); self.workers.setValue(6)
+        col_w.addWidget(self.workers)
+        params_row.addLayout(col_n, 1); params_row.addLayout(col_a, 1)
+        params_row.addLayout(col_r, 1); params_row.addLayout(col_w, 1)
+        form.addLayout(params_row)
+
+        col_im = QVBoxLayout(); col_im.setSpacing(6)
+        col_im.addWidget(_field_label("Image model (text-to-image)"))
+        self.image_model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.image_model.addItem(label, userData=slug)
+        self.image_model.setCurrentIndex(0)
+        col_im.addWidget(self.image_model)
+        form.addLayout(col_im)
+
+        out_l = QLabel("OUTPUT FOLDER"); out_l.setObjectName("Muted")
+        form.addWidget(out_l)
+        self.out_row = OutputFolderRow()
+        form.addWidget(self.out_row)
+
+        self.cost_label = QLabel()
+        self.cost_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        form.addWidget(self.cost_label)
+        self._update_cost()
+        self.n.valueChanged.connect(self._update_cost)
+        self.res.currentTextChanged.connect(self._update_cost)
+        self.image_model.currentIndexChanged.connect(self._update_cost)
+
+        form.addSpacing(8)
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        self.analyze_btn = QPushButton("Analyze image")
+        self.analyze_btn.setObjectName("PrimaryBtn"); self.analyze_btn.setCursor(Qt.PointingHandCursor)
+        self.analyze_btn.clicked.connect(self._start_analyze)
+        btn_row.addWidget(self.analyze_btn); btn_row.addStretch()
+        form.addLayout(btn_row)
+        form.addStretch()
+
+        body.addWidget(form_card, 5)
+
+        right = QVBoxLayout(); right.setSpacing(14)
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lhead = QHBoxLayout()
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        lhead.addWidget(lh); lhead.addStretch()
+        self.live_pill = StatusPill("Idle", t.TEXT_MUTED)
+        lhead.addWidget(self.live_pill)
+        llay.addLayout(lhead)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(220)
+        llay.addWidget(self.log)
+        right.addWidget(log_card, 1)
+
+        right_w = QWidget(); right_w.setLayout(right)
+        body.addWidget(right_w, 4)
+        return wrap
+
+    def _update_cost(self):
+        n = self.n.value()
+        provider = core.get_active_provider_name()
+        model = self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL
+        price = core.cost_per_image(provider, model, self.res.currentText())
+        self.cost_label.setText(
+            f"{n} image{'s' if n > 1 else ''}  ·  estimated ${n * price:.2f}  (+ 1 LLM call for analysis)"
+        )
+
+    def _start_analyze(self):
+        path = self.drop.path()
+        if not path:
+            QMessageBox.warning(self, "Missing reference", "Drop a reference image first.")
+            return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first.")
+            return
+
+        self.log.clear()
+        self.analyze_btn.setEnabled(False)
+        self.analyze_btn.setText("Analyzing…")
+        self.live_pill.setText("Running")
+        self.live_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+
+        self._thread = QThread()
+        self._analyze_worker = TwinAnalyzeWorker(path, self.hint.toPlainText())
+        self._analyze_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._analyze_worker.run)
+        self._analyze_worker.log.connect(self._on_log)
+        self._analyze_worker.finished.connect(self._on_analyze_finished)
+        self._thread.start()
+
+    def _on_log(self, level: str, msg: str):
+        self._append_log(self.log, level, msg)
+
+    def _on_analyze_finished(self, prompt: str):
+        self._thread.quit(); self._thread.wait()
+        self.analyze_btn.setEnabled(True)
+        self.analyze_btn.setText("Analyze image")
+        if not prompt:
+            self.live_pill.setText("Failed")
+            self.live_pill.setStyleSheet(
+                f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
+                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            )
+            return
+        self.live_pill.setText("Done")
+        self.live_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        self.prompt_edit.setPlainText(prompt)
+        self._set_step(1)
+
+    # ── Step 2: Review prompt ───────────────────────────────────────────────
+
+    def _build_review_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head_card = Card()
+        hl = QHBoxLayout(head_card); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Review the LLM-generated prompt"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        regen_btn = QPushButton("Regenerate analysis")
+        regen_btn.setObjectName("GhostBtn"); regen_btn.setCursor(Qt.PointingHandCursor)
+        regen_btn.clicked.connect(self._start_analyze)
+        hl.addWidget(regen_btn)
+        back_btn = QPushButton("← Back to setup")
+        back_btn.setObjectName("GhostBtn"); back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(back_btn)
+        self.generate_btn = QPushButton("Generate variants")
+        self.generate_btn.setObjectName("PrimaryBtn"); self.generate_btn.setCursor(Qt.PointingHandCursor)
+        self.generate_btn.clicked.connect(self._start_generate)
+        hl.addWidget(self.generate_btn)
+        col.addWidget(head_card)
+
+        prompt_card = Card()
+        pl = QVBoxLayout(prompt_card); pl.setContentsMargins(20, 18, 20, 18); pl.setSpacing(10)
+        helper = QLabel(
+            "This is what the LLM saw. Edit anything — colors, subject, framing, mood — "
+            "before generating the variants. The reference image is NOT passed to the image model."
+        )
+        helper.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        helper.setWordWrap(True)
+        pl.addWidget(helper)
+        self.prompt_edit = QTextEdit()
+        self.prompt_edit.setMinimumHeight(280)
+        pl.addWidget(self.prompt_edit, 1)
+        col.addWidget(prompt_card, 1)
+
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        llay.addWidget(lh)
+        self.gen_log = QPlainTextEdit(); self.gen_log.setReadOnly(True); self.gen_log.setMinimumHeight(120)
+        llay.addWidget(self.gen_log)
+        col.addWidget(log_card)
+        return wrap
+
+    def _start_generate(self):
+        path = self.drop.path()
+        prompt = self.prompt_edit.toPlainText().strip()
+        if not path or not prompt:
+            QMessageBox.warning(self, "Nothing to generate", "Both reference and prompt are required."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self.gen_log.clear()
+        self._image_results = []
+        self._images_dir = None
+        self.generate_btn.setEnabled(False)
+        self.generate_btn.setText("Generating…")
+
+        self._thread = QThread()
+        self._generate_worker = TwinGenerateWorker(
+            path, prompt, self.n.value(),
+            self.res.currentText(), self.asp.currentText(), self.workers.value(),
+            self.out_row.path(),
+            self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+            self.hint.toPlainText(),
+        )
+        self._generate_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._generate_worker.run)
+        self._generate_worker.log.connect(lambda lvl, msg: self._append_log(self.gen_log, lvl, msg))
+        self._generate_worker.result.connect(self._on_generate_result)
+        self._generate_worker.out_dir_signal.connect(self._on_images_out_dir)
+        self._generate_worker.finished.connect(self._on_generate_finished)
+        self._thread.start()
+
+    def _on_generate_result(self, r: dict):
+        self._image_results.append(r)
+
+    def _on_images_out_dir(self, p: str):
+        self._images_dir = Path(p)
+
+    def _on_generate_finished(self, out_dir: str):
+        self._thread.quit(); self._thread.wait()
+        self.generate_btn.setEnabled(True)
+        self.generate_btn.setText("Generate variants")
+        if out_dir:
+            self._images_dir = Path(out_dir)
+        self._populate_approval_grid()
+        self._set_step(2)
+
+    # ── Step 3: Approve ─────────────────────────────────────────────────────
+
+    def _build_approve_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head_card = Card()
+        hl = QHBoxLayout(head_card); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Approve images for animation"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        self.approve_count_lbl = QLabel("")
+        self.approve_count_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        hl.addWidget(self.approve_count_lbl)
+        all_btn = QPushButton("Approve all")
+        all_btn.setObjectName("GhostBtn"); all_btn.setCursor(Qt.PointingHandCursor)
+        all_btn.clicked.connect(lambda: self._set_all_approved(True))
+        hl.addWidget(all_btn)
+        none_btn = QPushButton("Reject all")
+        none_btn.setObjectName("GhostBtn"); none_btn.setCursor(Qt.PointingHandCursor)
+        none_btn.clicked.connect(lambda: self._set_all_approved(False))
+        hl.addWidget(none_btn)
+        self.images_open_btn = QPushButton("Open folder")
+        self.images_open_btn.setObjectName("GhostBtn"); self.images_open_btn.setCursor(Qt.PointingHandCursor)
+        self.images_open_btn.clicked.connect(self._open_images_folder)
+        hl.addWidget(self.images_open_btn)
+        back_btn = QPushButton("← Back to review")
+        back_btn.setObjectName("GhostBtn"); back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.clicked.connect(lambda: self._set_step(1))
+        hl.addWidget(back_btn)
+
+        # Video model + sound — same as B-Roll
+        col_vm = QVBoxLayout(); col_vm.setSpacing(2); col_vm.setContentsMargins(0, 0, 0, 0)
+        self.video_model = QComboBox()
+        for slug, label in core.VIDEO_MODEL_CHOICES:
+            self.video_model.addItem(label, userData=slug)
+        self.video_model.setCurrentIndex(0)
+        self.video_model.setFixedWidth(180)
+        col_vm.addWidget(self.video_model)
+        self.sound_chk = QCheckBox("With sound (×1.5)")
+        self.sound_chk.setStyleSheet(f"QCheckBox {{ color: {t.TEXT_DIM}; font-size: 11px; }}")
+        col_vm.addWidget(self.sound_chk)
+        hl.addLayout(col_vm)
+
+        self.animate_btn = QPushButton("Animate approved")
+        self.animate_btn.setObjectName("PrimaryBtn"); self.animate_btn.setCursor(Qt.PointingHandCursor)
+        self.animate_btn.clicked.connect(self._start_videos)
+        hl.addWidget(self.animate_btn)
+        col.addWidget(head_card)
+
+        grid_card = Card()
+        gl = QVBoxLayout(grid_card); gl.setContentsMargins(20, 18, 20, 18); gl.setSpacing(10)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.approve_grid_container = QWidget()
+        self.approve_grid = QGridLayout(self.approve_grid_container)
+        self.approve_grid.setSpacing(14); self.approve_grid.setContentsMargins(0, 0, 0, 0)
+        self.approve_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.approve_grid_container)
+        gl.addWidget(scroll)
+        col.addWidget(grid_card, 1)
+        return wrap
+
+    def _populate_approval_grid(self):
+        while self.approve_grid.count():
+            item = self.approve_grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        self._approval_thumbs.clear()
+
+        ok_results = sorted(
+            (r for r in self._image_results if r.get("status") == "ok"),
+            key=lambda r: r.get("index", 0),
+        )
+        for i, r in enumerate(ok_results):
+            local = (self._images_dir / r.get("file", "")) if self._images_dir else None
+            if not local or not local.exists():
+                continue
+            tile = _ApprovalThumb(r["index"], local, "twin")
+            tile.toggled.connect(self._on_approval_toggled)
+            row = i // 5
+            col = i % 5
+            self.approve_grid.addWidget(tile, row, col)
+            self._approval_thumbs[r["index"]] = tile
+        self._refresh_approval_count()
+
+    def _on_approval_toggled(self, _idx: int, _approved: bool):
+        self._refresh_approval_count()
+
+    def _refresh_approval_count(self):
+        approved = sum(1 for tile in self._approval_thumbs.values() if tile.is_approved())
+        total = len(self._approval_thumbs)
+        provider = core.get_active_provider_name()
+        video_model = self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL
+        price = core.cost_per_video(provider, video_model, 5)
+        self.approve_count_lbl.setText(
+            f"{approved}/{total} approved  ·  estimated ${approved * price:.2f} for animation (5s clips)"
+        )
+        self.animate_btn.setEnabled(approved > 0)
+
+    def _set_all_approved(self, approved: bool):
+        for tile in self._approval_thumbs.values():
+            if tile.is_approved() != approved:
+                tile._toggle()
+
+    def _open_images_folder(self):
+        if self._images_dir:
+            open_path(self._images_dir)
+
+    # ── Step 4: Videos ──────────────────────────────────────────────────────
+
+    def _build_videos_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head_card = Card()
+        hl = QHBoxLayout(head_card); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Animated twins"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        self.video_pill = StatusPill("Idle", t.TEXT_MUTED)
+        hl.addWidget(self.video_pill)
+        self.video_cancel_btn = QPushButton("Cancel")
+        self.video_cancel_btn.setObjectName("GhostBtn"); self.video_cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.video_cancel_btn.clicked.connect(self._cancel_videos); self.video_cancel_btn.hide()
+        hl.addWidget(self.video_cancel_btn)
+        self.video_open_btn = QPushButton("Open folder")
+        self.video_open_btn.setObjectName("GhostBtn"); self.video_open_btn.setCursor(Qt.PointingHandCursor)
+        self.video_open_btn.setEnabled(False)
+        self.video_open_btn.clicked.connect(self._open_videos_folder)
+        hl.addWidget(self.video_open_btn)
+        back_btn = QPushButton("← Back to approve")
+        back_btn.setObjectName("GhostBtn"); back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.clicked.connect(lambda: self._set_step(2))
+        hl.addWidget(back_btn)
+        new_btn = QPushButton("New twin run")
+        new_btn.setObjectName("GhostBtn"); new_btn.setCursor(Qt.PointingHandCursor)
+        new_btn.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(new_btn)
+        col.addWidget(head_card)
+
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        llay.addWidget(lh)
+        self.video_log = QPlainTextEdit(); self.video_log.setReadOnly(True); self.video_log.setMinimumHeight(140)
+        llay.addWidget(self.video_log)
+        col.addWidget(log_card, 1)
+
+        grid_card = Card()
+        gl = QVBoxLayout(grid_card); gl.setContentsMargins(20, 18, 20, 18); gl.setSpacing(10)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.video_grid_container = QWidget()
+        self.video_grid = QGridLayout(self.video_grid_container)
+        self.video_grid.setSpacing(12); self.video_grid.setContentsMargins(0, 0, 0, 0)
+        self.video_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.video_grid_container)
+        gl.addWidget(scroll)
+        col.addWidget(grid_card, 2)
+        return wrap
+
+    def _start_videos(self):
+        approved = [idx for idx, tile in self._approval_thumbs.items() if tile.is_approved()]
+        if not approved:
+            QMessageBox.warning(self, "No approved", "Approve at least one image."); return
+        if not self._images_dir:
+            QMessageBox.warning(self, "No run", "Image run not found."); return
+
+        self.video_log.clear()
+        self._clear_video_grid()
+        self._videos_dir = None
+        self._video_count = 0
+        self.video_open_btn.setEnabled(False)
+        self.animate_btn.setEnabled(False)
+        self.video_cancel_btn.show()
+        self.video_cancel_btn.setEnabled(True); self.video_cancel_btn.setText("Cancel")
+        self.video_pill.setText("Running")
+        self.video_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        self._set_step(3)
+
+        self._thread = QThread()
+        self._video_worker = BRollVideoWorker(
+            str(self._images_dir),
+            sorted(approved),
+            5,
+            self.asp.currentText(),
+            min(4, self.workers.value()),
+            self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
+            self.sound_chk.isChecked(),
+        )
+        self._video_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._video_worker.run)
+        self._video_worker.log.connect(lambda lvl, msg: self._append_log(self.video_log, lvl, msg))
+        self._video_worker.result.connect(self._on_video_result)
+        self._video_worker.out_dir_signal.connect(self._on_videos_out_dir)
+        self._video_worker.finished.connect(self._on_videos_finished)
+        self._thread.start()
+
+    def _cancel_videos(self):
+        if self._video_worker:
+            self._video_worker.cancel()
+        self.video_cancel_btn.setEnabled(False); self.video_cancel_btn.setText("Cancelling…")
+
+    def _on_video_result(self, r: dict):
+        if r.get("status") != "ok":
+            return
+        if not self._videos_dir:
+            return
+        local = self._videos_dir / r.get("file", "")
+        if not local.exists():
+            return
+        self._video_count += 1
+        src_thumb: Path | None = None
+        src_file = r.get("source_file", "")
+        if self._images_dir and src_file:
+            cand = self._images_dir / src_file
+            if cand.exists():
+                src_thumb = cand
+
+        tile = QFrame()
+        tile.setFixedSize(180, 220)
+        tile.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 14px;")
+        tlay = QVBoxLayout(tile); tlay.setContentsMargins(8, 8, 8, 8); tlay.setSpacing(6)
+        if src_thumb:
+            thumb = ThumbLabel(src_thumb, 164, 164, 10)
+            thumb.clicked.connect(lambda p=local: open_path(p))
+            tlay.addWidget(thumb, alignment=Qt.AlignCenter)
+        else:
+            ph = QLabel("Video"); ph.setFixedSize(164, 164); ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(f"background: {t.BORDER}; color: {t.TEXT}; border-radius: 10px; font-weight: 700;")
+            tlay.addWidget(ph, alignment=Qt.AlignCenter)
+        play = QPushButton(f"▶  {local.name}")
+        play.setCursor(Qt.PointingHandCursor)
+        play.setStyleSheet(
+            f"QPushButton {{ background: {t.BG_HOVER}; color: {t.TEXT}; "
+            f"border: 1px solid {t.BORDER}; border-radius: 10px; "
+            f"font-size: 10px; font-weight: 700; padding: 4px 8px; }}"
+            f"QPushButton:hover {{ background: {t.ACCENT}22; color: {t.ACCENT}; border-color: {t.ACCENT}55; }}"
+        )
+        play.clicked.connect(lambda p=local: open_path(p))
+        tlay.addWidget(play)
+
+        row = (self._video_count - 1) // 4
+        col = (self._video_count - 1) % 4
+        self.video_grid.addWidget(tile, row, col)
+
+    def _on_videos_out_dir(self, p: str):
+        self._videos_dir = Path(p)
+        self.video_open_btn.setEnabled(True)
+
+    def _on_videos_finished(self, out_dir: str):
+        self._thread.quit(); self._thread.wait()
+        self.video_cancel_btn.hide()
+        self.animate_btn.setEnabled(True)
+        self.video_pill.setText("Done")
+        self.video_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        if out_dir:
+            self._videos_dir = Path(out_dir)
+            self.video_open_btn.setEnabled(True)
+
+    def _open_videos_folder(self):
+        if self._videos_dir:
+            open_path(self._videos_dir)
+
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    def _append_log(self, target: QPlainTextEdit, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        target.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _clear_video_grid(self):
+        while self.video_grid.count():
+            item = self.video_grid.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()

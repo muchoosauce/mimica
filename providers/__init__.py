@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 from typing import Callable, Optional
 
+from .anthropic_llm import AnthropicLLM
 from .base import Provider
 from .errors import (
     CensorshipError,
@@ -86,14 +87,59 @@ def cost_per_video(provider: str, model: str, duration_s: int) -> float:
     return rate * max(1, duration_s)
 
 
+def _attach_anthropic_llm_route(provider: Provider) -> Provider:
+    """If ANTHROPIC_API_KEY is configured, replace `provider.call_llm` with a
+    routed version that tries Anthropic direct first and falls back to the
+    underlying provider's LLM endpoint when Anthropic itself fails.
+
+    Image generation, video generation, and uploads are unaffected — those
+    still hit MuAPI/Kie. Only LLM calls are rerouted.
+    """
+    if not AnthropicLLM.is_configured():
+        return provider
+
+    anth = AnthropicLLM()
+    original_call_llm = provider.call_llm
+    fallback_label = provider.display_name
+
+    def routed_call_llm(*, prompt, image_url="", system_prompt, label="llm"):
+        # Mirror logger so Anthropic INFO/WARN/ERR show up in the GUI's
+        # activity panel via the underlying provider's _on_log.
+        anth.set_logger(provider._on_log)
+        try:
+            provider._log("INFO", f"[{label}] LLM via Anthropic direct")
+            return anth.call_llm(
+                prompt=prompt, image_url=image_url,
+                system_prompt=system_prompt, label=f"{label}-anth",
+            )
+        except CensorshipError:
+            # Same content rules apply on MuAPI/Kie's claude wrapper, retrying
+            # there is pointless. Surface the error to let the soften path run.
+            raise
+        except Exception as e:
+            provider._log(
+                "WARN",
+                f"[{label}] Anthropic failed ({e.__class__.__name__}: "
+                f"{str(e)[:120]}); falling back to {fallback_label}",
+            )
+            return original_call_llm(
+                prompt=prompt, image_url=image_url,
+                system_prompt=system_prompt, label=label,
+            )
+
+    provider.call_llm = routed_call_llm  # type: ignore[method-assign]
+    return provider
+
+
 def get_provider(name: str, on_log: Optional[Callable[[str, str], None]] = None) -> Provider:
     name = (name or "").lower().strip()
     if name == "muapi":
-        p = MuApiProvider()
+        p: Provider = MuApiProvider()
     elif name == "kie":
         p = KieProvider()
     else:
         raise ValueError(f"Unknown provider: {name!r}. Expected one of {PROVIDERS}.")
+    p = _attach_anthropic_llm_route(p)
     if on_log is not None:
         p.set_logger(on_log)
     return p

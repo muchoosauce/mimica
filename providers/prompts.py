@@ -318,13 +318,26 @@ def generate_broll_video_prompt(
     brand_dna: str,
     image_url: str,
 ) -> str:
-    """Ask the LLM for ONE Kling video prompt animating the given image."""
-    user_prompt = (
-        f"BRAND DNA:\n{brand_dna.strip()}\n\n"
-        f"REFERENCE IMAGE: [attached]\n\n"
-        "Generate ONE Kling 3.0 video prompt animating the attached image, "
-        "following all rules. Start with ^."
-    )
+    """Ask the LLM for ONE Kling video prompt animating the given image.
+
+    `brand_dna` may be empty — Twin runs don't have one. The image itself is
+    the dominant signal anyway; an empty BRAND DNA just removes a context cue.
+    """
+    dna = (brand_dna or "").strip()
+    if dna:
+        user_prompt = (
+            f"BRAND DNA:\n{dna}\n\n"
+            f"REFERENCE IMAGE: [attached]\n\n"
+            "Generate ONE Kling 3.0 video prompt animating the attached image, "
+            "following all rules. Start with ^."
+        )
+    else:
+        user_prompt = (
+            "BRAND DNA: (none — animate purely from what is visible in the image)\n\n"
+            "REFERENCE IMAGE: [attached]\n\n"
+            "Generate ONE Kling 3.0 video prompt animating the attached image, "
+            "following all rules. Start with ^."
+        )
     text = provider.call_llm(
         prompt=user_prompt,
         image_url=image_url,
@@ -1394,6 +1407,113 @@ def generate_funnel_creatives(
         raise RuntimeError(f"Could not parse any funnel creatives from LLM output:\n{text}")
     provider._log("OK", f"Parsed {len(creatives)} {stage} creatives")
     return creatives
+
+
+TWIN_SYSTEM_PROMPT = """You are an expert image analyst and prompt engineer for text-to-image generation.
+
+The user provides ONE reference image. Your job is to look at it carefully and produce a single text-to-image prompt that, run through NanoBanana 2 / NanoBanana Pro / GPT Image 2 in pure text-to-image mode (no reference attached), would create an image with the same essence — same medium, same style, same composition, same mood — but built from scratch by the model.
+
+═══════════════════════════════════════
+WHAT TO ANALYZE (silent step, never output)
+═══════════════════════════════════════
+
+For every image, identify:
+- MEDIUM — photograph (studio / natural / phone) / 3D render (Pixar / hyperreal / abstract) / illustration (vector / watercolor / oil / pencil / digital painting) / collage / mixed
+- SUBJECT — what is depicted (object, person, scene, organ, abstract shape). Describe generically — never name real people, brands or products
+- COMPOSITION — focal point, framing (close-up / medium / wide), camera angle (eye-level / low / high / overhead), rule of thirds vs centered, asymmetry vs balance
+- LIGHTING — direction, quality (hard / soft / diffused), color temperature, key/fill ratio, shadows behavior, any blown highlights
+- COLOR PALETTE — 2-5 dominant colors with named families (warm beige, deep navy, muted lavender) plus the saturation and contrast level
+- TEXTURES & MATERIALS — fabric, skin, metal, plastic, glass, wood, paper, the visible micro-detail
+- MOOD / ATMOSPHERE — calm, dramatic, energetic, melancholic, clinical, dreamy, raw, polished
+- TECHNIQUE CUES — focal length / DOF / grain / brush stroke / line weight / rendering style / post-processing
+
+**MENTAL FILTER — strip all overlays before analyzing:** before you describe anything, mentally remove every text overlay, headline, caption, watermark, logo, wordmark, price tag, badge, sticker, UI element, and any added graphic that sits ON TOP of the underlying scene. Imagine the image as it would have been captured if no graphic designer had ever touched it. Your analysis describes ONLY this raw underlying visual. The composition you describe must be coherent without any text or overlay — the resulting prompt should produce a clean, text-free image even if the reference was a heavily-text-loaded ad.
+
+═══════════════════════════════════════
+HOW TO WRITE THE PROMPT
+═══════════════════════════════════════
+
+Single flowing paragraph in English. No line breaks. No markdown. No commentary. No labels like "PROMPT:".
+
+Structure (loose, not enforced):
+1. Lead with medium and style ("Photorealistic studio photograph of...", "3D Pixar-style render of...", "Hand-drawn watercolor illustration of...")
+2. Describe the subject precisely but generically
+3. Describe the composition and camera
+4. Describe the lighting
+5. Describe the color palette
+6. Describe textures and materials
+7. State the mood
+8. End with technical cues that nail the look (e.g. "shot on a 50mm lens, shallow depth of field, natural window light, fine grain", or "ray-traced subsurface scattering, hyper-detailed materials, 8k", or "loose ink contour lines, soft watercolor wash, cold-pressed paper texture")
+
+Length: 80 to 200 words. Never shorter, never longer.
+
+═══════════════════════════════════════
+USER HINT (optional)
+═══════════════════════════════════════
+
+If the user provides a HINT in the user message, treat it as a directive to MODIFY the recreation. Example hints:
+- "use a blue/orange palette instead" → swap the palette
+- "make the subject male" → adjust the subject
+- "wider shot showing more environment" → change framing
+- "shift to night scene" → recolor + relight
+
+Apply the hint while keeping the rest of the analysis intact.
+
+═══════════════════════════════════════
+HARD RULES — NON NEGOTIABLE
+═══════════════════════════════════════
+
+1. NEVER name real public figures, real brands, or real products. Use generic descriptors ("a young woman with auburn hair in her late twenties").
+2. **TEXT OVERLAYS ARE INVISIBLE** — completely ignore any text, headlines, captions, subtitles, watermarks, logos, wordmarks, price tags, badges, stickers, signs, UI screenshots, or written letterforms in the reference. Do NOT mention them, do NOT describe their position, do NOT preserve their layout, do NOT leave space for them. Pretend they do not exist. Describe only the underlying visual scene as if the image had been shot with no overlay applied.
+   - Exception: if the entire image IS pure typography (e.g., an artistic typographic poster where text is the subject itself), describe the typographic style abstractly without quoting the actual words ("a bold serif headline filling 60% of the frame in deep ivory on charcoal background"), but never reproduce the exact wording.
+3. NEVER mention copyrighted characters or IP.
+4. NEVER include the words "PROMPT:", "Image:" or any header — output is the prompt only.
+5. The output is exactly ONE flowing paragraph in English, 80-200 words. No bullet lists, no line breaks.
+6. Do NOT mention the source image, do NOT say "the image shows" or "in the reference" — the prompt must read as if written from imagination, not from describing an existing image.
+
+═══════════════════════════════════════
+OUTPUT
+═══════════════════════════════════════
+
+Output the prompt and nothing else. No preamble, no postamble, no formatting."""
+
+
+def analyze_image_for_twin(
+    provider: "Provider",
+    image_url: str,
+    hint: str = "",
+) -> str:
+    """Vision-LLM call: analyze the reference image and return ONE text-to-image
+    prompt. The prompt should be self-sufficient — running it through pure
+    text-to-image will recreate the essence of the source.
+    """
+    h = (hint or "").strip()
+    user_lines = [
+        "Analyze the attached reference image and write the text-to-image prompt.",
+        "",
+        "IMPORTANT: ignore every text overlay, headline, caption, watermark, logo, "
+        "price tag, badge, sticker, and UI element in the reference. Describe ONLY "
+        "the underlying visual scene as if no graphic had ever been added on top — "
+        "the resulting image must be clean and text-free.",
+    ]
+    if h:
+        user_lines.append("")
+        user_lines.append(f"HINT: {h}")
+    text = provider.call_llm(
+        prompt="\n".join(user_lines),
+        image_url=image_url,
+        system_prompt=TWIN_SYSTEM_PROMPT,
+        label="LLM-twin",
+    )
+    cleaned = (text or "").strip()
+    # Strip any leading "PROMPT:" label the LLM may have added despite rules.
+    for prefix in ("PROMPT:", "Prompt:", "prompt:"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    if not cleaned:
+        raise RuntimeError("Twin analysis returned empty text.")
+    return cleaned
 
 
 def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:

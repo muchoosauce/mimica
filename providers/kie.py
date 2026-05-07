@@ -46,6 +46,14 @@ _IMAGE_SLUGS = {
     "nano_banana_pro": "nano-banana-pro",
     "gpt_image_2":     "gpt-image-2-image-to-image",
 }
+# Pure text-to-image slugs. For Kie, the nano-banana endpoints accept empty
+# `image_input` arrays as text-to-image; for GPT Image 2 there is a separate
+# text-to-image endpoint.
+_T2I_IMAGE_SLUGS = {
+    "nano_banana_2":   "nano-banana-2",
+    "nano_banana_pro": "nano-banana-pro",
+    "gpt_image_2":     "gpt-image-2-text-to-image",
+}
 # Per-model cap on input images. gpt-image-2-image-to-image documents max 16,
 # nano-banana-pro accepts up to 8.
 _IMAGE_INPUT_CAPS = {
@@ -313,6 +321,42 @@ class KieProvider(Provider):
         if image_url:
             out["image_url"] = image_url
         return out
+
+    def call_image_t2i(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        resolution: str,
+        aspect_ratio: str,
+        output_format: str = "png",
+        label: str = "image-t2i",
+    ) -> str:
+        slug = _T2I_IMAGE_SLUGS.get(model)
+        if not slug:
+            raise ProviderError(f"Kie does not support text-to-image for model {model!r}")
+        common = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "resolution": _normalize_resolution(resolution),
+        }
+        if model in ("nano_banana_2", "nano_banana_pro"):
+            input_payload = {**common, "image_input": [], "output_format": output_format}
+        elif model == "gpt_image_2":
+            input_payload = {**common}
+        else:
+            raise ProviderError(f"Kie does not support text-to-image for model {model!r}")
+        try:
+            task_id = self._create_task(slug, input_payload, label)
+            record = self._poll_task(task_id, label)
+        except ProviderError as e:
+            if is_censorship_error(e):
+                raise CensorshipError(str(e)) from e
+            raise
+        urls = self._parse_result_urls(record)
+        if not urls:
+            raise ProviderError(f"{label}: success without resultUrls in record: {record}")
+        return urls[0]
 
     def call_video(
         self,

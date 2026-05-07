@@ -40,6 +40,7 @@ from providers.prompts import (
     FUNNEL_SEGMENTS,
     FUNNEL_STAGES,
     FUNNEL_SYSTEM_PROMPTS,
+    analyze_image_for_twin as _analyze_twin,
     generate_broll_image_prompts as _gen_broll_img_prompts,
     generate_broll_video_prompt as _gen_broll_vid_prompt,
     generate_funnel_creatives as _gen_funnel_creatives,
@@ -69,7 +70,7 @@ ENV_FILE = USER_DATA_DIR / ".env"
 
 # In frozen mode, app.py loaded the env file early; this no-op call is a safety
 # net for source-mode runs where .env sits next to the project root.
-load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
+load_dotenv(ENV_FILE if ENV_FILE.exists() else None, override=True)
 
 # Pricing exposed for the cost-estimate widgets in the UI.
 COST_PER_IMAGE = pv.COST_PER_IMAGE
@@ -215,7 +216,8 @@ def list_runs(root: Optional[Path] = None) -> list[dict]:
                   + sorted(d.glob("adapt_*.png")) + sorted(d.glob("adapt_*.jpg"))
                   + sorted(d.glob("broll_*.png")) + sorted(d.glob("broll_*.jpg"))
                   + sorted(d.glob("broll_*.mp4"))
-                  + sorted(d.glob("funnel_*.png")) + sorted(d.glob("funnel_*.jpg")))
+                  + sorted(d.glob("funnel_*.png")) + sorted(d.glob("funnel_*.jpg"))
+                  + sorted(d.glob("twin_*.png")) + sorted(d.glob("twin_*.jpg")))
         runs.append({
             "dir": d,
             "timestamp": data.get("timestamp", d.name),
@@ -1286,11 +1288,11 @@ def run_broll_videos(
         on_log("ERR", f"Could not read images report: {e}")
         return None
 
-    if img_report.get("type") != "broll_images":
-        on_log("ERR", f"Run at {images_dir} is not a B-roll images run.")
+    if img_report.get("type") not in ("broll_images", "twin_images"):
+        on_log("ERR", f"Run at {images_dir} is not a B-roll or Twin images run.")
         return None
 
-    brand_name = img_report.get("brand") or ""
+    brand_name = img_report.get("brand") or img_report.get("source_label") or "twin"
     brand_dna = img_report.get("brand_dna") or ""
     img_results = img_report.get("results") or []
     by_index = {r["index"]: r for r in img_results if r.get("status") == "ok"}
@@ -1625,6 +1627,179 @@ def run_funnel_ads(
         (out_dir / "report.json").write_text(json.dumps(report, indent=2))
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"Funnel ads done: {ok}/{len(results)} succeeded.")
+        return out_dir
+    except Exception as e:
+        on_log("ERR", str(e))
+        return out_dir
+
+
+# ─── Twin pipeline ──────────────────────────────────────────────────────────
+
+def run_twin_analyze(
+    image_path: str,
+    hint: str,
+    on_log: Callable[[str, str], None],
+    *,
+    provider_name: Optional[str] = None,
+) -> Optional[str]:
+    """Phase A of Twin: vision-LLM analyzes the reference and returns ONE
+    text-to-image prompt. The user reviews/edits it before phase B.
+    Returns the generated prompt string, or None on error.
+    """
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    src = Path(image_path).expanduser().resolve()
+    if not src.exists():
+        on_log("ERR", f"File not found: {src}")
+        return None
+
+    try:
+        on_log("INFO", f"Uploading reference: {src.name}")
+        ref_url = provider.upload_image(src)
+        on_log("INFO", "Analyzing image with vision LLM...")
+        prompt = _analyze_twin(provider, ref_url, hint=hint)
+        on_log("OK", f"Analysis done · {len(prompt)} chars · {len(prompt.split())} words")
+        return prompt
+    except Exception as e:
+        on_log("ERR", str(e))
+        return None
+
+
+def run_twin_generate(
+    image_path: str,
+    prompt: str,
+    n_variants: int,
+    resolution: str,
+    aspect: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+    hint: str = "",
+) -> Optional[Path]:
+    """Phase B of Twin: render N variants of the (edited) prompt via pure
+    text-to-image — the reference is intentionally NOT passed to the image
+    model so the result is a re-creation, not an edit.
+
+    Writes report.json with type="twin_images" so phase 2 (video animation)
+    can pick it up via run_broll_videos.
+    """
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+    n = max(1, int(n_variants or 1))
+    if not (prompt or "").strip():
+        on_log("ERR", "Empty prompt — nothing to generate.")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    src = Path(image_path).expanduser().resolve()
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    label_root = _safe_name(src.stem) or "twin"
+    out_dir = base / f"{ts}_twin_{label_root}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+    on_log(
+        "INFO",
+        f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]} · "
+        f"text-to-image · {n} variant{'s' if n > 1 else ''} · {aspect} · {resolution}",
+    )
+
+    # Persist the prompt for inspection / re-runs.
+    (out_dir / "prompt.txt").write_text(prompt.strip() + "\n")
+
+    def render_one(idx: int) -> dict:
+        label = f"twin_{idx:02d}"
+        provider._log("INFO", f"[{label}] rendering...")
+        local_prompt = prompt
+        softened = False
+        try:
+            try:
+                img_url = provider.call_image_t2i(
+                    model=image_model, prompt=local_prompt,
+                    resolution=resolution, aspect_ratio=aspect, label=label,
+                )
+            except CensorshipError:
+                provider._log("WARN", f"[{label}] blocked by content filter — softening")
+                local_prompt = _soften(provider, local_prompt, "")
+                softened = True
+                img_url = provider.call_image_t2i(
+                    model=image_model, prompt=local_prompt,
+                    resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+                )
+            file_name = f"twin_{idx:02d}.png"
+            dest = out_dir / file_name
+            provider.download(img_url, dest)
+            provider._log(
+                "OK",
+                f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+            )
+            # Use category="twin" so the approval/animation grid stays consistent
+            # with the B-Roll plumbing that expects a category field.
+            return {
+                "index": idx, "category": "twin", "status": "ok",
+                "prompt": local_prompt, "image_url": img_url, "file": dest.name,
+                "softened": softened,
+            }
+        except Exception as e:
+            if is_censorship_error(e):
+                provider._log("ERR", f"[{label}] blocked by content filter (after retry).")
+            else:
+                provider._log("ERR", f"[{label}] {e}")
+            return {
+                "index": idx, "category": "twin", "status": "error",
+                "prompt": local_prompt, "error": str(e),
+            }
+
+    results: list[dict] = []
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed([pool.submit(render_one, i + 1) for i in range(n)]):
+                if should_cancel():
+                    break
+                r = fut.result()
+                results.append(r)
+                on_result(r)
+
+        results.sort(key=lambda r: r["index"])
+        report = {
+            "type": "twin_images",
+            "timestamp": ts,
+            "source_label": label_root,
+            "reference_image": str(src),
+            "prompt": prompt,
+            "hint": hint,
+            "params": {
+                "iterations": n,
+                "resolution": resolution,
+                "aspects": [aspect],
+                "aspect_ratio": aspect,
+                "workers": workers,
+                "provider": provider.name,
+                "image_model": image_model,
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": results,
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        ok = sum(1 for r in results if r.get("status") == "ok")
+        on_log("OK", f"Twin done: {ok}/{len(results)} succeeded.")
         return out_dir
     except Exception as e:
         on_log("ERR", str(e))

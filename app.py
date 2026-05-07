@@ -17,7 +17,9 @@ def _bootstrap_frozen() -> None:
     if env_file.exists():
         try:
             from dotenv import load_dotenv
-            load_dotenv(env_file)
+            # override=True so values saved via Settings always win over any
+            # empty/stale shell env vars the user may have in their profile.
+            load_dotenv(env_file, override=True)
         except Exception:
             pass
 

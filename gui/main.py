@@ -10,7 +10,7 @@ from . import core
 from . import theme as t
 from .pages import (
     AdaptPage, BatchFixPage, BrandsPage, BRollPage, DashboardPage, FunnelAdsPage,
-    GeneratePage, HistoryPage, RunDetailPage, SettingsPage
+    GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinPage
 )
 from .widgets import icon_label, svg_icon, ICONS
 
@@ -94,6 +94,7 @@ class Sidebar(QWidget):
         for key, icon, label in [
             ("dashboard", "dashboard", "Dashboard"),
             ("funnel", "funnel", "Funnel Ads"),
+            ("twin", "twin", "Twin"),
             ("generate", "generate", "Generate"),
             ("adapt", "adapt", "Adapt"),
             ("fix", "wrench", "Fix"),
@@ -217,6 +218,7 @@ class TopBar(QWidget):
     _ICON_MAP = {
         "Dashboard":  "dashboard",
         "Funnel Ads": "funnel",
+        "Twin":       "twin",
         "Generate":   "generate",
         "Adapt":      "adapt",
         "Fix":        "wrench",
@@ -254,6 +256,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.dashboard = DashboardPage()
         self.funnel = FunnelAdsPage()
+        self.twin = TwinPage()
         self.generate = GeneratePage()
         self.adapt = AdaptPage()
         self.fix = BatchFixPage()
@@ -262,7 +265,7 @@ class MainWindow(QMainWindow):
         self.brands = BrandsPage()
         self.detail = RunDetailPage()
         self.settings = SettingsPage()
-        for p in (self.dashboard, self.funnel, self.generate, self.adapt, self.fix, self.broll,
+        for p in (self.dashboard, self.funnel, self.twin, self.generate, self.adapt, self.fix, self.broll,
                   self.history, self.brands, self.detail, self.settings):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
@@ -301,6 +304,7 @@ class MainWindow(QMainWindow):
         mapping = {
             "dashboard": (self.dashboard, "Dashboard"),
             "funnel":    (self.funnel,    "Funnel Ads"),
+            "twin":      (self.twin,      "Twin"),
             "generate":  (self.generate,  "Generate"),
             "adapt":     (self.adapt,     "Adapt"),
             "fix":       (self.fix,       "Fix"),

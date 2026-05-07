@@ -97,5 +97,25 @@ class Provider(ABC):
             f"{self.display_name} does not implement video generation yet."
         )
 
+    def call_image_t2i(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        resolution: str,
+        aspect_ratio: str,
+        output_format: str = "png",
+        label: str = "image-t2i",
+    ) -> str:
+        """Pure text-to-image: render an image from a prompt, no input image.
+
+        Used by the Twin workflow which intentionally drops the reference so
+        the model recreates the scene from scratch based on the LLM-written
+        description. Default raises so providers must opt in.
+        """
+        raise NotImplementedError(
+            f"{self.display_name} does not implement text-to-image yet."
+        )
+
     def download(self, url: str, dest: Path) -> None:
         download_to(url, dest)

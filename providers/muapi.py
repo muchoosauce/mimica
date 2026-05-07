@@ -30,7 +30,9 @@ load_dotenv()
 
 
 _BASE_URL = "https://api.muapi.ai/api/v1"
-_POLL_TIMEOUT = 300
+# Bumped from 300 to 600s to match Kie and give Claude vision calls breathing
+# room when MuAPI's queue is backed up.
+_POLL_TIMEOUT = 600
 _POLL_INTERVAL = 3
 _UPLOAD_LIMIT = 10 * 1024 * 1024  # MuAPI rejects >10MB uploads
 
@@ -39,6 +41,14 @@ _IMAGE_SLUGS = {
     "nano_banana_2":   "nano-banana-2-edit",
     "nano_banana_pro": "nano-banana-pro-edit",
     "gpt_image_2":     "gpt-image-2-image-to-image",
+}
+# Pure text-to-image variants (no input reference image). Used by the Twin
+# workflow. Slugs follow MuAPI's convention: same family but no `-edit` /
+# different mode suffix.
+_T2I_IMAGE_SLUGS = {
+    "nano_banana_2":   "nano-banana-2",
+    "nano_banana_pro": "nano-banana-pro",
+    "gpt_image_2":     "gpt-image-2-text-to-image",
 }
 # Per-model accepted aspect ratios. Used to remap unsupported user choices
 # to the closest neighbour so the API doesn't reject the request.
@@ -298,6 +308,56 @@ class MuApiProvider(Provider):
             payload["image_url"] = image_url
         out = self._call_prediction(_LLM_SLUG, payload, label)
         return coerce_text(out)
+
+    def call_image_t2i(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        resolution: str,
+        aspect_ratio: str,
+        output_format: str = "png",
+        label: str = "image-t2i",
+    ) -> str:
+        slug = _T2I_IMAGE_SLUGS.get(model)
+        if not slug:
+            raise ProviderError(f"MuAPI does not support text-to-image for model {model!r}")
+        if model == "gpt_image_2":
+            normalized_res = (
+                resolution.upper() if resolution and resolution[-1].lower() == "k"
+                else (resolution or "1K")
+            )
+        else:
+            normalized_res = (
+                resolution.lower() if resolution and resolution[-1].lower() == "k"
+                else (resolution or "1k")
+            )
+        normalized_aspect = aspect_ratio
+        if model == "gpt_image_2" and aspect_ratio not in _GPT_IMAGE_2_ASPECTS:
+            fallback = _GPT_IMAGE_2_ASPECT_FALLBACK.get(aspect_ratio)
+            if fallback:
+                self._log(
+                    "WARN",
+                    f"[{label}] GPT Image 2 doesn't accept {aspect_ratio} — using {fallback}",
+                )
+                normalized_aspect = fallback
+            else:
+                self._log(
+                    "WARN",
+                    f"[{label}] GPT Image 2 doesn't accept {aspect_ratio} — falling back to 1:1",
+                )
+                normalized_aspect = "1:1"
+        payload = {
+            "prompt": prompt,
+            "resolution": normalized_res,
+            "aspect_ratio": normalized_aspect,
+            "output_format": output_format,
+        }
+        out = self._call_prediction(slug, payload, label)
+        url = first_url(out)
+        if not url:
+            raise ProviderError(f"{label}: no image URL in output: {out}")
+        return url
 
     def call_video(
         self,
