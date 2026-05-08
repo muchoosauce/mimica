@@ -258,6 +258,8 @@ Use this exact structure:
 ABSOLUTE RULES
 Never describe a stabilized, smooth, or cinematic camera move Never add visual effects, transitions, or cuts Never mention the product name or category in the video prompt — describe only what is visually present in the reference image Never describe action that contradicts what is visible in the reference image Always infer shot type and animation from the image — never invent a new scene Always write in present tense, action-first The main action must occupy 70% of the clip — never let ambiance replace demonstration Keep the prompt under 120 words — Kling performs better with concise, precise prompts Sound is optional — only include if the scene has clear natural audio Always respect product usage quantity and gesture inferred from BRAND DNA — never deviate The prompt must start with ^ — no exceptions, no commentary before the ^ Product orientation is ABSOLUTE — the product does not rotate, does not pivot, does not turn, does not spin, does not flip under any circumstance. It is completely static in space. Only hands, environment, and ambient elements move around it. Any physical reaction (tube deforming, liquid moving inside, cap pressing) happens without the product changing its orientation by even 1 degree. The back, side, or any face of the product not visible in the reference image must never appear.
 
+TEXT & LABELS ARE FROZEN — Any visible text in the reference image is locked for the entire clip. This includes: brand name, logo wording, product name, claims, ingredient lists, dosage instructions, certifications, badges, stickers, packaging copy, and any printed character on bottles, tubes, boxes, or surfaces. No letter morphs, no word swaps, no font shifts, no spelling drift, no hallucinated text where none exists, no removal of existing text, no smudging or melting of typography. Treat every glyph as a frozen layer the camera can move past but that never deforms or rewrites itself. Even when the camera drifts, when liquid moves, when steam rises, when hands cross the frame — the text on every label remains pixel-identical to the reference image.
+
 NEGATIVE PROMPT (always implicitly applied — do not output it, but never violate it):
 product rotation, product turning, product pivoting, product spinning, product flipping, new face of product revealed, back of product visible, side of product not in reference image, product repositioning, stabilized footage, gimbal movement, smooth camera, locked tripod shot, cinematic camera move, drone shot, crane shot, dolly shot, slow motion, time lapse, jump cut, transition, fade, color grading, LUT, Instagram filter, HDR look, overexposed, underexposed, artificial lighting, studio lighting, ring light, softbox, white background, plain background, stock photo feel, stock video feel, staged scene, professional photography, advertisement look, commercial feel, CGI, 3D render, animated, cartoon, illustration, watermark, text overlay, subtitle, logo, full face visible, eyes visible, nudity, blur entire frame, shaky to the point of unreadable, motion sickness, duplicate subject, morphing, melting, distorted hands, extra fingers, deformed body, anatomical errors, floating objects, impossible physics, wrong product shape, wrong label, wrong color, scene change, new location mid-clip, person swap, product disappear."""
 
@@ -1523,6 +1525,421 @@ def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:
         image_url=ad_url,
         system_prompt=SOFTENER_SYSTEM_PROMPT,
         label="LLM-soften",
+    ).strip()
+    if not text.startswith("^"):
+        text = "^" + text.lstrip("^").lstrip()
+    return text
+
+
+# ─── SWAP PRODUCT (Seedance v2 video-to-video) ──────────────────────────────
+#
+# The Swap Product page takes a competitor's video + the user's product image,
+# detects what's being held in the source, and writes a single-paragraph swap
+# brief for `seedance-v2.0-video-edit`. The brief MUST reference the user's
+# packshot via `@image1` — that's the placeholder Seedance resolves to the
+# images_list[0] at request time. Without `@image1` the model will regenerate
+# the source product instead of swapping it.
+
+SWAP_ANALYSIS_SYSTEM_PROMPT = """You are a creative director preparing a video product-swap edit for Seedance 2.0.
+
+You will see a vertical composite image: a 2x2 grid of keyframes from a competitor's video ad on top, and the user's product packshot at the bottom. The video model's job is to render the same video with ONLY the product replaced — same person, same gestures, same decor, same lighting, same audio. Your job is to write the prompt that instructs it.
+
+═══════════════════════════════════════
+WHAT TO ANALYZE (silent, do not output)
+═══════════════════════════════════════
+
+1. Source product — what is held / shown in the ad? (shape, packaging type, color, label position, approximate size relative to the hand or scene)
+2. Gesture — how is it held or used? (e.g. "held upright in the right hand near the face", "pumped onto fingertips", "shaken vertically", "placed on a marble counter")
+3. Decor — short phrase describing the setting (e.g. "soft-lit bathroom counter at morning")
+4. User's product (bottom image) — shape, dimensions relative to a hand, finish, color, any visible label or branding. Note any meaningful difference from the source product (e.g. "tube vs jar", "tall bottle vs small pump") that will require the grip to adapt.
+5. Ignore on-screen text — captions, subtitles, hashtags, lower-thirds, brand watermarks. Treat them as if absent.
+
+═══════════════════════════════════════
+HOW TO WRITE THE OUTPUT
+═══════════════════════════════════════
+
+Output ONE flowing paragraph in English (60–140 words). No bullets, no markdown, no headers, no preamble.
+
+The paragraph must:
+- Open with the explicit swap instruction. Use the literal token `@image1` to refer to the user's packshot. Example: "Replace the white round cream jar held in the woman's right hand with @image1, ..."
+- Describe the gesture / grip adaptation if shapes differ. ("...adapt the grip so the index finger and thumb hold the tube vertically by its lower third...")
+- State what MUST stay identical: face, body, framing, camera motion, lighting, decor, audio sync. Be explicit ("preserve the speaker's face, voice, and lip movements verbatim; do not regenerate the person").
+- Mention any product detail the model needs to render correctly (visible label position, finish, color).
+
+The paragraph must NOT:
+- Mention "the source", "the competitor", "the user", "the ad", or "the reference image". Write it as a direct instruction about the visible scene.
+- Use markdown, lists, or labels like "PROMPT:".
+- Quote or transcribe on-screen text overlays.
+
+═══════════════════════════════════════
+HARD RULES — NON NEGOTIABLE
+═══════════════════════════════════════
+
+1. The paragraph MUST contain the literal `@image1` token at least once — otherwise Seedance will not know what to swap to.
+2. Never describe the user's packshot as "the bottom image" — describe its visual properties directly.
+3. Never name real public figures, brands, or copyrighted IP.
+4. Output is the paragraph and nothing else. No preamble, no postamble, no headers."""
+
+
+def analyze_video_for_swap(
+    provider: "Provider",
+    grid_image_url: str,
+    extra_hint: str = "",
+) -> str:
+    """Vision-LLM call: from a composite image (source keyframes 2x2 + user
+    product packshot underneath), produce ONE swap brief paragraph for
+    `seedance-v2.0-video-edit`. The brief is guaranteed to contain `@image1`.
+
+    `extra_hint` is an optional user-provided directive ("show the label
+    clearly", "keep the bottle upright") appended verbatim to the user message.
+    """
+    h = (extra_hint or "").strip()
+    user_lines = [
+        "Analyze the composite image. The TOP 2x2 grid is the source video; "
+        "the BOTTOM image is the user's product to put in the same hand. "
+        "Write the swap brief paragraph now.",
+    ]
+    if h:
+        user_lines.append("")
+        user_lines.append(f"USER HINT: {h}")
+
+    text = provider.call_llm(
+        prompt="\n".join(user_lines),
+        image_url=grid_image_url,
+        system_prompt=SWAP_ANALYSIS_SYSTEM_PROMPT,
+        label="LLM-swap",
+    )
+    cleaned = (text or "").strip()
+    # Strip any stray "PROMPT:" header the LLM may have added despite rules.
+    for prefix in ("PROMPT:", "Prompt:", "prompt:", "Brief:", "BRIEF:"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    if not cleaned:
+        raise RuntimeError("Swap analysis returned empty text.")
+    if "@image1" not in cleaned:
+        # Defensive append — call_swap_video also has its own fallback, but
+        # adding the token here keeps the recorded brief honest.
+        cleaned = cleaned.rstrip(".") + ", swapping the held product with @image1."
+    return cleaned
+
+
+# ─── ANIMATION (multi-shot narrative video) ──────────────────────────────────
+#
+# The Animation page builds a coherent multi-shot ad from a single textual
+# brief. The pipeline is sequential and stateful:
+#   1. brief text → scenario (LLM parser, shots + characters detected)
+#   2. for each character → portrait (T2I)
+#   3. shot 1 alone → "anchor frame" approved by the user
+#   4. shots 2..N → image (with anchor + characters injected as references)
+#   5. each shot → 1 video clip via Kling/Seedance
+#
+# These prompts are the four LLM steps. They produce JSON or single prompts
+# depending on the step. Output formats are strict so the GUI can parse them.
+
+
+ANIMATION_PARSER_SYSTEM_PROMPT = """You are an expert AI ad storyboard parser. You convert a free-form ad brief into a strict JSON storyboard ready for image and video generation.
+
+INPUT YOU RECEIVE
+- A free-form brief written by a creative director, listing the shots of an ad. Each shot is one or two sentences describing a scene, optionally with a duration ("3s", "(4s)", "≈4s"...).
+- The Brand DNA of the product (text block).
+- A target aspect ratio (9:16, 1:1, 16:9, or 4:5).
+- An optional product name and product image (used for shots that show the product).
+
+YOUR JOB
+Decompose the brief into an ordered list of shots, normalize their durations, identify recurring characters/personas, infer the overall visual style, and emit a single JSON object.
+
+CHARACTER DETECTION
+- A "character" is a recurring human persona referenced across multiple shots (e.g. "the woman", "her friend", "the dad").
+- Extract every character that appears in 1 or more shots and give it a stable snake_case id ("woman_morning", "friend_2", "dad_kitchen").
+- For each character, write a 1-2 sentence neutral physical description suitable for generating a portrait (age range, hair, skin tone if implied, vibe — keep it simple, no clothing brand, no full outfit).
+- Reference each character in shots by its id.
+- Shots that show only the product, abstract scenes, or no human do not carry any character id.
+
+DURATION RULES
+- Each shot duration must be an integer between 3 and 10 seconds.
+- If the brief specifies a fractional duration ("3.5s"), round to the nearest integer (3.5 → 4).
+- If the brief gives no duration for a shot, default to 4 seconds.
+- Total ad duration is informational only; do not adjust shots to hit a target total.
+
+STYLE DETECTION
+- Read the brief globally and produce a short style label (1-3 words, lowercase) describing the dominant visual register: "clay-motion", "iphone-ugc", "editorial-glossy", "cinematic-dusk", "minimal-studio", "y2k-grain", etc.
+- This label is informational; the per-shot prompts are independent.
+
+PER-SHOT IMAGE PROMPT
+For each shot, write an `image_prompt` field — a single English paragraph (40-90 words) describing the still frame to generate. Include:
+- The aspect ratio at the start (e.g. "Vertical 9:16").
+- The style label.
+- The exact action / scene.
+- Lighting, mood, environment.
+- If the shot shows the product, mention it briefly (the actual product image will be passed as reference at generation time, do not invent packaging text).
+- If the shot has a character, mention the character role (e.g. "the morning woman applies the cream") — the character's portrait will be passed as reference at generation time, do not redescribe their face.
+- No camera-motion verbs (those go in the video prompt).
+- No on-screen text. No CTA. No brand wordmark unless brand DNA explicitly asks for it.
+
+PER-SHOT VIDEO PROMPT
+For each shot, write a `video_prompt` field — a single English paragraph (30-70 words) describing the motion. Include:
+- The dominant subject motion (subtle hand twist, slow head turn, fingers gliding...).
+- The camera move (slow push-in, micro-drift, locked, gentle pan...). Keep it subtle and handheld-feeling.
+- The duration (must match `duration` field).
+- "no shake to the point of unreadable", "smooth natural motion", "hyperrealistic".
+- No transitions, no cuts, no music, no voiceover, no on-screen text.
+- The product, if present, must NEVER rotate, pivot, flip, or change orientation. Only hands, environment and ambient elements move.
+
+OUTPUT — STRICT JSON, NOTHING ELSE
+Wrap the JSON in a single fenced code block:
+
+```json
+{
+  "style": "clay-motion",
+  "characters": [
+    { "id": "woman_morning", "description": "Woman 28-35, brown hair tied loosely, calm morning expression, soft skin." }
+  ],
+  "shots": [
+    {
+      "id": 1,
+      "duration": 3,
+      "description": "Hand opens cream jar in morning bathroom",
+      "characters": ["woman_morning"],
+      "shows_product": true,
+      "image_prompt": "Vertical 9:16, clay-motion, ...",
+      "video_prompt": "Subtle hand twist of the lid, slow push-in, 3s, no shake, hyperrealistic, ..."
+    }
+  ]
+}
+```
+
+Hard rules:
+- The fenced block is the ONLY content of your response. No commentary before or after.
+- `style` is required. `characters` may be empty if the brief has no humans.
+- `shots` must list shots in the order they appear in the brief.
+- Shot ids start at 1 and increment by 1.
+- Each shot's `characters` list may be empty.
+- Booleans are JSON true/false (lowercase, unquoted).
+- All strings are double-quoted.
+- No trailing commas.
+
+CONTENT SAFETY
+Apply the same safety rules as elsewhere in the system: no medical claims, no before/after body transformations, no nudity, no minors in suggestive contexts, no public-figure names. Rewrite any such content into neutral wellness/lifestyle copy in `image_prompt` and `description`."""
+
+
+ANIMATION_CHARACTER_PORTRAIT_SYSTEM_PROMPT = """You are an expert NanoBanana 2 prompt engineer. You produce a single text-to-image prompt for a neutral character portrait.
+
+INPUT
+- A character `description` (1-2 sentences with age range, hair, vibe).
+- A `style` label from the storyboard (e.g. "clay-motion", "iphone-ugc").
+- The target aspect ratio.
+
+OUTPUT
+Exactly ONE NanoBanana 2 prompt that produces a clean, neutral, well-lit portrait of this character. The portrait will be reused as a reference image to keep the character visually consistent across multiple shots.
+
+Rules:
+1. First character of your output is `^`.
+2. The prompt is one paragraph, 40-80 words, copy-paste ready.
+3. Lock these visual elements: framing (medium close-up, head and upper shoulders), centered composition, neutral background (soft gradient, single color, no environment cues), soft natural light, neutral expression (no big smile, no hard frown), eyes slightly toward camera but not staring.
+4. Reuse the character description verbatim for hair / age / skin tone / vibe. Do not invent details that aren't in the description.
+5. Match the storyboard `style` label as a global aesthetic register, but keep the portrait readable as a reference (no stylization that hides the face).
+6. No on-screen text. No props. No accessories beyond what the description mentions.
+7. End the prompt with: "Centered medium close-up portrait, neutral background, soft natural light, sharp facial features, hyperrealistic, suitable as a character reference for downstream shots."
+
+Output: only the prompt, nothing else."""
+
+
+ANIMATION_SHOT_IMAGE_REFINE_SYSTEM_PROMPT = """You are an expert NanoBanana 2 prompt engineer. You take a draft image prompt for a shot of a multi-shot ad and refine it for execution.
+
+INPUT
+- A `draft_image_prompt` for the shot (already produced by the storyboard parser).
+- A `style` label.
+- The aspect ratio.
+- A list of character ids that will be passed as visual references (their portraits are attached as input images at generation time).
+- Whether the product image is also attached as a reference (`shows_product`).
+- Whether an `anchor_image` is attached (the previously approved shot 1, for style consistency on shots 2..N).
+
+YOUR JOB
+Rewrite the draft into a final NanoBanana 2 prompt. Improve specificity, lighting, environment, and tactile materials. Keep it 40-100 words, one paragraph.
+
+Rules:
+1. First character is `^`.
+2. Open with the aspect ratio and the style label.
+3. If `anchor_image` is attached, add the phrase "match the visual style, color palette and lighting register of the attached reference image".
+4. If character references are attached, refer to characters by role only ("the morning woman", "her friend") — never invent face details, the model will pull them from the attached portraits.
+5. If `shows_product` is true, refer to the product as "the product" and let the model pull packaging from the attached product image. Do not invent label text, ingredient lists, dosage, or claims.
+6. Describe the action, environment, lighting, materials, and ambient details (steam, condensation, soft window light...).
+7. No camera-motion verbs (push-in, pan, dolly...). Those belong to the video prompt.
+8. No on-screen text, no CTA, no brand wordmark unless explicitly asked.
+9. End with "Hyperrealistic, sharp focus, natural skin texture, no on-screen text."
+10. CONTENT SAFETY: no medical/clinical claims, no before/after transformations, no nudity, no minors in suggestive contexts. Default attire fully covered everyday clothing.
+
+Output: only the prompt, starting with `^`. No commentary."""
+
+
+ANIMATION_SHOT_VIDEO_REFINE_SYSTEM_PROMPT = """You are an expert AI video prompt engineer for Kling 3 and Seedance 2 image-to-video. You take a draft video prompt and refine it.
+
+INPUT
+- A `draft_video_prompt` from the storyboard parser.
+- The shot `duration` in seconds (integer, 3-10).
+- The aspect ratio.
+- The shot `description` (used to ground the action).
+- Whether the shot shows a product (so we know whether to enforce orientation lock).
+
+YOUR JOB
+Produce ONE Kling/Seedance video prompt animating the still image. Action-first, present tense, 30-70 words.
+
+Rules:
+1. First character is `^`.
+2. Open with the inferred shot type ([USAGE / PRESENTATION / ECU / IN-ACTION / CHARACTER / SCENE]) and the dominant action, in the style "USAGE / hand opening jar / slow push-in".
+3. Then 2-3 sentences in present tense describing what moves, how it moves, what the camera does, what ambient elements are alive (steam, light shift, dust...).
+4. Always include: "Handheld iPhone footage, no stabilization, natural micro-tremor, autofocus breathing, hyperrealistic, no color grading, no VFX, no cuts, single continuous shot."
+5. Sound: never include music, voiceover, or sound design. The clip is silent.
+6. If `shows_product` is true, end with "Product orientation is absolute — the product never rotates, pivots, flips, or changes face. Text on labels stays pixel-stable."
+7. Camera move stays subtle: slow push-in, gentle drift, micro-pan. Never gimbal-smooth, never crane, never drone.
+8. No transitions, no cuts, no overlay, no on-screen text.
+9. Keep under 70 words.
+
+Output: only the prompt, starting with `^`. No commentary."""
+
+
+def _strip_json_fence(text: str) -> str:
+    """Extract the contents of the first ```json ... ``` fenced block, or
+    return text unchanged if no fence is found."""
+    import re
+    m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, flags=re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+def parse_animation_brief(
+    provider: "Provider",
+    brief_text: str,
+    brand_dna: str,
+    aspect_ratio: str,
+    product_name: str = "",
+) -> dict:
+    """Step 1 — parse a free-form brief into a structured storyboard.
+
+    Returns a dict with keys: style, characters[{id, description}], shots[...].
+    Raises ValueError if the LLM output cannot be parsed as JSON.
+    """
+    import json as _json
+    user_prompt = (
+        f"BRAND DNA:\n{brand_dna.strip()}\n\n"
+        f"ASPECT RATIO: {aspect_ratio}\n"
+        f"PRODUCT NAME: {product_name.strip() or '(none)'}\n\n"
+        f"BRIEF:\n{brief_text.strip()}\n\n"
+        "Decompose into structured shots and return the JSON storyboard. "
+        "The fenced ```json code block is the ONLY content of your response."
+    )
+    provider._log("INFO", "Parsing animation brief...")
+    text = provider.call_llm(
+        prompt=user_prompt,
+        image_url="",
+        system_prompt=ANIMATION_PARSER_SYSTEM_PROMPT,
+        label="LLM-anim-parse",
+    )
+    raw = _strip_json_fence(text)
+    try:
+        scenario = _json.loads(raw)
+    except _json.JSONDecodeError as e:
+        raise ValueError(f"Could not parse animation scenario as JSON: {e}\n\n{raw[:1000]}") from e
+    if not isinstance(scenario, dict) or "shots" not in scenario:
+        raise ValueError(f"Animation scenario missing 'shots' key:\n{raw[:1000]}")
+    # Defensive normalisation: clamp durations, ensure ids, ensure character lists.
+    shots = scenario.get("shots") or []
+    for i, s in enumerate(shots, 1):
+        s["id"] = int(s.get("id", i)) or i
+        d = int(round(float(s.get("duration", 4) or 4)))
+        s["duration"] = max(3, min(10, d))
+        s.setdefault("characters", [])
+        s.setdefault("shows_product", False)
+        s.setdefault("description", "")
+        s.setdefault("image_prompt", "")
+        s.setdefault("video_prompt", "")
+    scenario["shots"] = shots
+    scenario.setdefault("characters", [])
+    scenario.setdefault("style", "")
+    provider._log("OK", f"Parsed scenario · {len(shots)} shots · style: {scenario.get('style') or '—'}")
+    return scenario
+
+
+def generate_animation_character_prompt(
+    provider: "Provider",
+    description: str,
+    style: str,
+    aspect_ratio: str,
+) -> str:
+    """Step 2 — produce a NanoBanana T2I prompt for a single character portrait."""
+    user_prompt = (
+        f"CHARACTER DESCRIPTION:\n{description.strip()}\n\n"
+        f"STYLE: {style or '(neutral)'}\n"
+        f"ASPECT RATIO: {aspect_ratio}\n\n"
+        "Output ONE NanoBanana 2 prompt for a neutral character portrait, starting with ^."
+    )
+    text = provider.call_llm(
+        prompt=user_prompt,
+        image_url="",
+        system_prompt=ANIMATION_CHARACTER_PORTRAIT_SYSTEM_PROMPT,
+        label="LLM-anim-char",
+    ).strip()
+    if not text.startswith("^"):
+        text = "^" + text.lstrip("^").lstrip()
+    return text
+
+
+def refine_animation_shot_image_prompt(
+    provider: "Provider",
+    draft_image_prompt: str,
+    style: str,
+    aspect_ratio: str,
+    character_ids: list[str],
+    shows_product: bool,
+    has_anchor: bool,
+) -> str:
+    """Step 4 — refine a draft shot image prompt for execution. The actual
+    references (character portraits, product image, anchor frame) are
+    attached separately as input images at generation time."""
+    user_prompt = (
+        f"DRAFT IMAGE PROMPT:\n{draft_image_prompt.strip() or '(empty)'}\n\n"
+        f"STYLE: {style or '(neutral)'}\n"
+        f"ASPECT RATIO: {aspect_ratio}\n"
+        f"CHARACTERS ATTACHED AS REFERENCES: {', '.join(character_ids) or '(none)'}\n"
+        f"PRODUCT IMAGE ATTACHED: {'yes' if shows_product else 'no'}\n"
+        f"ANCHOR IMAGE ATTACHED (style reference from shot 1): {'yes' if has_anchor else 'no'}\n\n"
+        "Output ONE refined NanoBanana 2 prompt starting with ^."
+    )
+    text = provider.call_llm(
+        prompt=user_prompt,
+        image_url="",
+        system_prompt=ANIMATION_SHOT_IMAGE_REFINE_SYSTEM_PROMPT,
+        label="LLM-anim-img",
+    ).strip()
+    if not text.startswith("^"):
+        text = "^" + text.lstrip("^").lstrip()
+    return text
+
+
+def refine_animation_shot_video_prompt(
+    provider: "Provider",
+    draft_video_prompt: str,
+    description: str,
+    duration: int,
+    aspect_ratio: str,
+    shows_product: bool,
+) -> str:
+    """Step 5 — refine a draft video prompt before sending to Kling/Seedance."""
+    user_prompt = (
+        f"DRAFT VIDEO PROMPT:\n{draft_video_prompt.strip() or '(empty)'}\n\n"
+        f"SHOT DESCRIPTION: {description.strip()}\n"
+        f"DURATION: {duration}s\n"
+        f"ASPECT RATIO: {aspect_ratio}\n"
+        f"SHOWS PRODUCT: {'yes' if shows_product else 'no'}\n\n"
+        "Output ONE refined Kling/Seedance video prompt starting with ^."
+    )
+    text = provider.call_llm(
+        prompt=user_prompt,
+        image_url="",
+        system_prompt=ANIMATION_SHOT_VIDEO_REFINE_SYSTEM_PROMPT,
+        label="LLM-anim-vid",
     ).strip()
     if not text.startswith("^"):
         text = "^" + text.lstrip("^").lstrip()

@@ -4839,3 +4839,1055 @@ class TwinPage(QWidget):
             item = self.video_grid.takeAt(0)
             w = item.widget()
             if w: w.deleteLater()
+
+
+# ─── Animation (multi-shot narrative video) ──────────────────────────────────
+
+class AnimationOpWorker(QObject):
+    """Generic worker that runs one core.run_animation_* call in a QThread.
+    Emits log/finished signals. The op callable receives only on_log."""
+    log = Signal(str, str)
+    finished = Signal(str)  # error string ("" on success)
+
+    def __init__(self, op_callable):
+        super().__init__()
+        self._op = op_callable
+
+    def run(self):
+        try:
+            self._op(lambda lvl, msg: self.log.emit(lvl, msg))
+            self.finished.emit("")
+        except Exception as e:
+            self.log.emit("ERR", str(e))
+            self.finished.emit(str(e))
+
+
+class AnimationPage(QWidget):
+    """6-panel storyboard pipeline. All state is persisted to state.json."""
+
+    open_brands = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._project_dir: Path | None = None
+        self._state: dict = {}
+        self._thread: QThread | None = None
+        self._worker: "AnimationOpWorker | None" = None
+        self._pending_resume: Path | None = None
+        self._build()
+        self.refresh_brands()
+
+    # ── Build ───────────────────────────────────────────────────────────────
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Animation"); h1.setObjectName("H1")
+        sub = QLabel(
+            "Multi-shot video ad. Brief → scenario → characters → anchor → shots → export."
+        )
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        self._step_pills: list[QLabel] = []
+        stepper = QHBoxLayout(); stepper.setSpacing(8); stepper.setContentsMargins(0, 0, 0, 0)
+        for name in ("1. Brief", "2. Scenario", "3. Characters", "4. Anchor", "5. Shots", "6. Export"):
+            pill = QLabel(name)
+            pill.setStyleSheet(
+                f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+            )
+            self._step_pills.append(pill)
+            stepper.addWidget(pill)
+        stepper.addStretch()
+        root.addLayout(stepper)
+
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 14, 20, 14); llay.setSpacing(8)
+        lhead = QHBoxLayout(); lhead.setSpacing(8)
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        lhead.addWidget(lh); lhead.addStretch()
+        self.live_pill = StatusPill("Idle", t.TEXT_MUTED)
+        lhead.addWidget(self.live_pill)
+        llay.addLayout(lhead)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setFixedHeight(110)
+        llay.addWidget(self.log)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._build_brief_panel())
+        self.stack.addWidget(self._build_scenario_panel())
+        self.stack.addWidget(self._build_characters_panel())
+        self.stack.addWidget(self._build_anchor_panel())
+        self.stack.addWidget(self._build_shots_panel())
+        self.stack.addWidget(self._build_export_panel())
+
+        body = QVBoxLayout(); body.setSpacing(12)
+        body.addWidget(self.stack, 1)
+        body.addWidget(log_card)
+        root.addLayout(body, 1)
+
+        self._set_step(0)
+
+    def _set_step(self, idx: int):
+        idx = max(0, min(5, idx))
+        self.stack.setCurrentIndex(idx)
+        for i, pill in enumerate(self._step_pills):
+            if i == idx:
+                pill.setStyleSheet(
+                    f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+            elif i < idx:
+                pill.setStyleSheet(
+                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+            else:
+                pill.setStyleSheet(
+                    f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                )
+
+    # ── Panel 1: Brief ──────────────────────────────────────────────────────
+
+    def _build_brief_panel(self) -> QWidget:
+        wrap = QScrollArea(); wrap.setWidgetResizable(True); wrap.setFrameShape(QFrame.NoFrame)
+        wrap.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        inner = QWidget()
+        form = QVBoxLayout(inner); form.setContentsMargins(0, 0, 0, 0); form.setSpacing(14)
+
+        self.resume_card = QFrame()
+        self.resume_card.setObjectName("CardFlat")
+        self.resume_card.setStyleSheet(
+            f"background: {t.ACCENT}11; border: 1px solid {t.ACCENT}55; border-radius: 12px;"
+        )
+        rc = QHBoxLayout(self.resume_card); rc.setContentsMargins(16, 12, 16, 12); rc.setSpacing(10)
+        self.resume_label = QLabel("")
+        self.resume_label.setStyleSheet(f"color: {t.TEXT}; font-size: 12px; font-weight: 600;")
+        rc.addWidget(self.resume_label, 1)
+        self.resume_btn = QPushButton("Resume")
+        self.resume_btn.setObjectName("PrimaryBtn"); self.resume_btn.setCursor(Qt.PointingHandCursor)
+        self.resume_btn.clicked.connect(self._on_resume_clicked)
+        rc.addWidget(self.resume_btn)
+        form.addWidget(self.resume_card)
+        self.resume_card.hide()
+
+        form_card = Card()
+        fl = QVBoxLayout(form_card); fl.setContentsMargins(22, 20, 22, 20); fl.setSpacing(14)
+
+        nl = QLabel("PROJECT"); nl.setObjectName("Muted")
+        fl.addWidget(nl)
+        self.project_name = QLineEdit()
+        self.project_name.setPlaceholderText("e.g. Glow Serum · Q2")
+        fl.addWidget(self.project_name)
+
+        bl = QLabel("BRAND DNA"); bl.setObjectName("Muted")
+        fl.addWidget(bl)
+        brow = QHBoxLayout(); brow.setSpacing(8)
+        self.brand_combo = QComboBox()
+        brow.addWidget(self.brand_combo, 1)
+        manage_btn = QPushButton("Manage")
+        manage_btn.setObjectName("GhostBtn"); manage_btn.setCursor(Qt.PointingHandCursor)
+        manage_btn.clicked.connect(self.open_brands.emit)
+        brow.addWidget(manage_btn)
+        fl.addLayout(brow)
+
+        params = QHBoxLayout(); params.setSpacing(12)
+        col_im = QVBoxLayout(); col_im.setSpacing(6)
+        col_im.addWidget(_field_label("Image model"))
+        self.image_model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.image_model.addItem(label, userData=slug)
+        col_im.addWidget(self.image_model)
+        col_vm = QVBoxLayout(); col_vm.setSpacing(6)
+        col_vm.addWidget(_field_label("Video model"))
+        self.video_model = QComboBox()
+        for slug, label in core.VIDEO_MODEL_CHOICES:
+            self.video_model.addItem(label, userData=slug)
+        col_vm.addWidget(self.video_model)
+        col_a = QVBoxLayout(); col_a.setSpacing(6)
+        col_a.addWidget(_field_label("Aspect"))
+        self.aspect = QComboBox(); self.aspect.addItems(core.ANIMATION_ASPECTS)
+        col_a.addWidget(self.aspect)
+        col_d = QVBoxLayout(); col_d.setSpacing(6)
+        col_d.addWidget(_field_label("Default duration (s)"))
+        self.duration = QSpinBox()
+        self.duration.setRange(core.ANIMATION_DURATION_MIN, core.ANIMATION_DURATION_MAX)
+        self.duration.setValue(core.ANIMATION_DEFAULT_DURATION)
+        col_d.addWidget(self.duration)
+        params.addLayout(col_im, 1); params.addLayout(col_vm, 1); params.addLayout(col_a, 1); params.addLayout(col_d, 1)
+        fl.addLayout(params)
+
+        bl2 = QLabel("BRIEF  ·  one shot per line"); bl2.setObjectName("Muted")
+        fl.addWidget(bl2)
+        self.brief = QTextEdit()
+        self.brief.setPlaceholderText(
+            "Plan 1 (3s) — A hand opens the cream jar in a soft morning bathroom.\n"
+            "Plan 2 (4s) — Macro of cream applied to the cheek.\n"
+            "Plan 3 (4s) — Smiling face in the mirror, natural light."
+        )
+        self.brief.setMinimumHeight(140)
+        fl.addWidget(self.brief)
+
+        pl = QLabel("PRODUCT  ·  optional"); pl.setObjectName("Muted")
+        fl.addWidget(pl)
+        prow = QHBoxLayout(); prow.setSpacing(8)
+        self.product_name = QLineEdit()
+        self.product_name.setPlaceholderText("Product name")
+        prow.addWidget(self.product_name, 1)
+        self.product_image_path = QLineEdit()
+        self.product_image_path.setPlaceholderText("Pick a product image…")
+        self.product_image_path.setReadOnly(True)
+        prow.addWidget(self.product_image_path, 2)
+        pick_p = QPushButton("Pick")
+        pick_p.setObjectName("GhostBtn"); pick_p.setCursor(Qt.PointingHandCursor)
+        pick_p.clicked.connect(self._pick_product_image)
+        prow.addWidget(pick_p)
+        fl.addLayout(prow)
+
+        sl = QLabel("STYLE REFERENCES  ·  optional, up to 6 images"); sl.setObjectName("Muted")
+        fl.addWidget(sl)
+        self.style_refs_paths: list[str] = []
+        self.style_refs_label = QLabel("(none picked)")
+        self.style_refs_label.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
+        srow = QHBoxLayout(); srow.setSpacing(8)
+        srow.addWidget(self.style_refs_label, 1)
+        pick_s = QPushButton("Pick images")
+        pick_s.setObjectName("GhostBtn"); pick_s.setCursor(Qt.PointingHandCursor)
+        pick_s.clicked.connect(self._pick_style_refs)
+        srow.addWidget(pick_s)
+        clear_s = QPushButton("Clear")
+        clear_s.setObjectName("GhostBtn"); clear_s.setCursor(Qt.PointingHandCursor)
+        clear_s.clicked.connect(self._clear_style_refs)
+        srow.addWidget(clear_s)
+        fl.addLayout(srow)
+
+        fl.addSpacing(8)
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        btn_row.addStretch()
+        self.parse_btn = QPushButton("Parse brief →")
+        self.parse_btn.setObjectName("PrimaryBtn"); self.parse_btn.setCursor(Qt.PointingHandCursor)
+        self.parse_btn.clicked.connect(self._on_parse_clicked)
+        btn_row.addWidget(self.parse_btn)
+        fl.addLayout(btn_row)
+
+        form.addWidget(form_card)
+        form.addStretch()
+        wrap.setWidget(inner)
+        return wrap
+
+    def _pick_product_image(self):
+        f, _ = QFileDialog.getOpenFileName(
+            self, "Pick product image", "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
+        )
+        if f:
+            self.product_image_path.setText(f)
+
+    def _pick_style_refs(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Pick style references", "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
+        )
+        if files:
+            self.style_refs_paths = files[:6]
+            self.style_refs_label.setText(
+                f"{len(self.style_refs_paths)} image{'s' if len(self.style_refs_paths) > 1 else ''} picked"
+            )
+
+    def _clear_style_refs(self):
+        self.style_refs_paths = []
+        self.style_refs_label.setText("(none picked)")
+
+    # ── Panel 2: Scenario ───────────────────────────────────────────────────
+
+    def _build_scenario_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 14, 20, 14); hl.setSpacing(10)
+        self.scenario_title = QLabel("Scenario"); self.scenario_title.setObjectName("H2")
+        hl.addWidget(self.scenario_title); hl.addStretch()
+        back = QPushButton("← Brief"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(back)
+        cont = QPushButton("Continue →"); cont.setObjectName("PrimaryBtn"); cont.setCursor(Qt.PointingHandCursor)
+        cont.clicked.connect(self._on_scenario_continue)
+        hl.addWidget(cont)
+        col.addWidget(head)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.scenario_inner = QWidget()
+        self.scenario_layout = QVBoxLayout(self.scenario_inner)
+        self.scenario_layout.setContentsMargins(0, 0, 0, 0); self.scenario_layout.setSpacing(8)
+        self.scenario_layout.setAlignment(Qt.AlignTop)
+        scroll.setWidget(self.scenario_inner)
+        col.addWidget(scroll, 1)
+        return wrap
+
+    def _populate_scenario(self):
+        while self.scenario_layout.count():
+            item = self.scenario_layout.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        if not self._state:
+            return
+
+        scenario = self._state.get("scenario") or {}
+        style = scenario.get("style") or "—"
+        shots = self._state.get("shots") or {}
+        n = len(shots)
+        total_dur = sum(int(s.get("duration", 0) or 0) for s in shots.values())
+        self.scenario_title.setText(f"Scenario · {n} shots · {total_dur}s · style: {style}")
+
+        for sid in sorted(shots.keys(), key=int):
+            s = shots[sid]
+            row = QFrame()
+            row.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 10px;")
+            rl = QVBoxLayout(row); rl.setContentsMargins(14, 10, 14, 10); rl.setSpacing(6)
+            top = QHBoxLayout(); top.setSpacing(8)
+            id_lbl = QLabel(f"shot_{int(sid):03d}")
+            id_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px; font-weight: 700;")
+            top.addWidget(id_lbl)
+            desc_edit = QLineEdit(s.get("description", ""))
+            desc_edit.editingFinished.connect(
+                lambda sid=sid, e=desc_edit: self._on_shot_field_changed(sid, "description", e.text())
+            )
+            top.addWidget(desc_edit, 1)
+            dur_edit = QSpinBox()
+            dur_edit.setRange(core.ANIMATION_DURATION_MIN, core.ANIMATION_DURATION_MAX)
+            dur_edit.setValue(int(s.get("duration", 4)))
+            dur_edit.valueChanged.connect(
+                lambda v, sid=sid: self._on_shot_field_changed(sid, "duration", v)
+            )
+            top.addWidget(dur_edit)
+            top.addWidget(QLabel("s"))
+            chars = ", ".join(s.get("characters") or []) or "—"
+            chars_lbl = QLabel(chars)
+            chars_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
+            chars_lbl.setMinimumWidth(120)
+            top.addWidget(chars_lbl)
+            rl.addLayout(top)
+            self.scenario_layout.addWidget(row)
+
+    def _on_shot_field_changed(self, sid: str, field: str, value):
+        if not self._state or not self._project_dir:
+            return
+        s = (self._state.get("shots") or {}).get(sid)
+        if not s:
+            return
+        s[field] = int(value) if field == "duration" else value
+        core.save_animation_state(self._project_dir, self._state)
+
+    # ── Panel 3: Characters ─────────────────────────────────────────────────
+
+    def _build_characters_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 14, 20, 14); hl.setSpacing(10)
+        self.char_title = QLabel("Characters"); self.char_title.setObjectName("H2")
+        hl.addWidget(self.char_title); hl.addStretch()
+        back = QPushButton("← Scenario"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(1))
+        hl.addWidget(back)
+        gen_all = QPushButton("Generate all"); gen_all.setObjectName("GhostBtn"); gen_all.setCursor(Qt.PointingHandCursor)
+        gen_all.clicked.connect(self._on_generate_all_characters)
+        hl.addWidget(gen_all)
+        cont = QPushButton("Continue →"); cont.setObjectName("PrimaryBtn"); cont.setCursor(Qt.PointingHandCursor)
+        cont.clicked.connect(self._on_characters_continue)
+        hl.addWidget(cont)
+        col.addWidget(head)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.char_inner = QWidget()
+        self.char_layout = QGridLayout(self.char_inner)
+        self.char_layout.setContentsMargins(0, 0, 0, 0); self.char_layout.setSpacing(12)
+        self.char_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.char_inner)
+        col.addWidget(scroll, 1)
+        return wrap
+
+    def _populate_characters(self):
+        while self.char_layout.count():
+            item = self.char_layout.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        if not self._state:
+            return
+
+        chars = self._state.get("characters") or {}
+        if not chars:
+            empty = QLabel("No characters detected — you can skip to Anchor.")
+            empty.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+            self.char_layout.addWidget(empty, 0, 0)
+            self.char_title.setText("Characters · 0")
+            return
+
+        approved = sum(1 for c in chars.values() if c.get("status") == "approved")
+        self.char_title.setText(f"Characters · {approved}/{len(chars)} approved")
+
+        for i, (cid, c) in enumerate(sorted(chars.items())):
+            tile = self._build_character_tile(cid, c)
+            row = i // 3
+            col = i % 3
+            self.char_layout.addWidget(tile, row, col)
+
+    def _build_character_tile(self, cid: str, c: dict) -> QWidget:
+        tile = QFrame()
+        tile.setObjectName("CardFlat")
+        tile.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
+        tile.setFixedWidth(280)
+        lay = QVBoxLayout(tile); lay.setContentsMargins(12, 12, 12, 12); lay.setSpacing(8)
+
+        img_path = ""
+        if c.get("image") and self._project_dir:
+            p = self._project_dir / c["image"]
+            if p.exists():
+                img_path = str(p)
+        if img_path:
+            thumb = ThumbLabel(Path(img_path), 256, 256, 10)
+            thumb.clicked.connect(lambda _=None, p=Path(img_path): open_path(p))
+            lay.addWidget(thumb, alignment=Qt.AlignCenter)
+        else:
+            ph = QLabel("No portrait yet")
+            ph.setFixedSize(256, 256)
+            ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(f"background: {t.BORDER}; color: {t.TEXT_DIM}; border-radius: 10px;")
+            lay.addWidget(ph, alignment=Qt.AlignCenter)
+
+        meta = QHBoxLayout(); meta.setSpacing(6)
+        name = QLabel(cid); name.setStyleSheet(f"color: {t.TEXT}; font-size: 12px; font-weight: 700;")
+        meta.addWidget(name); meta.addStretch()
+        status = c.get("status") or "draft"
+        status_color = {"approved": t.GREEN, "draft": t.TEXT_MUTED, "generating": t.ACCENT, "failed": t.RED}.get(status, t.TEXT_MUTED)
+        status_lbl = QLabel(status)
+        status_lbl.setStyleSheet(
+            f"background: {status_color}22; color: {status_color}; padding: 2px 8px; "
+            f"border-radius: 8px; font-size: 10px; font-weight: 700;"
+        )
+        meta.addWidget(status_lbl)
+        lay.addLayout(meta)
+
+        desc = QLabel(c.get("description", ""))
+        desc.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+        desc.setWordWrap(True)
+        lay.addWidget(desc)
+
+        btns = QHBoxLayout(); btns.setSpacing(6)
+        if status == "approved":
+            ok = QPushButton("✓ Approved"); ok.setEnabled(False)
+            ok.setStyleSheet(
+                f"background: {t.GREEN}22; color: {t.GREEN}; border: 1px solid {t.GREEN}55; "
+                f"border-radius: 8px; padding: 4px 10px; font-size: 10px; font-weight: 700;"
+            )
+            btns.addWidget(ok)
+        else:
+            approve = QPushButton("Approve")
+            approve.setObjectName("GhostBtn"); approve.setCursor(Qt.PointingHandCursor)
+            approve.setEnabled(bool(img_path))
+            approve.clicked.connect(lambda _=None, cid=cid: self._on_approve_character(cid))
+            btns.addWidget(approve)
+        regen = QPushButton("Regen" if img_path else "Generate")
+        regen.setObjectName("GhostBtn"); regen.setCursor(Qt.PointingHandCursor)
+        regen.clicked.connect(lambda _=None, cid=cid: self._on_generate_character(cid))
+        btns.addWidget(regen)
+        lay.addLayout(btns)
+        return tile
+
+    # ── Panel 4: Anchor ─────────────────────────────────────────────────────
+
+    def _build_anchor_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 14, 20, 14); hl.setSpacing(10)
+        self.anchor_title = QLabel("Anchor frame · shot 1"); self.anchor_title.setObjectName("H2")
+        hl.addWidget(self.anchor_title); hl.addStretch()
+        back = QPushButton("← Characters"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(2))
+        hl.addWidget(back)
+        col.addWidget(head)
+
+        body = Card()
+        bl = QVBoxLayout(body); bl.setContentsMargins(20, 18, 20, 18); bl.setSpacing(10)
+        self.anchor_thumb_holder = QHBoxLayout()
+        self.anchor_thumb_holder.setAlignment(Qt.AlignCenter)
+        bl.addLayout(self.anchor_thumb_holder)
+        self.anchor_desc = QLabel("")
+        self.anchor_desc.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        self.anchor_desc.setWordWrap(True)
+        self.anchor_desc.setAlignment(Qt.AlignCenter)
+        bl.addWidget(self.anchor_desc)
+
+        btns = QHBoxLayout(); btns.setSpacing(10); btns.setAlignment(Qt.AlignCenter)
+        self.anchor_gen_btn = QPushButton("Generate anchor")
+        self.anchor_gen_btn.setObjectName("PrimaryBtn"); self.anchor_gen_btn.setCursor(Qt.PointingHandCursor)
+        self.anchor_gen_btn.clicked.connect(self._on_generate_anchor)
+        btns.addWidget(self.anchor_gen_btn)
+        self.anchor_regen_btn = QPushButton("Regen")
+        self.anchor_regen_btn.setObjectName("GhostBtn"); self.anchor_regen_btn.setCursor(Qt.PointingHandCursor)
+        self.anchor_regen_btn.clicked.connect(self._on_generate_anchor)
+        btns.addWidget(self.anchor_regen_btn)
+        self.anchor_approve_btn = QPushButton("✓ Approve & continue")
+        self.anchor_approve_btn.setObjectName("PrimaryBtn"); self.anchor_approve_btn.setCursor(Qt.PointingHandCursor)
+        self.anchor_approve_btn.clicked.connect(self._on_approve_anchor)
+        btns.addWidget(self.anchor_approve_btn)
+        bl.addLayout(btns)
+        col.addWidget(body, 1)
+        return wrap
+
+    def _populate_anchor(self):
+        while self.anchor_thumb_holder.count():
+            item = self.anchor_thumb_holder.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        if not self._state or not self._project_dir:
+            self.anchor_desc.setText("(no project)")
+            return
+        shot1 = (self._state.get("shots") or {}).get("1")
+        if not shot1:
+            self.anchor_desc.setText("(no shot 1 in scenario)")
+            return
+        self.anchor_desc.setText(shot1.get("description", ""))
+        img_status = shot1.get("image_status") or "pending"
+        img_path = self._project_dir / shot1.get("image_file", "") if shot1.get("image_file") else None
+        self.anchor_title.setText(f"Anchor frame · shot 1 · {shot1.get('duration', 0)}s · {img_status}")
+
+        if img_path and img_path.exists():
+            thumb = ThumbLabel(Path(img_path), 360, 480, 12)
+            thumb.clicked.connect(lambda _=None, p=Path(img_path): open_path(p))
+            self.anchor_thumb_holder.addWidget(thumb)
+            self.anchor_gen_btn.setVisible(False)
+            self.anchor_regen_btn.setVisible(True)
+            self.anchor_approve_btn.setVisible(img_status != "approved")
+            self.anchor_approve_btn.setEnabled(img_status in ("review", "approved"))
+        else:
+            ph = QLabel("No anchor yet")
+            ph.setFixedSize(360, 480); ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(f"background: {t.BORDER}; color: {t.TEXT_DIM}; border-radius: 12px;")
+            self.anchor_thumb_holder.addWidget(ph)
+            self.anchor_gen_btn.setVisible(True)
+            self.anchor_regen_btn.setVisible(False)
+            self.anchor_approve_btn.setVisible(False)
+
+    # ── Panel 5: Shots ──────────────────────────────────────────────────────
+
+    def _build_shots_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 14, 20, 14); hl.setSpacing(10)
+        self.shots_title = QLabel("Shots"); self.shots_title.setObjectName("H2")
+        hl.addWidget(self.shots_title); hl.addStretch()
+        back = QPushButton("← Anchor"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(3))
+        hl.addWidget(back)
+        gen_imgs = QPushButton("Generate missing images"); gen_imgs.setObjectName("GhostBtn"); gen_imgs.setCursor(Qt.PointingHandCursor)
+        gen_imgs.clicked.connect(self._on_generate_missing_images)
+        hl.addWidget(gen_imgs)
+        gen_vids = QPushButton("Generate approved videos"); gen_vids.setObjectName("GhostBtn"); gen_vids.setCursor(Qt.PointingHandCursor)
+        gen_vids.clicked.connect(self._on_generate_all_videos)
+        hl.addWidget(gen_vids)
+        cont = QPushButton("Continue →"); cont.setObjectName("PrimaryBtn"); cont.setCursor(Qt.PointingHandCursor)
+        cont.clicked.connect(lambda: (self._set_step(5), self._populate_export()))
+        hl.addWidget(cont)
+        col.addWidget(head)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.shots_inner = QWidget()
+        self.shots_layout = QGridLayout(self.shots_inner)
+        self.shots_layout.setContentsMargins(0, 0, 0, 0); self.shots_layout.setSpacing(12)
+        self.shots_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.shots_inner)
+        col.addWidget(scroll, 1)
+        return wrap
+
+    def _populate_shots(self):
+        while self.shots_layout.count():
+            item = self.shots_layout.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
+        if not self._state:
+            return
+        shots = self._state.get("shots") or {}
+        done = sum(1 for s in shots.values() if s.get("video_status") == "approved")
+        self.shots_title.setText(f"Shots · {done}/{len(shots)} done")
+        for i, sid in enumerate(sorted(shots.keys(), key=int)):
+            tile = self._build_shot_tile(sid, shots[sid])
+            row = i // 3
+            col_i = i % 3
+            self.shots_layout.addWidget(tile, row, col_i)
+
+    def _build_shot_tile(self, sid: str, s: dict) -> QWidget:
+        tile = QFrame()
+        tile.setObjectName("CardFlat")
+        tile.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
+        tile.setFixedWidth(300)
+        lay = QVBoxLayout(tile); lay.setContentsMargins(12, 12, 12, 12); lay.setSpacing(8)
+
+        hdr = QHBoxLayout(); hdr.setSpacing(6)
+        title = QLabel(f"shot_{int(sid):03d} · {s.get('duration', 0)}s")
+        title.setStyleSheet(f"color: {t.TEXT}; font-size: 11px; font-weight: 700;")
+        hdr.addWidget(title); hdr.addStretch()
+        for kind, key in (("IMG", "image_status"), ("VID", "video_status")):
+            v = s.get(key) or "pending"
+            color = {
+                "approved": t.GREEN, "review": "#d97706", "generating": t.ACCENT,
+                "pending": t.TEXT_MUTED, "failed": t.RED,
+            }.get(v, t.TEXT_MUTED)
+            badge = QLabel(f"{kind} {v}")
+            badge.setStyleSheet(
+                f"background: {color}22; color: {color}; padding: 2px 6px; "
+                f"border-radius: 6px; font-size: 9px; font-weight: 700;"
+            )
+            hdr.addWidget(badge)
+        lay.addLayout(hdr)
+
+        img_path = self._project_dir / s.get("image_file", "") if (self._project_dir and s.get("image_file")) else None
+        if img_path and img_path.exists():
+            thumb = ThumbLabel(Path(img_path), 276, 280, 10)
+            thumb.clicked.connect(lambda _=None, p=Path(img_path): open_path(p))
+            lay.addWidget(thumb, alignment=Qt.AlignCenter)
+        else:
+            ph = QLabel(s.get("image_status") or "pending")
+            ph.setFixedSize(276, 280); ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(f"background: {t.BORDER}; color: {t.TEXT_DIM}; border-radius: 10px;")
+            lay.addWidget(ph, alignment=Qt.AlignCenter)
+
+        desc = QLabel(s.get("description", ""))
+        desc.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+        desc.setWordWrap(True)
+        lay.addWidget(desc)
+
+        vid_path = self._project_dir / s.get("video_file", "") if (self._project_dir and s.get("video_file")) else None
+        if vid_path and vid_path.exists():
+            play = QPushButton(f"▶  {vid_path.name}")
+            play.setObjectName("GhostBtn"); play.setCursor(Qt.PointingHandCursor)
+            play.clicked.connect(lambda _=None, p=Path(vid_path): open_path(p))
+            lay.addWidget(play)
+
+        btns = QHBoxLayout(); btns.setSpacing(6)
+        img_status = s.get("image_status") or "pending"
+        vid_status = s.get("video_status") or "pending"
+        sid_int = int(sid)
+
+        if img_status == "review":
+            ap = QPushButton("Approve image")
+            ap.setObjectName("PrimaryBtn"); ap.setCursor(Qt.PointingHandCursor)
+            ap.clicked.connect(lambda _=None, sid_int=sid_int: self._on_approve_shot_image(sid_int))
+            btns.addWidget(ap)
+        elif img_status == "approved" and vid_status in ("pending", "failed"):
+            gen = QPushButton("Generate video →")
+            gen.setObjectName("PrimaryBtn"); gen.setCursor(Qt.PointingHandCursor)
+            gen.clicked.connect(lambda _=None, sid_int=sid_int: self._on_generate_shot_video(sid_int))
+            btns.addWidget(gen)
+        elif img_status == "approved" and vid_status == "approved":
+            ok = QPushButton("✓ Done"); ok.setEnabled(False)
+            ok.setStyleSheet(
+                f"background: {t.GREEN}22; color: {t.GREEN}; border: 1px solid {t.GREEN}55; "
+                f"border-radius: 8px; padding: 4px 10px; font-size: 10px; font-weight: 700;"
+            )
+            btns.addWidget(ok)
+        elif img_status == "failed":
+            retry = QPushButton("↻ Retry image")
+            retry.setObjectName("GhostBtn"); retry.setCursor(Qt.PointingHandCursor)
+            retry.clicked.connect(lambda _=None, sid_int=sid_int: self._on_generate_shot_image(sid_int))
+            btns.addWidget(retry)
+        else:
+            gen = QPushButton("Generate image")
+            gen.setObjectName("GhostBtn"); gen.setCursor(Qt.PointingHandCursor)
+            gen.clicked.connect(lambda _=None, sid_int=sid_int: self._on_generate_shot_image(sid_int))
+            btns.addWidget(gen)
+
+        regen = QPushButton("Regen img")
+        regen.setObjectName("GhostBtn"); regen.setCursor(Qt.PointingHandCursor)
+        regen.clicked.connect(lambda _=None, sid_int=sid_int: self._on_generate_shot_image(sid_int))
+        btns.addWidget(regen)
+        if vid_status == "approved":
+            rv = QPushButton("Regen vid")
+            rv.setObjectName("GhostBtn"); rv.setCursor(Qt.PointingHandCursor)
+            rv.clicked.connect(lambda _=None, sid_int=sid_int: self._on_generate_shot_video(sid_int))
+            btns.addWidget(rv)
+        lay.addLayout(btns)
+        return tile
+
+    # ── Panel 6: Export ─────────────────────────────────────────────────────
+
+    def _build_export_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        card = Card()
+        cl = QVBoxLayout(card); cl.setContentsMargins(40, 36, 40, 36); cl.setSpacing(14)
+        cl.setAlignment(Qt.AlignCenter)
+        h = QLabel("Ready"); h.setObjectName("H1")
+        h.setAlignment(Qt.AlignCenter)
+        cl.addWidget(h)
+        self.export_summary = QLabel("")
+        self.export_summary.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 13px;")
+        self.export_summary.setAlignment(Qt.AlignCenter)
+        cl.addWidget(self.export_summary)
+
+        cl.addSpacing(20)
+        open_btn = QPushButton("Open folder")
+        open_btn.setObjectName("PrimaryBtn"); open_btn.setCursor(Qt.PointingHandCursor)
+        open_btn.clicked.connect(self._open_project_folder)
+        cl.addWidget(open_btn, alignment=Qt.AlignCenter)
+        new_btn = QPushButton("Start new project")
+        new_btn.setObjectName("GhostBtn"); new_btn.setCursor(Qt.PointingHandCursor)
+        new_btn.clicked.connect(self._start_new_project)
+        cl.addWidget(new_btn, alignment=Qt.AlignCenter)
+        col.addWidget(card)
+        col.addStretch()
+        return wrap
+
+    def _populate_export(self):
+        if not self._state:
+            self.export_summary.setText("(no project)")
+            return
+        shots = self._state.get("shots") or {}
+        n = len(shots)
+        ok = sum(1 for s in shots.values() if s.get("video_status") == "approved")
+        total = sum(int(s.get("duration", 0) or 0) for s in shots.values())
+        self.export_summary.setText(
+            f"{ok}/{n} shots done · {total}s · {self._state.get('aspect_ratio', '—')}"
+        )
+
+    def _open_project_folder(self):
+        if self._project_dir and self._project_dir.exists():
+            open_path(self._project_dir)
+
+    def _start_new_project(self):
+        self._project_dir = None
+        self._state = {}
+        self.project_name.clear()
+        self.brief.clear()
+        self.product_name.clear()
+        self.product_image_path.clear()
+        self.style_refs_paths = []
+        self.style_refs_label.setText("(none picked)")
+        self._set_step(0)
+        self._refresh_resume_card()
+
+    # ── Brand picker ────────────────────────────────────────────────────────
+
+    def refresh_brands(self):
+        current = self.brand_combo.currentText() if hasattr(self, "brand_combo") else ""
+        self.brand_combo.blockSignals(True)
+        self.brand_combo.clear()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())
+        if not names:
+            self.brand_combo.addItem("— No brands yet (Manage →) —")
+            self.brand_combo.setEnabled(False)
+        else:
+            self.brand_combo.setEnabled(True)
+            self.brand_combo.addItems(names)
+            if current in names:
+                self.brand_combo.setCurrentText(current)
+        self.brand_combo.blockSignals(False)
+        self._refresh_resume_card()
+
+    def _refresh_resume_card(self):
+        entry = core.latest_unfinished_animation()
+        if not entry:
+            self.resume_card.hide()
+            return
+        st = entry["state"]
+        self.resume_label.setText(
+            f"Unfinished project: {st.get('project_name') or entry['dir'].name}  ·  "
+            f"step: {st.get('status', 'brief')}"
+        )
+        self._pending_resume = entry["dir"]
+        self.resume_card.show()
+
+    def _on_resume_clicked(self):
+        d = self._pending_resume
+        if not d:
+            return
+        self._project_dir = Path(d)
+        self._state = core.load_animation_state(self._project_dir)
+        self._sync_form_from_state()
+        self._populate_all()
+        status_to_step = {
+            "brief": 0, "scenario": 1, "characters": 2,
+            "anchor": 3, "shots": 4, "done": 5,
+        }
+        self._set_step(status_to_step.get(self._state.get("status", "brief"), 0))
+
+    def _sync_form_from_state(self):
+        self.project_name.setText(self._state.get("project_name", ""))
+        brand = self._state.get("brand", "")
+        if brand:
+            i = self.brand_combo.findText(brand)
+            if i >= 0:
+                self.brand_combo.setCurrentIndex(i)
+        for slug in core.IMAGE_MODELS:
+            if slug == self._state.get("image_model"):
+                idx = list(core.IMAGE_MODELS).index(slug)
+                self.image_model.setCurrentIndex(idx)
+                break
+        for slug in core.VIDEO_MODELS:
+            if slug == self._state.get("video_model"):
+                idx = list(core.VIDEO_MODELS).index(slug)
+                self.video_model.setCurrentIndex(idx)
+                break
+        i = self.aspect.findText(self._state.get("aspect_ratio", "9:16"))
+        if i >= 0:
+            self.aspect.setCurrentIndex(i)
+        self.duration.setValue(int(self._state.get("default_duration", 4)))
+        self.brief.setPlainText(self._state.get("brief_text", ""))
+        prod = self._state.get("product") or {}
+        self.product_name.setText(prod.get("name", ""))
+        self.product_image_path.setText(prod.get("image", ""))
+        refs = self._state.get("style_refs") or []
+        self.style_refs_paths = list(refs)
+        self.style_refs_label.setText(
+            f"{len(refs)} image{'s' if len(refs) > 1 else ''} loaded" if refs else "(none picked)"
+        )
+
+    def _populate_all(self):
+        self._populate_scenario()
+        self._populate_characters()
+        self._populate_anchor()
+        self._populate_shots()
+        self._populate_export()
+
+    # ── Worker dispatch ─────────────────────────────────────────────────────
+
+    def _is_busy(self) -> bool:
+        return self._thread is not None and self._thread.isRunning()
+
+    def _run_op(self, op_callable, on_finish=lambda err: None):
+        if self._is_busy():
+            QMessageBox.information(self, "Busy", "An operation is already running.")
+            return
+        self.live_pill.setText("Running")
+        self.live_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        self._thread = QThread()
+        self._worker = AnimationOpWorker(op_callable)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._append_log)
+        self._worker.finished.connect(lambda err: self._on_op_finished(err, on_finish))
+        self._thread.start()
+
+    def _on_op_finished(self, err: str, on_finish):
+        if self._thread:
+            self._thread.quit()
+            self._thread.wait()
+        self._thread = None
+        self._worker = None
+        if err:
+            self.live_pill.setText("Error")
+            self.live_pill.setStyleSheet(
+                f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
+                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            )
+        else:
+            self.live_pill.setText("Done")
+            self.live_pill.setStyleSheet(
+                f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            )
+        if self._project_dir:
+            self._state = core.load_animation_state(self._project_dir)
+            self._populate_all()
+        try:
+            on_finish(err)
+        except Exception as e:
+            self._append_log("ERR", str(e))
+
+    def _append_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        self.log.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    # ── Brief actions ──────────────────────────────────────────────────────
+
+    def _on_parse_clicked(self):
+        if self._is_busy():
+            return
+        if not self.project_name.text().strip():
+            QMessageBox.warning(self, "Project name", "Give the project a name first."); return
+        if not self.brand_combo.isEnabled():
+            QMessageBox.warning(self, "No brand", "Create a Brand DNA first."); return
+        if not self.brief.toPlainText().strip():
+            QMessageBox.warning(self, "Brief", "Write a brief — one shot per line."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        try:
+            self._project_dir = core.create_animation_project(
+                project_name=self.project_name.text(),
+                brand_name=self.brand_combo.currentText(),
+                brief_text=self.brief.toPlainText(),
+                image_model=self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+                video_model=self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
+                aspect_ratio=self.aspect.currentText(),
+                product_name=self.product_name.text(),
+                product_image=self.product_image_path.text() or None,
+                style_refs=self.style_refs_paths,
+                default_duration=self.duration.value(),
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Project init failed", str(e)); return
+
+        self._state = core.load_animation_state(self._project_dir)
+        self._append_log("INFO", f"Project created at {self._project_dir.name}")
+
+        def op(on_log):
+            core.run_animation_parse(self._project_dir, on_log)
+
+        self._run_op(op, on_finish=lambda err: (self._set_step(1) if not err else None))
+
+    def _on_scenario_continue(self):
+        if not self._state:
+            return
+        if not (self._state.get("characters") or {}):
+            self._set_step(3)
+            self._populate_anchor()
+            return
+        self._set_step(2)
+        self._populate_characters()
+
+    # ── Character actions ─────────────────────────────────────────────────
+
+    def _on_generate_character(self, cid: str):
+        if not self._project_dir or self._is_busy():
+            return
+        def op(on_log):
+            core.run_animation_character(self._project_dir, cid, on_log)
+        self._run_op(op)
+
+    def _on_approve_character(self, cid: str):
+        if not self._project_dir:
+            return
+        try:
+            core.approve_animation_character(self._project_dir, cid)
+            self._state = core.load_animation_state(self._project_dir)
+            self._populate_characters()
+        except Exception as e:
+            QMessageBox.warning(self, "Approve failed", str(e))
+
+    def _on_generate_all_characters(self):
+        if not self._project_dir or self._is_busy():
+            return
+        chars = (self._state.get("characters") or {})
+        def op(on_log):
+            for cid, c in chars.items():
+                if c.get("status") == "approved":
+                    continue
+                core.run_animation_character(self._project_dir, cid, on_log)
+        self._run_op(op)
+
+    def _on_characters_continue(self):
+        if not self._state:
+            return
+        chars = (self._state.get("characters") or {})
+        unapproved = [c for c in chars.values() if c.get("status") != "approved"]
+        if unapproved:
+            res = QMessageBox.question(
+                self, "Some characters not approved",
+                f"{len(unapproved)} character(s) are not yet approved. Continue anyway?",
+            )
+            if res != QMessageBox.Yes:
+                return
+        self._set_step(3)
+        self._populate_anchor()
+
+    # ── Anchor actions ────────────────────────────────────────────────────
+
+    def _on_generate_anchor(self):
+        if not self._project_dir or self._is_busy():
+            return
+        def op(on_log):
+            core.run_animation_shot_image(self._project_dir, 1, on_log, use_anchor=False)
+        self._run_op(op)
+
+    def _on_approve_anchor(self):
+        if not self._project_dir:
+            return
+        try:
+            core.approve_animation_shot_image(self._project_dir, 1)
+            self._state = core.load_animation_state(self._project_dir)
+            self._populate_anchor()
+            self._set_step(4)
+            self._populate_shots()
+        except Exception as e:
+            QMessageBox.warning(self, "Approve failed", str(e))
+
+    # ── Shots actions ─────────────────────────────────────────────────────
+
+    def _on_generate_shot_image(self, sid: int):
+        if not self._project_dir or self._is_busy():
+            return
+        def op(on_log):
+            core.run_animation_shot_image(self._project_dir, sid, on_log, use_anchor=True)
+        self._run_op(op)
+
+    def _on_approve_shot_image(self, sid: int):
+        if not self._project_dir:
+            return
+        try:
+            core.approve_animation_shot_image(self._project_dir, sid)
+            self._state = core.load_animation_state(self._project_dir)
+            self._populate_shots()
+        except Exception as e:
+            QMessageBox.warning(self, "Approve failed", str(e))
+
+    def _on_generate_shot_video(self, sid: int):
+        if not self._project_dir or self._is_busy():
+            return
+        def op(on_log):
+            core.run_animation_shot_video(self._project_dir, sid, on_log)
+        self._run_op(op)
+
+    def _on_generate_missing_images(self):
+        if not self._project_dir or self._is_busy():
+            return
+        shots = (self._state.get("shots") or {})
+        targets = [int(sid) for sid, s in shots.items()
+                   if int(sid) > 1 and s.get("image_status") in ("pending", "failed")]
+        if not targets:
+            QMessageBox.information(self, "Nothing to do", "All shots have an image.")
+            return
+        def op(on_log):
+            for sid in sorted(targets):
+                core.run_animation_shot_image(self._project_dir, sid, on_log, use_anchor=True)
+        self._run_op(op)
+
+    def _on_generate_all_videos(self):
+        if not self._project_dir or self._is_busy():
+            return
+        shots = (self._state.get("shots") or {})
+        targets = [int(sid) for sid, s in shots.items()
+                   if s.get("image_status") == "approved" and s.get("video_status") in ("pending", "failed")]
+        if not targets:
+            QMessageBox.information(self, "Nothing to do", "No approved images awaiting video.")
+            return
+        def op(on_log):
+            for sid in sorted(targets):
+                core.run_animation_shot_video(self._project_dir, sid, on_log)
+            core.finalize_animation_project(self._project_dir)
+        self._run_op(op)

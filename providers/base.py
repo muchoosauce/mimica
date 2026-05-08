@@ -89,10 +89,16 @@ class Provider(ABC):
         duration: int = 5,
         aspect_ratio: str = "9:16",
         sound: bool = False,
+        product_reference_urls: list[str] = (),
         label: str = "video",
     ) -> str:
-        """Animate one image into a video clip. Default raises so existing
-        providers don't break until they opt-in by overriding."""
+        """Animate one image into a video clip.
+
+        `product_reference_urls`, when non-empty, asks the provider to use the
+        given URLs as element references to keep the product (logo, labels,
+        text) visually stable across the clip. Providers that don't support
+        element references should log a warning and ignore the parameter.
+        """
         raise NotImplementedError(
             f"{self.display_name} does not implement video generation yet."
         )
@@ -115,6 +121,39 @@ class Provider(ABC):
         """
         raise NotImplementedError(
             f"{self.display_name} does not implement text-to-image yet."
+        )
+
+    def upload_video(self, path: Path) -> str:
+        """Upload a local video file and return a hosted URL.
+
+        Distinct from upload_image which assumes a PIL-openable raster — videos
+        skip the PIL compression path. Used by the Swap Product workflow to
+        host the source video before passing it to a video-to-video model.
+        Default raises so providers must opt in.
+        """
+        raise NotImplementedError(
+            f"{self.display_name} does not implement video uploads yet."
+        )
+
+    def call_swap_video(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        source_video_url: str,
+        product_image_url: str,
+        label: str = "swap",
+    ) -> str:
+        """Video-to-video swap: replace one object (the source product) with
+        another (the user's product) while preserving the source video's faces,
+        motion, lighting, and audio sync.
+
+        Conceptually different from call_video (image-to-video, generates from
+        scratch from a single reference frame). Default raises so providers
+        must opt in by overriding.
+        """
+        raise NotImplementedError(
+            f"{self.display_name} does not implement video-to-video swap yet."
         )
 
     def download(self, url: str, dest: Path) -> None:

@@ -137,7 +137,7 @@ def generate(
         return _abort(out_dir)
     dna_model = client.generate_dna(compiled, selected, on_log=on_log)
     dna_md = dna_model.to_markdown()
-    (out_dir / "dna.md").write_text(dna_md)
+    (out_dir / "dna.md").write_text(dna_md, encoding="utf-8")
     on_log("OK", "Brand DNA generated")
 
     # 7. Heuristic-filter all collected non-screenshot images, then LLM-tag them
@@ -167,7 +167,10 @@ def generate(
         "candidates": [_img_to_dict(c) for c in candidates],
         "dna_sections": dna_model.model_dump(),
     }
-    (out_dir / "raw.json").write_text(json.dumps(raw, indent=2, default=str))
+    (out_dir / "raw.json").write_text(
+        json.dumps(raw, indent=2, default=str, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     return BrandDNAResult(
         dna_text=dna_md,

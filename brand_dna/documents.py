@@ -16,7 +16,7 @@ def parse_document(path: Path, image_dir: Path) -> ParsedDocument:
         return _parse_docx(path, image_dir)
     if ext in (".txt", ".md"):
         try:
-            return ParsedDocument(path=path, text=path.read_text(errors="ignore"))
+            return ParsedDocument(path=path, text=path.read_text(encoding="utf-8", errors="ignore"))
         except Exception as e:
             return ParsedDocument(path=path, error=f"read failed: {e}")
     return ParsedDocument(path=path, error=f"unsupported extension {ext!r}")

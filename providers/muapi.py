@@ -62,6 +62,24 @@ _GPT_IMAGE_2_ASPECT_FALLBACK = {
 _VIDEO_SLUGS = {
     "kling_3_std": "kling-v3.0-standard-image-to-video",
     "kling_3_pro": "kling-v3.0-pro-image-to-video",
+    # NOTE: seedance_2 here is the IMAGE-TO-VIDEO slug, exposed in classic
+    # Generate / Twin / B-Roll / Adapt flows that already produce a still and
+    # animate it. The Swap Product page uses a *different* endpoint:
+    # `seedance-v2.0-video-edit` (true video-to-video, preserves source faces +
+    # motion + audio sync) — routed via _SWAP_VIDEO_SLUGS below.
+    "seedance_2":  "seedance-v2.0-i2v",
+}
+# Video-to-video edit endpoints. Distinct from _VIDEO_SLUGS because the payload
+# shape is different (video_urls + images_list referenced via @image1 in the
+# prompt). Verified on MuAPI's OpenAPI catalog: max 10MB / 15s source video,
+# up to 9 reference images.
+_SWAP_VIDEO_SLUGS = {
+    "seedance_2": "seedance-v2.0-video-edit",
+}
+# Fallback aliases used when the primary slug above 404s. Tried automatically
+# in order; first non-404 wins. Keep this list short to limit retry latency.
+_VIDEO_SLUG_FALLBACKS = {
+    "seedance_2": ["seedance-pro-i2v", "seedance-v1.5-pro-i2v"],
 }
 _LLM_SLUG = "claude-sonnet-4-6"
 
@@ -156,6 +174,28 @@ class MuApiProvider(Provider):
                 )
             url = self._retry_transient(self._do_upload, prepped, label=f"upload {path.name}")
         self._log("OK", f"Reference uploaded: {url}")
+        return url
+
+    def upload_video(self, path: Path) -> str:
+        """Upload a video file. Skips the PIL-based image compression path.
+
+        MuAPI rejects uploads >10MB and Seedance v2 video-edit additionally
+        rejects videos >15s — we surface a clear, actionable error rather than
+        passing those constraints through to a generic 4xx from the API.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise UploadError(f"Video file not found: {path}")
+        sz = path.stat().st_size
+        if sz > _UPLOAD_LIMIT:
+            raise UploadError(
+                f"Video {path.name} is {sz/1e6:.1f}MB, MuAPI's upload limit is "
+                f"{_UPLOAD_LIMIT/1e6:.0f}MB. Trim it (e.g. `ffmpeg -i in.mp4 -t 15 -c:v libx264 "
+                f"-crf 28 -preset fast out.mp4`) and retry."
+            )
+        self._log("INFO", f"Uploading source video: {path.name} ({sz/1e6:.1f}MB)")
+        url = self._retry_transient(self._do_upload, path, label=f"upload {path.name}")
+        self._log("OK", f"Source video uploaded: {url}")
         return url
 
     # ── Predictions ─────────────────────────────────────────────────────────
@@ -368,11 +408,17 @@ class MuApiProvider(Provider):
         duration: int = 5,
         aspect_ratio: str = "9:16",
         sound: bool = False,
+        product_reference_urls: list[str] = (),
         label: str = "video",
     ) -> str:
-        slug = _VIDEO_SLUGS.get(model)
-        if not slug:
+        primary = _VIDEO_SLUGS.get(model)
+        if not primary:
             raise ProviderError(f"MuAPI does not support video model {model!r}")
+        slugs_to_try = [primary, *_VIDEO_SLUG_FALLBACKS.get(model, [])]
+
+        is_kling = model.startswith("kling_")
+        is_seedance = model.startswith("seedance_")
+
         # MuAPI's Kling 3 default is "sound on" in practice (despite WaveSpeed
         # docs claiming the opposite), so we always send the boolean explicitly.
         payload: dict = {
@@ -383,8 +429,134 @@ class MuApiProvider(Provider):
             "sound": bool(sound),
         }
         self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
-        out = self._call_prediction(slug, payload, label)
+
+        # Product reference locking via Kling's `kling_elements`. Only Kling 3
+        # supports this. Seedance has its own multi-image reference path which
+        # we don't wire yet (TODO when MuAPI documents it).
+        refs = list(product_reference_urls or [])
+        used_locking = False
+        if refs and is_kling:
+            if len(refs) == 1:
+                refs = refs * 2
+            elif len(refs) > 4:
+                refs = refs[:4]
+            payload["kling_elements"] = [{
+                "name": "product",
+                "description": (
+                    "the product with all its visible packaging, logo, "
+                    "label text and printed characters preserved exactly"
+                ),
+                "element_input_urls": refs,
+            }]
+            if "@product" not in payload["prompt"]:
+                payload["prompt"] = payload["prompt"].rstrip() + " @product"
+            used_locking = True
+            self._log("INFO", f"[{label}] product reference locking: on ({len(refs)} ref{'s' if len(refs) > 1 else ''})")
+        elif refs and is_seedance:
+            self._log("INFO", f"[{label}] product reference: ignored (Seedance lock not yet wired)")
+
+        out = None
+        last_err: Optional[Exception] = None
+        for i, slug in enumerate(slugs_to_try):
+            attempt_label = label if i == 0 else f"{label}-fallback{i}"
+            try:
+                out = self._call_prediction(slug, payload, attempt_label)
+                if i > 0:
+                    self._log("INFO", f"[{label}] succeeded with fallback slug {slug!r}")
+                break
+            except ProviderError as e:
+                msg = str(e)
+                # 1) If the model rejected kling_elements, retry once stripped
+                #    on the same slug.
+                if used_locking and ("422" in msg or "kling_elements" in msg or "extra" in msg.lower()):
+                    self._log(
+                        "WARN",
+                        f"[{attempt_label}] MuAPI rejected kling_elements ({msg[:120]}); "
+                        "retrying without product reference locking",
+                    )
+                    payload.pop("kling_elements", None)
+                    payload["prompt"] = payload["prompt"].replace(" @product", "").rstrip()
+                    used_locking = False
+                    try:
+                        out = self._call_prediction(slug, payload, attempt_label)
+                        break
+                    except ProviderError as e2:
+                        last_err = e2
+                        msg = str(e2)
+                # 2) If the slug itself doesn't exist (404 / unknown model),
+                #    try the next fallback.
+                if "404" in msg or "not found" in msg.lower() or "unknown model" in msg.lower():
+                    self._log(
+                        "WARN",
+                        f"[{attempt_label}] slug {slug!r} returned 404; trying next fallback",
+                    )
+                    last_err = e
+                    continue
+                # 3) Anything else: bail.
+                raise
+        if out is None:
+            raise last_err or ProviderError(f"{label}: all slugs failed for model {model!r}")
         url = first_url(out)
         if not url:
             raise ProviderError(f"{label}: no video URL in output: {out}")
+        return url
+
+    def call_swap_video(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        source_video_url: str,
+        product_image_url: str,
+        duration: int = 5,
+        aspect_ratio: str = "9:16",
+        quality: str = "basic",
+        label: str = "swap",
+    ) -> str:
+        """Video-to-video product swap via Seedance v2.0 video-edit.
+
+        Payload shape per MuAPI's OpenAPI:
+          - video_urls: [<source>] (exactly 1, ≤10MB, ≤15s)
+          - images_list: [<product>] (referenced as @image1 in the prompt)
+          - prompt: must contain @image1 telling the model what to replace with
+          - duration: 4-15s
+          - aspect_ratio, quality: optional
+
+        Faces, motion, lighting and audio sync of the source video are preserved
+        — only the targeted product is replaced. Lip-sync stays intact gratuitously
+        because the visual side of the source is preserved verbatim.
+        """
+        slug = _SWAP_VIDEO_SLUGS.get(model)
+        if not slug:
+            raise ProviderError(
+                f"Model {model!r} has no video-edit endpoint. "
+                f"Supported swap models: {sorted(_SWAP_VIDEO_SLUGS)}"
+            )
+        if "@image1" not in prompt:
+            # Defensive: if Vision didn't produce a brief that references the
+            # product image, the model may regenerate the source product instead
+            # of swapping it. Append a minimal hint so the call still produces
+            # a meaningful result rather than silently no-oping.
+            prompt = prompt.rstrip() + " (replace the held product with @image1)"
+            self._log("WARN", f"[{label}] prompt missing @image1; appended fallback hint")
+
+        # Seedance accepts 4..15. Clamp to keep the API from 422-ing.
+        duration = max(4, min(15, int(duration)))
+
+        payload: dict = {
+            "prompt": prompt,
+            "video_urls": [source_video_url],
+            "images_list": [product_image_url],
+            "duration": duration,
+            "aspect_ratio": aspect_ratio,
+            "quality": quality,
+        }
+        self._log(
+            "INFO",
+            f"[{label}] Seedance v2 video-edit · {duration}s · {aspect_ratio} · quality={quality}",
+        )
+        out = self._call_prediction(slug, payload, label)
+        url = first_url(out)
+        if not url:
+            raise ProviderError(f"{label}: no video URL in swap output: {out}")
         return url

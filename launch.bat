@@ -44,5 +44,17 @@ if not exist ".venv\.deps_installed" (
   echo ok > ".venv\.deps_installed"
 )
 
+if not exist ".venv\.playwright_installed" (
+  echo Installing Playwright Chromium ^(one-time, ~150 MB^)...
+  python -m playwright install chromium
+  if errorlevel 1 (
+    echo Playwright Chromium install failed. Brand DNA scraping will be unavailable.
+    echo You can retry later with:  .venv\Scripts\python -m playwright install chromium
+    pause
+  ) else (
+    echo ok > ".venv\.playwright_installed"
+  )
+)
+
 python app.py
 if errorlevel 1 pause

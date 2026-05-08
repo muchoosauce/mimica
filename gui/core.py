@@ -41,10 +41,15 @@ from providers.prompts import (
     FUNNEL_STAGES,
     FUNNEL_SYSTEM_PROMPTS,
     analyze_image_for_twin as _analyze_twin,
+    analyze_video_for_swap as _analyze_swap,
+    generate_animation_character_prompt as _gen_anim_char_prompt,
     generate_broll_image_prompts as _gen_broll_img_prompts,
     generate_broll_video_prompt as _gen_broll_vid_prompt,
     generate_funnel_creatives as _gen_funnel_creatives,
     generate_prompts as _gen_prompts,
+    parse_animation_brief as _parse_animation_brief,
+    refine_animation_shot_image_prompt as _refine_anim_img,
+    refine_animation_shot_video_prompt as _refine_anim_vid,
     soften_prompt as _soften,
 )
 
@@ -209,7 +214,7 @@ def list_runs(root: Optional[Path] = None) -> list[dict]:
         if not report_file.exists():
             continue
         try:
-            data = json.loads(report_file.read_text())
+            data = json.loads(report_file.read_text(encoding="utf-8"))
         except Exception:
             continue
         images = (sorted(d.glob("variation_*.png")) + sorted(d.glob("variation_*.jpg"))
@@ -265,14 +270,14 @@ def load_brands() -> dict[str, dict]:
     if not BRANDS_FILE.exists():
         return {}
     try:
-        data = json.loads(BRANDS_FILE.read_text())
+        data = json.loads(BRANDS_FILE.read_text(encoding="utf-8"))
     except Exception:
         return {}
     healed = {k: _migrate_brand(v) for k, v in data.items()}
     # Persist the healed paths so we don't redo this on every load.
     if json.dumps(healed, sort_keys=True) != json.dumps(data, sort_keys=True):
         try:
-            BRANDS_FILE.write_text(json.dumps(healed, indent=2))
+            BRANDS_FILE.write_text(json.dumps(healed, indent=2), encoding="utf-8")
         except Exception:
             pass
     return healed
@@ -335,7 +340,7 @@ def save_brand(
         "updated_at": now,
     }
     brands[name] = brand
-    BRANDS_FILE.write_text(json.dumps(brands, indent=2))
+    BRANDS_FILE.write_text(json.dumps(brands, indent=2), encoding="utf-8")
     return brand
 
 
@@ -348,7 +353,7 @@ def delete_brand(name: str):
                 try: p.unlink()
                 except Exception: pass
         del brands[name]
-        BRANDS_FILE.write_text(json.dumps(brands, indent=2))
+        BRANDS_FILE.write_text(json.dumps(brands, indent=2), encoding="utf-8")
 
 
 def list_ads_in_folder(folder: Path) -> list[Path]:
@@ -431,8 +436,7 @@ def run_generation(
                 f"=== {lang} · Variation {i:02d} ===\n{p}"
                 for lang, prompts in prompts_by_lang.items()
                 for i, p in enumerate(prompts, 1)
-            )
-        )
+            ), encoding="utf-8")
 
         total = sum(len(p) for p in prompts_by_lang.values()) * len(aspects)
         on_log(
@@ -517,7 +521,7 @@ def run_generation(
             },
             "results": results,
         }
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"Done: {ok}/{len(results)} succeeded.")
         return out_dir
@@ -762,8 +766,7 @@ def run_adapt(
             "\n\n".join(
                 f"=== {source_by_idx[idx]} · {lang} ===\n{p}"
                 for (idx, lang), p in sorted(prompts.items())
-            )
-        )
+            ), encoding="utf-8")
 
         report = {
             "type": "adapt",
@@ -786,7 +789,7 @@ def run_adapt(
             },
             "results": results,
         }
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"Done: {ok}/{len(results)} adapted.")
         return out_dir
@@ -1173,8 +1176,7 @@ def run_broll_images(
             "\n\n".join(
                 f"=== {BROLL_CATEGORY_LABELS[cat]} · {i:02d} ===\n{p}"
                 for i, (p, cat) in enumerate(zip(prompts, category_order), 1)
-            )
-        )
+            ), encoding="utf-8")
 
         def one(idx: int, prompt: str, category: str) -> dict:
             label = f"broll_{idx:02d}_{category}"
@@ -1246,7 +1248,7 @@ def run_broll_images(
             },
             "results": results,
         }
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"B-roll images done: {ok}/{len(results)} succeeded.")
         return out_dir
@@ -1269,6 +1271,7 @@ def run_broll_videos(
     video_model: str = DEFAULT_VIDEO_MODEL,
     provider_name: Optional[str] = None,
     sound: bool = False,
+    lock_product_reference: bool = True,
 ) -> Optional[Path]:
     """Phase 2 of the B-Roll workflow: animate approved images into clips.
 
@@ -1283,7 +1286,7 @@ def run_broll_videos(
         return None
 
     try:
-        img_report = json.loads(report_path.read_text())
+        img_report = json.loads(report_path.read_text(encoding="utf-8"))
     except Exception as e:
         on_log("ERR", f"Could not read images report: {e}")
         return None
@@ -1352,6 +1355,39 @@ def run_broll_videos(
             on_log("WARN", "Cancelled during upload.")
             return out_dir
 
+        # Optionally upload the brand's product reference images so the video
+        # provider can lock the product (logo / labels / printed text)
+        # visually across the clip via Kling's element reference system.
+        product_ref_urls: list[str] = []
+        if lock_product_reference:
+            product_paths_raw = img_report.get("product_images") or []
+            product_paths = [Path(p) for p in product_paths_raw if p and Path(p).exists()]
+            if product_paths:
+                on_log(
+                    "INFO",
+                    f"Uploading {len(product_paths)} product reference image(s) for locking...",
+                )
+                for pp in product_paths[:4]:  # cap at 4 (Kling element max)
+                    if should_cancel():
+                        break
+                    try:
+                        product_ref_urls.append(provider.upload_image(pp))
+                    except Exception as e:
+                        on_log("WARN", f"Skipped product ref {pp.name}: {e}")
+                if not product_ref_urls:
+                    on_log(
+                        "WARN",
+                        "Product reference upload failed — continuing without locking.",
+                    )
+            else:
+                on_log(
+                    "INFO",
+                    "No product images on disk for this run — locking disabled.",
+                )
+        if should_cancel():
+            on_log("WARN", "Cancelled during product reference upload.")
+            return out_dir
+
         def animate(entry: dict) -> dict:
             idx = entry["index"]
             category = entry.get("category", "")
@@ -1370,7 +1406,8 @@ def run_broll_videos(
                 provider._log("INFO", f"[{label}] rendering Kling clip...")
                 video_url = provider.call_video(
                     model=video_model, prompt=vid_prompt, image_url=ref_url,
-                    duration=duration, aspect_ratio=aspect, sound=sound, label=label,
+                    duration=duration, aspect_ratio=aspect, sound=sound,
+                    product_reference_urls=product_ref_urls, label=label,
                 )
                 file_name = f"broll_{idx:02d}_{category}.mp4"
                 dest = out_dir / file_name
@@ -1402,8 +1439,7 @@ def run_broll_videos(
             "\n\n".join(
                 f"=== broll_{r['index']:02d}_{r.get('category', '')} ===\n{r.get('prompt', '')}"
                 for r in results if r.get("status") == "ok"
-            )
-        )
+            ), encoding="utf-8")
         report = {
             "type": "broll_videos",
             "timestamp": ts,
@@ -1417,11 +1453,13 @@ def run_broll_videos(
                 "provider": provider.name,
                 "video_model": video_model,
                 "sound": bool(sound),
+                "lock_product_reference": bool(lock_product_reference),
+                "product_reference_count": len(product_ref_urls),
                 "llm_model": "claude-sonnet-4-6",
             },
             "results": results,
         }
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"B-roll videos done: {ok}/{len(results)} animated.")
         return out_dir
@@ -1544,8 +1582,7 @@ def run_funnel_ads(
             "\n\n".join(
                 f"=== CREATIVE {i:02d} ===\n{c['metadata']}"
                 for i, c in enumerate(creatives, 1)
-            )
-        )
+            ), encoding="utf-8")
 
         def render_one(idx: int, creative: dict) -> dict:
             prompt = creative["prompt"]
@@ -1624,7 +1661,7 @@ def run_funnel_ads(
             },
             "results": results,
         }
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"Funnel ads done: {ok}/{len(results)} succeeded.")
         return out_dir
@@ -1722,7 +1759,7 @@ def run_twin_generate(
     )
 
     # Persist the prompt for inspection / re-runs.
-    (out_dir / "prompt.txt").write_text(prompt.strip() + "\n")
+    (out_dir / "prompt.txt").write_text(prompt.strip() + "\n", encoding="utf-8")
 
     def render_one(idx: int) -> dict:
         label = f"twin_{idx:02d}"
@@ -1797,10 +1834,877 @@ def run_twin_generate(
             },
             "results": results,
         }
-        (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         ok = sum(1 for r in results if r.get("status") == "ok")
         on_log("OK", f"Twin done: {ok}/{len(results)} succeeded.")
         return out_dir
     except Exception as e:
         on_log("ERR", str(e))
         return out_dir
+
+
+# ─── Swap product pipeline (Seedance v2 video-to-video) ─────────────────────
+#
+# Workflow:
+#   1. ffmpeg extracts up to 4 keyframes from the source video.
+#   2. Compose a vertical strip (2x2 source grid above the user's packshot)
+#      so a single Vision call sees both the ad and the product to inject.
+#   3. Claude Vision writes a swap brief that references the packshot via
+#      `@image1` (Seedance's templating syntax).
+#   4. Upload source video + packshot to MuAPI.
+#   5. Call `seedance-v2.0-video-edit` — preserves source faces / motion /
+#      audio, replaces only the targeted product.
+#   6. Download the output mp4 to the run folder.
+
+_SWAP_KEYFRAME_COUNT = 4         # 2x2 grid for Vision
+_SWAP_DEFAULT_DURATION = 5       # Seedance accepts 4-15
+_SWAP_MAX_VIDEO_BYTES = 10 * 1024 * 1024
+_SWAP_MAX_VIDEO_SECONDS = 15.0
+
+
+def _have_ffmpeg() -> bool:
+    return bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
+def _probe_video(path: Path) -> dict:
+    """Return {duration_sec, width, height} via ffprobe. Raises on failure."""
+    import subprocess
+    proc = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-print_format", "json",
+            "-show_streams", "-show_format", str(path),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {(proc.stderr or '').strip()[-300:]}")
+    data = json.loads(proc.stdout)
+    duration = float(data.get("format", {}).get("duration") or 0.0)
+    w = h = 0
+    for s in data.get("streams", []):
+        if s.get("codec_type") == "video":
+            w = int(s.get("width") or 0)
+            h = int(s.get("height") or 0)
+            break
+    return {"duration_sec": duration, "width": w, "height": h}
+
+
+def _extract_keyframes(video_path: Path, target_dir: Path, n: int) -> list[Path]:
+    """Spread n keyframes evenly between 5% and 95% of the video duration."""
+    import subprocess
+    info = _probe_video(video_path)
+    duration = info["duration_sec"]
+    if duration <= 0:
+        raise RuntimeError(f"Video has zero duration: {video_path.name}")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    margin = duration * 0.05
+    span = max(0.1, duration - 2 * margin)
+    out: list[Path] = []
+    for i in range(n):
+        t = margin + (span * i / max(1, n - 1)) if n > 1 else duration / 2.0
+        kf = target_dir / f"frame_{i:02d}.png"
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", f"{max(0.0, t):.3f}",
+                "-i", str(video_path),
+                "-frames:v", "1",
+                "-q:v", "2",
+                str(kf),
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0 or not kf.exists():
+            raise RuntimeError(
+                f"ffmpeg frame extract @ {t:.2f}s failed: "
+                f"{(proc.stderr or '').strip()[-300:]}"
+            )
+        out.append(kf)
+    return out
+
+
+def _compose_swap_grid(keyframes: list[Path], product: Path, target: Path) -> Path:
+    """Build a 2x2 grid of keyframes stacked above the product packshot.
+
+    All cells normalized to 720x1280 (vertical 9:16) with letterboxing. Final
+    image is 1440x3840 — tall, but fits in a single Claude Vision call.
+    """
+    import subprocess
+    if not keyframes:
+        raise RuntimeError("compose: no keyframes")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    cell_w, cell_h = 720, 1280
+    inputs: list[str] = []
+    # 4 keyframes (pad by repeating last if fewer than 4) + 1 product = 5 inputs.
+    cells = list(keyframes[:4])
+    while len(cells) < 4:
+        cells.append(keyframes[-1])
+    # The product is duplicated to fill the bottom row cleanly (2x3 grid).
+    for img in cells + [product, product]:
+        inputs.extend(["-i", str(img)])
+
+    n_cells = 6  # 2 cols x 3 rows
+    scale_chain = []
+    for i in range(n_cells):
+        scale_chain.append(
+            f"[{i}:v]scale={cell_w}:{cell_h}:force_original_aspect_ratio=decrease,"
+            f"pad={cell_w}:{cell_h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[v{i}]"
+        )
+    full_inputs = "".join(f"[v{i}]" for i in range(n_cells))
+    layout_parts = []
+    for r in range(3):
+        for c in range(2):
+            layout_parts.append(f"{c * cell_w}_{r * cell_h}")
+    layout = "|".join(layout_parts)
+    filter_complex = (
+        ";".join(scale_chain)
+        + f";{full_inputs}xstack=inputs={n_cells}:layout={layout}[out]"
+    )
+    proc = subprocess.run(
+        ["ffmpeg", "-y", *inputs, "-filter_complex", filter_complex,
+         "-map", "[out]", str(target)],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0 or not target.exists():
+        raise RuntimeError(
+            f"ffmpeg grid composition failed: {(proc.stderr or '').strip()[-300:]}"
+        )
+    return target
+
+
+def _swap_aspect_for(width: int, height: int) -> str:
+    """Map the source video shape to one of Seedance's accepted aspects."""
+    if not width or not height:
+        return "9:16"
+    r = width / height
+    if r < 0.7:    return "9:16"
+    if r < 0.95:  return "3:4"
+    if r < 1.1:   return "1:1"
+    if r < 1.5:   return "4:3"
+    return "16:9"
+
+
+def run_swap_analyze(
+    source_video_path: str,
+    product_image_path: str,
+    extra_hint: str,
+    on_log: Callable[[str, str], None],
+    *,
+    output_root: Optional[str] = None,
+    provider_name: Optional[str] = None,
+) -> Optional[dict]:
+    """Phase A: prepare the swap. Extracts keyframes, composes the analysis
+    grid, runs Claude Vision and returns the swap brief.
+
+    Returns a dict {brief, work_dir, source_path, product_path, video_info}
+    so phase B can pick up where we left off without re-extracting frames.
+    Returns None on error.
+    """
+    if not _have_ffmpeg():
+        on_log("ERR", "ffmpeg / ffprobe not found on PATH. Install via `brew install ffmpeg`.")
+        return None
+
+    src = Path(source_video_path).expanduser().resolve()
+    prod = Path(product_image_path).expanduser().resolve()
+    if not src.exists():
+        on_log("ERR", f"Source video not found: {src}"); return None
+    if not prod.exists():
+        on_log("ERR", f"Product image not found: {prod}"); return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    # Probe early so we can warn the user before paying for Vision.
+    try:
+        info = _probe_video(src)
+    except Exception as e:
+        on_log("ERR", str(e)); return None
+
+    duration = info["duration_sec"]
+    size_mb = src.stat().st_size / 1e6
+    on_log(
+        "INFO",
+        f"Source: {src.name} · {duration:.1f}s · {info['width']}x{info['height']} · {size_mb:.1f}MB",
+    )
+    if duration > _SWAP_MAX_VIDEO_SECONDS:
+        on_log("ERR", (
+            f"Source is {duration:.1f}s, Seedance video-edit accepts max "
+            f"{_SWAP_MAX_VIDEO_SECONDS:.0f}s. Trim and retry."
+        ))
+        return None
+    if size_mb * 1e6 > _SWAP_MAX_VIDEO_BYTES:
+        on_log("ERR", (
+            f"Source is {size_mb:.1f}MB, MuAPI's upload cap is "
+            f"{_SWAP_MAX_VIDEO_BYTES/1e6:.0f}MB. Compress and retry."
+        ))
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    label_root = _safe_name(src.stem) or "swap"
+    work_dir = base / f"{ts}_swap_{label_root}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    on_log("INFO", f"Output: {work_dir}")
+
+    try:
+        on_log("INFO", "Extracting keyframes for Vision analysis…")
+        kf_dir = work_dir / "_keyframes"
+        keyframes = _extract_keyframes(src, kf_dir, _SWAP_KEYFRAME_COUNT)
+        on_log("OK", f"{len(keyframes)} keyframes extracted")
+
+        on_log("INFO", "Composing analysis grid (source 2x2 + packshot)…")
+        grid = _compose_swap_grid(keyframes, prod, work_dir / "_grid.png")
+        grid_url = provider.upload_image(grid)
+
+        on_log("INFO", "Claude Vision is writing the swap brief…")
+        brief = _analyze_swap(provider, grid_url, extra_hint=extra_hint)
+        (work_dir / "brief.txt").write_text(brief.strip() + "\n", encoding="utf-8")
+        on_log(
+            "OK",
+            f"Brief ready · {len(brief)} chars · {len(brief.split())} words",
+        )
+        return {
+            "brief": brief,
+            "work_dir": str(work_dir),
+            "source_path": str(src),
+            "product_path": str(prod),
+            "video_info": info,
+        }
+    except Exception as e:
+        on_log("ERR", str(e))
+        return None
+
+
+def run_swap_generate(
+    work_dir: str,
+    source_path: str,
+    product_path: str,
+    brief: str,
+    duration_s: int,
+    on_log: Callable[[str, str], None],
+    *,
+    aspect_ratio: Optional[str] = None,
+    quality: str = "basic",
+    provider_name: Optional[str] = None,
+    video_info: Optional[dict] = None,
+) -> Optional[Path]:
+    """Phase B: upload source + packshot, call Seedance video-edit, save the mp4.
+
+    Returns the output mp4 path, or None on error.
+    """
+    src = Path(source_path)
+    prod = Path(product_path)
+    out_dir = Path(work_dir)
+    if not src.exists() or not prod.exists() or not out_dir.exists():
+        on_log("ERR", "Missing source / product / work folder — re-run analysis.")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    info = video_info or _probe_video(src)
+    aspect = aspect_ratio or _swap_aspect_for(info.get("width", 0), info.get("height", 0))
+
+    try:
+        source_url = provider.upload_video(src)
+        product_url = provider.upload_image(prod)
+
+        on_log("INFO", "Calling Seedance v2.0 video-edit…")
+        out_url = provider.call_swap_video(
+            model="seedance_2",
+            prompt=brief,
+            source_video_url=source_url,
+            product_image_url=product_url,
+            duration=duration_s,
+            aspect_ratio=aspect,
+            quality=quality,
+            label="swap",
+        )
+        dest = out_dir / "swap.mp4"
+        provider.download(out_url, dest)
+        on_log("OK", f"Saved: {dest}")
+
+        # Persist a tiny report for the History page (and future re-runs).
+        report = {
+            "type": "swap_video",
+            "timestamp": out_dir.name.split("_")[0:2],
+            "source_video": str(src),
+            "product_image": str(prod),
+            "brief": brief,
+            "params": {
+                "provider": provider.name,
+                "model": "seedance_2",
+                "endpoint": "seedance-v2.0-video-edit",
+                "duration": int(duration_s),
+                "aspect_ratio": aspect,
+                "quality": quality,
+                "llm_model": "claude-sonnet-4-6",
+            },
+            "results": [{"status": "ok", "file": dest.name, "url": out_url}],
+        }
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return dest
+    except Exception as e:
+        on_log("ERR", str(e))
+        return None
+
+
+# ─── Animation pipeline (multi-shot narrative video) ────────────────────────
+#
+# Architecture: each project lives in its own folder under outputs/, with a
+# `state.json` that tracks progress across the 6 UI panels (brief → scenario
+# → characters → anchor → shots → export). The state file is the source of
+# truth for resume-on-reboot.
+#
+# state.json schema (stable; UI reads/writes it as the single contract):
+# {
+#   "type": "animation",
+#   "version": 1,
+#   "status": "brief|scenario|characters|anchor|shots|done",
+#   "timestamp": "20260508_104614",
+#   "project_name": "...",
+#   "brand": "...",
+#   "image_model": "nano_banana_2",
+#   "video_model": "kling_3_std",
+#   "aspect_ratio": "9:16",
+#   "default_duration": 4,
+#   "brief_text": "...",
+#   "product": {"name": "...", "image": "/abs/path"},
+#   "style_refs": ["/abs/path", ...],
+#   "scenario": { ... output of parse_animation_brief ... },
+#   "characters": {
+#       "<id>": {
+#         "id": "...", "description": "...", "prompt": "...",
+#         "image": "characters/<id>.png", "status": "draft|approved|failed"
+#       }
+#   },
+#   "shots": {
+#       "<id>": {
+#         "id": 1, "duration": 3, "description": "...", "characters": [...],
+#         "shows_product": true, "image_prompt": "...", "video_prompt": "...",
+#         "image_status": "pending|generating|review|approved|failed",
+#         "video_status": "pending|generating|review|approved|failed",
+#         "image_file": "shots/shot_001.png",
+#         "video_file": "shots/shot_001.mp4",
+#         "image_error": "...", "video_error": "..."
+#       }
+#   }
+# }
+
+
+ANIMATION_DEFAULT_DURATION = 4
+ANIMATION_DURATION_MIN = 3
+ANIMATION_DURATION_MAX = 10
+ANIMATION_ASPECTS = ["9:16", "1:1", "16:9", "4:5"]
+
+
+def _animation_root() -> Path:
+    return get_output_dir()
+
+
+def _new_animation_dir(project_name: str) -> tuple[Path, str]:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = _safe_name(project_name) or "animation"
+    out_dir = _animation_root() / f"{ts}_animation_{slug}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "characters").mkdir(exist_ok=True)
+    (out_dir / "shots").mkdir(exist_ok=True)
+    return out_dir, ts
+
+
+def load_animation_state(project_dir: Path) -> dict:
+    state_path = Path(project_dir) / "state.json"
+    if not state_path.exists():
+        return {}
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_animation_state(project_dir: Path, state: dict) -> None:
+    state_path = Path(project_dir) / "state.json"
+    state_path.write_text(
+        json.dumps(state, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def list_animation_projects(root: Optional[Path] = None) -> list[dict]:
+    """List all animation projects sorted by most recent. Each entry has
+    `dir`, `state` (the loaded dict), and `mtime`."""
+    root = root or _animation_root()
+    if not root.exists():
+        return []
+    out: list[dict] = []
+    for d in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+        if not d.is_dir() or "_animation_" not in d.name:
+            continue
+        state = load_animation_state(d)
+        if not state or state.get("type") != "animation":
+            continue
+        out.append({"dir": d, "state": state, "mtime": d.stat().st_mtime})
+    return out
+
+
+def latest_unfinished_animation() -> Optional[dict]:
+    """Returns the most recent animation project where status != 'done',
+    or None. Used by the AnimationPage to offer a resume button."""
+    for entry in list_animation_projects():
+        if (entry["state"].get("status") or "") != "done":
+            return entry
+    return None
+
+
+def _round_duration(value) -> int:
+    try:
+        d = int(round(float(value)))
+    except Exception:
+        d = ANIMATION_DEFAULT_DURATION
+    return max(ANIMATION_DURATION_MIN, min(ANIMATION_DURATION_MAX, d))
+
+
+def create_animation_project(
+    *,
+    project_name: str,
+    brand_name: str,
+    brief_text: str,
+    image_model: str,
+    video_model: str,
+    aspect_ratio: str,
+    product_name: str = "",
+    product_image: Optional[str] = None,
+    style_refs: Optional[list[str]] = None,
+    default_duration: int = ANIMATION_DEFAULT_DURATION,
+) -> Path:
+    """Create a fresh project on disk with status='brief'. Copies the product
+    and style-ref images into the project folder so the run is self-contained
+    (and resumable even if the original files are moved)."""
+    if not project_name.strip():
+        raise ValueError("Project name is required.")
+    if image_model not in IMAGE_MODELS:
+        raise ValueError(f"Unknown image model: {image_model!r}")
+    if video_model not in VIDEO_MODELS:
+        raise ValueError(f"Unknown video model: {video_model!r}")
+
+    out_dir, ts = _new_animation_dir(project_name)
+    refs_dir = out_dir / "refs"
+    refs_dir.mkdir(exist_ok=True)
+
+    saved_product: dict = {"name": product_name.strip(), "image": ""}
+    if product_image and Path(product_image).exists():
+        src = Path(product_image)
+        dst = refs_dir / f"product{src.suffix.lower() or '.png'}"
+        try:
+            shutil.copy2(src, dst)
+            saved_product["image"] = str(dst)
+        except Exception:
+            pass
+
+    saved_refs: list[str] = []
+    for i, p in enumerate(style_refs or [], 1):
+        sp = Path(p)
+        if not sp.exists():
+            continue
+        dp = refs_dir / f"style_{i:02d}{sp.suffix.lower() or '.png'}"
+        try:
+            shutil.copy2(sp, dp)
+            saved_refs.append(str(dp))
+        except Exception:
+            pass
+
+    state = {
+        "type": "animation",
+        "version": 1,
+        "status": "brief",
+        "timestamp": ts,
+        "project_name": project_name.strip(),
+        "brand": brand_name,
+        "image_model": image_model,
+        "video_model": video_model,
+        "aspect_ratio": aspect_ratio,
+        "default_duration": _round_duration(default_duration),
+        "brief_text": brief_text,
+        "product": saved_product,
+        "style_refs": saved_refs,
+        "scenario": {},
+        "characters": {},
+        "shots": {},
+    }
+    save_animation_state(out_dir, state)
+    return out_dir
+
+
+def run_animation_parse(
+    project_dir: Path,
+    on_log: Callable[[str, str], None],
+    *,
+    provider_name: Optional[str] = None,
+) -> dict:
+    """Step 1: parse the brief into a structured scenario via Claude.
+    Mutates state.json: sets status='scenario', scenario={...},
+    seeds characters{} and shots{} skeletons. Returns the new state."""
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    if not state:
+        raise ValueError(f"No state.json in {project_dir}")
+    brand = load_brands().get(state.get("brand", "")) or {}
+    brand_dna = brand.get("dna", "")
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        raise RuntimeError(f"{provider.display_name} key not set.")
+
+    on_log("INFO", f"Provider: {provider.display_name} · Model: claude-sonnet-4-6 (or Opus via Anthropic direct)")
+    scenario = _parse_animation_brief(
+        provider,
+        brief_text=state.get("brief_text", ""),
+        brand_dna=brand_dna,
+        aspect_ratio=state.get("aspect_ratio", "9:16"),
+        product_name=(state.get("product") or {}).get("name", ""),
+    )
+
+    # Seed characters/shots from scenario.
+    characters: dict = {}
+    for c in scenario.get("characters") or []:
+        cid = (c.get("id") or "").strip()
+        if not cid:
+            continue
+        characters[cid] = {
+            "id": cid,
+            "description": c.get("description", ""),
+            "prompt": "",
+            "image": "",
+            "status": "draft",
+        }
+    shots: dict = {}
+    for s in scenario.get("shots") or []:
+        sid = int(s.get("id"))
+        shots[str(sid)] = {
+            "id": sid,
+            "duration": _round_duration(s.get("duration", state.get("default_duration", 4))),
+            "description": s.get("description", ""),
+            "characters": [c for c in (s.get("characters") or []) if isinstance(c, str)],
+            "shows_product": bool(s.get("shows_product", False)),
+            "image_prompt": s.get("image_prompt", ""),
+            "video_prompt": s.get("video_prompt", ""),
+            "image_status": "pending",
+            "video_status": "pending",
+            "image_file": "",
+            "video_file": "",
+        }
+
+    state["scenario"] = scenario
+    state["characters"] = characters
+    state["shots"] = shots
+    state["status"] = "scenario"
+    save_animation_state(project_dir, state)
+    on_log("OK", f"Scenario parsed · {len(shots)} shots · {len(characters)} character(s)")
+    return state
+
+
+def run_animation_character(
+    project_dir: Path,
+    character_id: str,
+    on_log: Callable[[str, str], None],
+    *,
+    provider_name: Optional[str] = None,
+    image_model: Optional[str] = None,
+    resolution: str = "1k",
+) -> dict:
+    """Step 2: generate (or regenerate) a single character portrait.
+    Mutates state.characters[id] with image path + status."""
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    if not state:
+        raise ValueError(f"No state.json in {project_dir}")
+    char = state.get("characters", {}).get(character_id)
+    if not char:
+        raise ValueError(f"Character {character_id!r} not in scenario.")
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        raise RuntimeError(f"{provider.display_name} key not set.")
+    img_model = image_model or state.get("image_model", DEFAULT_IMAGE_MODEL)
+    aspect = state.get("aspect_ratio", "9:16")
+    style = (state.get("scenario") or {}).get("style", "")
+
+    label = f"char-{character_id}"
+    on_log("INFO", f"[{label}] generating portrait prompt...")
+    prompt = _gen_anim_char_prompt(
+        provider,
+        description=char.get("description", ""),
+        style=style,
+        aspect_ratio=aspect,
+    )
+    char["prompt"] = prompt
+    char["status"] = "generating"
+    save_animation_state(project_dir, state)
+
+    try:
+        on_log("INFO", f"[{label}] rendering portrait via {IMAGE_MODEL_LABELS.get(img_model, img_model)}...")
+        # Use text-to-image when supported; fall back to call_image with no
+        # input refs if the provider doesn't expose a separate t2i route.
+        img_url = None
+        if hasattr(provider, "call_image_t2i"):
+            try:
+                img_url = provider.call_image_t2i(
+                    model=img_model, prompt=prompt,
+                    resolution=resolution, aspect_ratio=aspect,
+                    output_format="png", label=label,
+                )
+            except Exception as e:
+                provider._log("WARN", f"[{label}] t2i failed ({e}); falling back to call_image with empty refs")
+        if img_url is None:
+            img_url = provider.call_image(
+                model=img_model, prompt=prompt, image_urls=[],
+                resolution=resolution, aspect_ratio=aspect, label=label,
+            )
+        dest = project_dir / "characters" / f"{character_id}.png"
+        provider.download(img_url, dest)
+        char["image"] = str(dest.relative_to(project_dir))
+        char["status"] = "draft"
+        on_log("OK", f"[{label}] saved {dest.name}")
+    except Exception as e:
+        char["status"] = "failed"
+        char["error"] = str(e)
+        on_log("ERR", f"[{label}] {e}")
+    save_animation_state(project_dir, state)
+    return state
+
+
+def approve_animation_character(project_dir: Path, character_id: str) -> dict:
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    char = (state.get("characters") or {}).get(character_id)
+    if not char:
+        raise ValueError(f"Character {character_id!r} not found.")
+    char["status"] = "approved"
+    # Promote project status if all characters approved.
+    chars = state.get("characters") or {}
+    if chars and all((c.get("status") == "approved") for c in chars.values()):
+        state["status"] = "characters"
+    save_animation_state(project_dir, state)
+    return state
+
+
+def run_animation_shot_image(
+    project_dir: Path,
+    shot_id: int,
+    on_log: Callable[[str, str], None],
+    *,
+    provider_name: Optional[str] = None,
+    use_anchor: bool = True,
+    resolution: str = "1k",
+) -> dict:
+    """Step 3 (anchor) and step 4 (other shots): generate one shot's image.
+
+    For shot 1 (the anchor), we don't pass any anchor_image — the result IS
+    the anchor. For shots 2..N, we pass shot 1's approved image as a style
+    reference (`use_anchor=True`).
+    """
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    if not state:
+        raise ValueError(f"No state.json in {project_dir}")
+    shots = state.get("shots") or {}
+    shot = shots.get(str(shot_id))
+    if not shot:
+        raise ValueError(f"Shot {shot_id} not in scenario.")
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        raise RuntimeError(f"{provider.display_name} key not set.")
+    img_model = state.get("image_model", DEFAULT_IMAGE_MODEL)
+    aspect = state.get("aspect_ratio", "9:16")
+    style = (state.get("scenario") or {}).get("style", "")
+
+    # Build the list of input reference images (in order: anchor, characters,
+    # product). The model receives them as `image_urls` (NB2/NB Pro accept up
+    # to 8, GPT Image 2 up to 16).
+    refs: list[Path] = []
+    is_anchor_shot = (shot_id == 1)
+    if use_anchor and not is_anchor_shot:
+        anchor = shots.get("1") or {}
+        anchor_path = project_dir / anchor.get("image_file", "") if anchor.get("image_file") else None
+        if anchor_path and anchor_path.exists():
+            refs.append(anchor_path)
+    for cid in (shot.get("characters") or []):
+        c = (state.get("characters") or {}).get(cid)
+        if not c:
+            continue
+        cp = project_dir / c.get("image", "") if c.get("image") else None
+        if cp and cp.exists():
+            refs.append(cp)
+    if shot.get("shows_product"):
+        prod = (state.get("product") or {}).get("image", "")
+        if prod and Path(prod).exists():
+            refs.append(Path(prod))
+
+    label = f"shot_{shot_id:03d}"
+    on_log("INFO", f"[{label}] refining image prompt with {len(refs)} reference(s)...")
+    refined_prompt = _refine_anim_img(
+        provider,
+        draft_image_prompt=shot.get("image_prompt", ""),
+        style=style,
+        aspect_ratio=aspect,
+        character_ids=shot.get("characters") or [],
+        shows_product=bool(shot.get("shows_product")),
+        has_anchor=(use_anchor and not is_anchor_shot and len([r for r in refs]) > 0
+                    and (not is_anchor_shot)),
+    )
+    shot["image_prompt"] = refined_prompt
+    shot["image_status"] = "generating"
+    save_animation_state(project_dir, state)
+
+    try:
+        # Upload refs.
+        ref_urls: list[str] = []
+        for p in refs:
+            try:
+                ref_urls.append(provider.upload_image(p))
+            except Exception as e:
+                provider._log("WARN", f"[{label}] skipped ref {p.name}: {e}")
+
+        on_log("INFO", f"[{label}] rendering image via {IMAGE_MODEL_LABELS.get(img_model, img_model)}...")
+        if ref_urls:
+            img_url = provider.call_image(
+                model=img_model, prompt=refined_prompt, image_urls=ref_urls,
+                resolution=resolution, aspect_ratio=aspect, label=label,
+            )
+        else:
+            # Anchor shot 1 with no references: text-to-image when available.
+            if hasattr(provider, "call_image_t2i"):
+                img_url = provider.call_image_t2i(
+                    model=img_model, prompt=refined_prompt,
+                    resolution=resolution, aspect_ratio=aspect,
+                    output_format="png", label=label,
+                )
+            else:
+                img_url = provider.call_image(
+                    model=img_model, prompt=refined_prompt, image_urls=[],
+                    resolution=resolution, aspect_ratio=aspect, label=label,
+                )
+
+        dest = project_dir / "shots" / f"shot_{shot_id:03d}.png"
+        provider.download(img_url, dest)
+        shot["image_file"] = str(dest.relative_to(project_dir))
+        shot["image_status"] = "review"
+        on_log("OK", f"[{label}] saved {dest.name}")
+    except Exception as e:
+        shot["image_status"] = "failed"
+        shot["image_error"] = str(e)
+        on_log("ERR", f"[{label}] {e}")
+    save_animation_state(project_dir, state)
+    return state
+
+
+def approve_animation_shot_image(project_dir: Path, shot_id: int) -> dict:
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    shot = (state.get("shots") or {}).get(str(shot_id))
+    if not shot:
+        raise ValueError(f"Shot {shot_id} not found.")
+    shot["image_status"] = "approved"
+    # If this is shot 1 and we were on 'characters' status, promote to anchor approved.
+    if shot_id == 1 and state.get("status") in ("characters", "anchor"):
+        state["status"] = "anchor"
+    save_animation_state(project_dir, state)
+    return state
+
+
+def run_animation_shot_video(
+    project_dir: Path,
+    shot_id: int,
+    on_log: Callable[[str, str], None],
+    *,
+    provider_name: Optional[str] = None,
+) -> dict:
+    """Step 5: generate one shot's video clip via Kling 3 / Seedance 2.
+    The shot's image must be approved first."""
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    if not state:
+        raise ValueError(f"No state.json in {project_dir}")
+    shot = (state.get("shots") or {}).get(str(shot_id))
+    if not shot:
+        raise ValueError(f"Shot {shot_id} not found.")
+    if shot.get("image_status") != "approved":
+        raise ValueError(f"Shot {shot_id}: image not approved yet.")
+    img_path = project_dir / shot.get("image_file", "")
+    if not img_path.exists():
+        raise ValueError(f"Shot {shot_id}: image file missing on disk.")
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        raise RuntimeError(f"{provider.display_name} key not set.")
+    video_model = state.get("video_model", DEFAULT_VIDEO_MODEL)
+    aspect = state.get("aspect_ratio", "9:16")
+    duration = _round_duration(shot.get("duration", ANIMATION_DEFAULT_DURATION))
+
+    label = f"shot_{shot_id:03d}_v"
+    on_log("INFO", f"[{label}] refining video prompt...")
+    refined_prompt = _refine_anim_vid(
+        provider,
+        draft_video_prompt=shot.get("video_prompt", ""),
+        description=shot.get("description", ""),
+        duration=duration,
+        aspect_ratio=aspect,
+        shows_product=bool(shot.get("shows_product")),
+    )
+    shot["video_prompt"] = refined_prompt
+    shot["video_status"] = "generating"
+    save_animation_state(project_dir, state)
+
+    try:
+        on_log("INFO", f"[{label}] uploading frame...")
+        ref_url = provider.upload_image(img_path)
+        on_log("INFO", f"[{label}] rendering {duration}s clip via {VIDEO_MODEL_LABELS.get(video_model, video_model)}...")
+
+        # Product reference locking (Kling only). Pass product image if present.
+        prod_refs: list[str] = []
+        prod_path = (state.get("product") or {}).get("image", "")
+        if shot.get("shows_product") and prod_path and Path(prod_path).exists():
+            try:
+                prod_refs.append(provider.upload_image(Path(prod_path)))
+            except Exception as e:
+                provider._log("WARN", f"[{label}] product ref upload failed: {e}")
+
+        video_url = provider.call_video(
+            model=video_model, prompt=refined_prompt, image_url=ref_url,
+            duration=duration, aspect_ratio=aspect, sound=False,
+            product_reference_urls=prod_refs, label=label,
+        )
+        dest = project_dir / "shots" / f"shot_{shot_id:03d}.mp4"
+        provider.download(video_url, dest)
+        shot["video_file"] = str(dest.relative_to(project_dir))
+        shot["video_status"] = "approved"
+        on_log("OK", f"[{label}] saved {dest.name}")
+    except Exception as e:
+        shot["video_status"] = "failed"
+        shot["video_error"] = str(e)
+        on_log("ERR", f"[{label}] {e}")
+    save_animation_state(project_dir, state)
+    return state
+
+
+def finalize_animation_project(project_dir: Path) -> dict:
+    """Promote status to 'done' if all shots have an approved video."""
+    project_dir = Path(project_dir)
+    state = load_animation_state(project_dir)
+    shots = state.get("shots") or {}
+    if shots and all(s.get("video_status") == "approved" for s in shots.values()):
+        state["status"] = "done"
+        save_animation_state(project_dir, state)
+    return state

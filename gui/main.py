@@ -9,9 +9,10 @@ from PySide6.QtWidgets import (
 from . import core
 from . import theme as t
 from .pages import (
-    AdaptPage, BatchFixPage, BrandsPage, BRollPage, DashboardPage, FunnelAdsPage,
-    GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinPage
+    AdaptPage, AnimationPage, BatchFixPage, BrandsPage, BRollPage, DashboardPage,
+    FunnelAdsPage, GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinPage
 )
+from .swap_page import SwapPage
 from .widgets import icon_label, svg_icon, ICONS
 
 
@@ -93,8 +94,10 @@ class Sidebar(QWidget):
         # Primary nav
         for key, icon, label in [
             ("dashboard", "dashboard", "Dashboard"),
+            ("animation", "animation", "Animation"),
             ("funnel", "funnel", "Funnel Ads"),
             ("twin", "twin", "Twin"),
+            ("swap", "adapt", "Swap product"),
             ("generate", "generate", "Generate"),
             ("adapt", "adapt", "Adapt"),
             ("fix", "wrench", "Fix"),
@@ -216,16 +219,18 @@ class TopBar(QWidget):
         lay.addWidget(self.new_btn)
 
     _ICON_MAP = {
-        "Dashboard":  "dashboard",
-        "Funnel Ads": "funnel",
-        "Twin":       "twin",
-        "Generate":   "generate",
-        "Adapt":      "adapt",
-        "Fix":        "wrench",
-        "B-Roll":     "broll",
-        "History":    "history",
-        "Brands":     "brand",
-        "Settings":   "settings",
+        "Dashboard":    "dashboard",
+        "Animation":    "animation",
+        "Funnel Ads":   "funnel",
+        "Twin":         "twin",
+        "Swap product": "adapt",
+        "Generate":     "generate",
+        "Adapt":        "adapt",
+        "Fix":          "wrench",
+        "B-Roll":       "broll",
+        "History":      "history",
+        "Brands":       "brand",
+        "Settings":     "settings",
     }
 
     def set_crumb(self, page: str):
@@ -255,8 +260,10 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.dashboard = DashboardPage()
+        self.animation = AnimationPage()
         self.funnel = FunnelAdsPage()
         self.twin = TwinPage()
+        self.swap = SwapPage()
         self.generate = GeneratePage()
         self.adapt = AdaptPage()
         self.fix = BatchFixPage()
@@ -265,7 +272,7 @@ class MainWindow(QMainWindow):
         self.brands = BrandsPage()
         self.detail = RunDetailPage()
         self.settings = SettingsPage()
-        for p in (self.dashboard, self.funnel, self.twin, self.generate, self.adapt, self.fix, self.broll,
+        for p in (self.dashboard, self.animation, self.funnel, self.twin, self.swap, self.generate, self.adapt, self.fix, self.broll,
                   self.history, self.brands, self.detail, self.settings):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
@@ -288,6 +295,7 @@ class MainWindow(QMainWindow):
         self.adapt.open_brands.connect(lambda: self._on_nav("brands"))
         self.broll.open_brands.connect(lambda: self._on_nav("brands"))
         self.funnel.open_brands.connect(lambda: self._on_nav("brands"))
+        self.animation.open_brands.connect(lambda: self._on_nav("brands"))
         self.settings.provider_changed.connect(self._on_provider_changed)
 
         self._on_nav("dashboard")
@@ -303,8 +311,10 @@ class MainWindow(QMainWindow):
     def _on_nav(self, key: str):
         mapping = {
             "dashboard": (self.dashboard, "Dashboard"),
+            "animation": (self.animation, "Animation"),
             "funnel":    (self.funnel,    "Funnel Ads"),
             "twin":      (self.twin,      "Twin"),
+            "swap":      (self.swap,      "Swap product"),
             "generate":  (self.generate,  "Generate"),
             "adapt":     (self.adapt,     "Adapt"),
             "fix":       (self.fix,       "Fix"),
@@ -328,6 +338,8 @@ class MainWindow(QMainWindow):
             self.broll.refresh_brands()
         if page is self.funnel:
             self.funnel.refresh_brands()
+        if page is self.animation:
+            self.animation.refresh_brands()
         self.stack.setCurrentWidget(page)
         self.sidebar.set_active(key)
         self.topbar.set_crumb(crumb)

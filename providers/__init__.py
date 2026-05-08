@@ -46,10 +46,11 @@ IMAGE_MODEL_LABELS = {
 }
 IMAGE_MODEL_CHOICES = [(m, IMAGE_MODEL_LABELS[m]) for m in IMAGE_MODELS]
 
-VIDEO_MODELS = ["kling_3_std", "kling_3_pro"]
+VIDEO_MODELS = ["kling_3_std", "kling_3_pro", "seedance_2"]
 VIDEO_MODEL_LABELS = {
     "kling_3_std": "Kling 3.0 Standard",
     "kling_3_pro": "Kling 3.0 Pro",
+    "seedance_2":  "Seedance 2.0",
 }
 VIDEO_MODEL_CHOICES = [(m, VIDEO_MODEL_LABELS[m]) for m in VIDEO_MODELS]
 
@@ -77,8 +78,10 @@ def cost_per_image(provider: str, model: str, resolution: str) -> float:
 COST_PER_VIDEO_SECOND: dict[tuple[str, str], float] = {
     ("muapi", "kling_3_std"): 0.06,
     ("muapi", "kling_3_pro"): 0.18,
+    ("muapi", "seedance_2"):  0.06,
     ("kie",   "kling_3_std"): 0.04,
     ("kie",   "kling_3_pro"): 0.14,
+    ("kie",   "seedance_2"):  0.05,
 }
 
 

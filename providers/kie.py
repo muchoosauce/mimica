@@ -367,6 +367,7 @@ class KieProvider(Provider):
         duration: int = 5,
         aspect_ratio: str = "9:16",
         sound: bool = False,
+        product_reference_urls: list[str] = (),
         label: str = "video",
     ) -> str:
         slug = _VIDEO_SLUGS.get(model)
@@ -379,10 +380,35 @@ class KieProvider(Provider):
             "duration": str(duration),
             "aspect_ratio": aspect_ratio,
             "mode": mode,
-            "sound": bool(sound),
             "multi_shots": False,
         }
+        # Only send `sound` when explicitly enabled — leave the upstream
+        # default (silent) in place otherwise.
+        if sound:
+            input_payload["sound"] = True
         self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
+
+        # Product reference locking via Kling's `kling_elements`. The element
+        # gives Kling a 2-4 image anchor for the product so logos, labels and
+        # printed text stay pixel-stable through the clip. We append `@product`
+        # to the prompt so Kling actually pulls the element into the result.
+        refs = list(product_reference_urls or [])
+        if refs:
+            if len(refs) == 1:
+                refs = refs * 2  # API requires 2-4 — duplicate the lone ref.
+            elif len(refs) > 4:
+                refs = refs[:4]
+            input_payload["kling_elements"] = [{
+                "name": "product",
+                "description": (
+                    "the product with all its visible packaging, logo, "
+                    "label text and printed characters preserved exactly"
+                ),
+                "element_input_urls": refs,
+            }]
+            if "@product" not in input_payload["prompt"]:
+                input_payload["prompt"] = input_payload["prompt"].rstrip() + " @product"
+            self._log("INFO", f"[{label}] product reference locking: on ({len(refs)} ref{'s' if len(refs) > 1 else ''})")
         try:
             task_id = self._create_task(slug, input_payload, label)
             record = self._poll_task(task_id, label)
