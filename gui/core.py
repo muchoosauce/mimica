@@ -52,17 +52,96 @@ def _is_frozen() -> bool:
     return getattr(sys, "frozen", False)
 
 
-def _user_data_dir() -> Path:
-    """Where to store .env, brands.json, brand images, default outputs.
+def _legacy_data_roots() -> list[Path]:
+    """Candidate folders that may hold pre-migration user data.
 
-    Frozen (.app inside /Applications): ~/Library/Application Support/Ad Variator
-    Source mode: project root (so dev is unchanged).
+    `_here` is always checked first. If we're running from a git worktree under
+    `<repo>/.claude/worktrees/<name>`, also check the parent repo so a launch
+    from a worktree still surfaces the user's real brands.
     """
-    if _is_frozen():
-        d = Path.home() / "Library" / "Application Support" / "Ad Variator"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    return _here
+    roots = [_here]
+    parts = _here.parts
+    if ".claude" in parts:
+        i = parts.index(".claude")
+        if i + 1 < len(parts) and parts[i + 1] == "worktrees" and i > 0:
+            roots.append(Path(*parts[:i]))
+    return roots
+
+
+def _migrate_legacy_user_data(target: Path) -> None:
+    """One-time copy/merge of brands.json / brands images / .env from legacy
+    project-root locations to ~/Library/Application Support/Ad Variator.
+
+    Before, source-mode runs stored user data inside the project folder, so
+    every fresh clone or worktree appeared to "wipe" brands. The fix is a
+    single canonical location. Brands are merged across legacy roots — names
+    already present in the target win; brand-only-in-legacy is recovered.
+    Images and .env are copied non-destructively (target wins on conflict).
+    """
+    # brands.json — merge legacy entries into target without overwriting
+    target_file = target / "brands.json"
+    try:
+        merged: dict = {}
+        if target_file.exists():
+            merged.update(json.loads(target_file.read_text()))
+        added = False
+        for legacy in _legacy_data_roots():
+            src = legacy / "brands.json"
+            if not src.exists():
+                continue
+            try:
+                data = json.loads(src.read_text())
+            except Exception:
+                continue
+            for name, brand in data.items():
+                if name not in merged:
+                    merged[name] = brand
+                    added = True
+        if added or (merged and not target_file.exists()):
+            target_file.write_text(json.dumps(merged, indent=2))
+    except Exception:
+        pass
+
+    # brand images — copy any legacy file whose filename isn't already there
+    target_imgs = target / "brands" / "images"
+    target_imgs.mkdir(parents=True, exist_ok=True)
+    existing = {p.name for p in target_imgs.iterdir()} if target_imgs.exists() else set()
+    for legacy in _legacy_data_roots():
+        src_imgs = legacy / "brands" / "images"
+        if not src_imgs.exists():
+            continue
+        for src in src_imgs.iterdir():
+            if src.is_file() and src.name not in existing:
+                try:
+                    shutil.copy2(src, target_imgs / src.name)
+                    existing.add(src.name)
+                except Exception:
+                    pass
+
+    # .env — only copy when target has none (don't clobber API keys)
+    target_env = target / ".env"
+    if not target_env.exists():
+        for legacy in _legacy_data_roots():
+            src = legacy / ".env"
+            if src.exists():
+                try:
+                    shutil.copy2(src, target_env)
+                    break
+                except Exception:
+                    pass
+
+
+def _user_data_dir() -> Path:
+    """Single canonical location for .env, brands.json, brand images.
+
+    Always ~/Library/Application Support/Ad Variator — same location whether
+    launched from a worktree, a fresh clone, or the frozen .app. This prevents
+    "lost" brands when running the app from a different checkout.
+    """
+    d = Path.home() / "Library" / "Application Support" / "Ad Variator"
+    d.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_user_data(d)
+    return d
 
 
 USER_DATA_DIR = _user_data_dir()
@@ -1073,12 +1152,13 @@ def run_batch_fix(
 # ─── B-Roll pipeline ────────────────────────────────────────────────────────
 
 DEFAULT_VIDEO_MODEL = "kling_3_std"
-BROLL_CATEGORIES = ["usage", "presentation", "ecu", "in_action"]
+BROLL_CATEGORIES = ["usage", "presentation", "ecu", "in_action", "selfie"]
 BROLL_CATEGORY_LABELS = {
     "usage": "USAGE",
     "presentation": "PRESENTATION",
     "ecu": "ECU",
     "in_action": "IN-ACTION",
+    "selfie": "SELFIE",
 }
 
 

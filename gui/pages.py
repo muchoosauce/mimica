@@ -3067,7 +3067,9 @@ class BRollPage(QWidget):
         self.specs = QTextEdit()
         self.specs.setPlaceholderText(
             "Optional notes on top of the Brand DNA: creator profile (skin tone, age, "
-            "style, clothing), location, mood directives, anything to avoid…"
+            "style, clothing), location, mood directives, anything to avoid… "
+            "For SELFIE shots, describe the person in detail (face, age, ethnicity, "
+            "hair, outfit, accessories, vibe) — they will be visible holding the product."
         )
         self.specs.setMinimumHeight(96); self.specs.setMaximumHeight(140)
         form.addWidget(self.specs)
@@ -3079,7 +3081,9 @@ class BRollPage(QWidget):
         self.cnt_pres = self._count_spinner("PRESENTATION", 2)
         self.cnt_ecu = self._count_spinner("ECU", 2)
         self.cnt_inact = self._count_spinner("IN-ACTION", 2)
-        for col in (self.cnt_usage, self.cnt_pres, self.cnt_ecu, self.cnt_inact):
+        self.cnt_selfie = self._count_spinner("SELFIE", 0)
+        for col in (self.cnt_usage, self.cnt_pres, self.cnt_ecu,
+                    self.cnt_inact, self.cnt_selfie):
             cnt_row.addLayout(col["layout"], 1)
         form.addLayout(cnt_row)
 
@@ -3137,7 +3141,8 @@ class BRollPage(QWidget):
         form.addWidget(self.cost_label)
         self._update_cost()
         for s in (self.cnt_usage["spin"], self.cnt_pres["spin"],
-                  self.cnt_ecu["spin"], self.cnt_inact["spin"]):
+                  self.cnt_ecu["spin"], self.cnt_inact["spin"],
+                  self.cnt_selfie["spin"]):
             s.valueChanged.connect(self._update_cost)
         self.res.currentTextChanged.connect(self._update_cost)
         self.image_model.currentIndexChanged.connect(self._update_cost)
@@ -3340,6 +3345,7 @@ class BRollPage(QWidget):
             "presentation": self.cnt_pres["spin"].value(),
             "ecu": self.cnt_ecu["spin"].value(),
             "in_action": self.cnt_inact["spin"].value(),
+            "selfie": self.cnt_selfie["spin"].value(),
         }
 
     def _update_cost(self):

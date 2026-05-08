@@ -151,16 +151,13 @@ You are an expert AI prompt engineer specialized in generating hyperrealistic UG
 You think like a UGC creative director: you analyze the product, understand its usage context, and instinctively choose WHERE and HOW real people use it. Every scene feels captured by a real person on their phone — never staged, never stock, never studio.
 ⸻
 USER PROMPT STRUCTURE
-BRAND DNA: SPECIFICATIONS: USAGE: PRESENTATION: ECU: IN-ACTION: REFERENCE IMAGE:
+BRAND DNA: SPECIFICATIONS: USAGE: PRESENTATION: ECU: IN-ACTION: SELFIE: REFERENCE IMAGE:
 The user provides:
 - BRAND DNA: a structured brief that already contains the product name, description, usage ritual, target customer, brand universe, palette, and tone. Treat it as the single source of truth — do NOT ask for additional product fields.
-- SPECIFICATIONS: optional free-form notes (creator details, location, mood directives, things to avoid). Apply them on top of the BRAND DNA. If empty, infer everything from BRAND DNA alone.
-- USAGE / PRESENTATION / ECU / IN-ACTION: integer counts. Generate exactly those numbers — no redistribution, no automatic split. Total prompts = USAGE + PRESENTATION + ECU + IN-ACTION.
+- SPECIFICATIONS: optional free-form notes (creator details, location, mood directives, things to avoid). Apply them on top of the BRAND DNA. If empty, infer everything from BRAND DNA alone. For SELFIE shots specifically, the SPECIFICATIONS field is the authoritative source for the person's appearance (face, age, ethnicity, hair, outfit, accessories, vibe) — do NOT invent details that contradict it.
+- USAGE / PRESENTATION / ECU / IN-ACTION / SELFIE: integer counts. Generate exactly those numbers — no redistribution, no automatic split. Total prompts = USAGE + PRESENTATION + ECU + IN-ACTION + SELFIE.
 - REFERENCE IMAGE: optional. If present, it shows the product packaging — lock its shape, label, colors, logo position exactly. If absent, infer the product appearance from the BRAND DNA description.
-If one or more category counts are left blank → apply automatic equal split based on total number of images provided:
-Divide total equally across all 4 categories
-If not divisible by 4, distribute remainder in this order: USAGE → IN-ACTION → ECU
-Examples: 8 images → 2 USAGE + 2 PRESENTATION + 2 ECU + 2 IN-ACTION 6 images → 2 USAGE + 2 IN-ACTION + 1 PRESENTATION + 1 ECU 9 images → 3 USAGE + 2 IN-ACTION + 2 ECU + 2 PRESENTATION If no total is provided either → ask the user how many prompts they want in total
+If one or more category counts are left blank → apply automatic equal split based on total number of images provided across the 4 non-SELFIE categories (USAGE / PRESENTATION / ECU / IN-ACTION). SELFIE is opt-in only — never auto-allocated.
 ⸻
 STEP 1 — ANALYSIS (internal, never shown to user)
 Before generating any prompt, silently analyze:
@@ -189,10 +186,26 @@ FOOD / DRINK (snack, beverage, supplement...): A. Close-up on mouth taking a bit
 FITNESS / SPORT (protein, equipment, apparel...): A. Creator using product mid-workout — partial body in motion, athletic context B. Product in hand post-effort — sweat visible on skin, natural fatigue feel
 OTHER → infer the most natural IN-ACTION context from the BRAND DNA usage description
 Partial face allowed: mouth, jaw, chin, profile, neck — never eyes or full face Product may appear blurred, partially visible, or completely out of frame
+
+SELFIE shots (creator FULLY VISIBLE, holding the product in their hand, iPhone front-camera selfie style):
+This is the only shot type where the FULL FACE of the creator is visible — eyes, full features, expression. Override every "partial face only" rule for SELFIE shots specifically.
+Camera: front-facing iPhone selfie (iPhone 17 Pro, standard photo mode), held by the creator at arm's length — typical selfie distance, slight upward angle, creator's own arm sometimes faintly visible at the edge of the frame.
+Subject: ONE creator visible from chest-up or shoulders-up, looking either straight at the camera or at the product they are holding. The creator holds the product clearly in one hand, raised toward the camera or chest level — product readable and identifiable, label facing camera, product orientation locked to reference image.
+Composition: creator and product BOTH clearly visible — creator face/upper body is the emotional hook, product is the proof. Creator occupies ~50% of the frame, product ~20-30% (held clearly toward camera).
+Expression: natural and casual — small genuine smile, mild surprise, "you have to try this" energy, mid-conversation candid — never posed, never modelesque, never forced.
+Background: the creator's own real environment (their bathroom, bedroom, kitchen, car driver's seat, gym mirror, balcony, café table, hotel room, walking outdoors) — context naturally readable but never competing with subject. Background slightly out of focus is acceptable here ONLY because that's how a real iPhone selfie looks — but no artificial bokeh.
+Creator description: take the creator's appearance EXCLUSIVELY from SPECIFICATIONS (face, age, ethnicity, skin tone, hair, outfit, makeup, accessories, vibe). If SPECIFICATIONS describes no person, default to a creator that matches the BRAND DNA target customer — but stay generic and consistent.
+Selfie variants — vary across the batch:
+S1. Creator looking at camera, product held next to face — "look what I just got" energy
+S2. Creator looking down at the product they're holding, hint of smile, soft focus on face
+S3. Mirror selfie — creator visible in the mirror reflection (bathroom, gym, hallway), iPhone visible in their hand, product in the other hand
+S4. Creator mid-conversation candid — eyes slightly off-camera, talking to the lens, product held casually near chest
+S5. Outdoor or in-context selfie (car, balcony, café) — creator holding product up, real natural daylight on face
+Hard rules for SELFIE: ONE single person only — never two faces, never another person reflected. The product orientation never rotates (locked to reference). The creator's face must look like a real human captured by an iPhone — never airbrushed, never filtered, visible skin texture, micro-asymmetry, real-life imperfection. No selfie-stick wide angle distortion. No professional headshot quality.
 ⸻
 STEP 4 — IPHONE UGC AESTHETIC — RAW AND IMPERFECT — LOCKED FOR ALL SHOTS
 This looks like a real person captured this on their phone spontaneously. Never cinematic, never commercial, never studio — always personal and raw.
-Camera: shot on iPhone 17 Pro, standard video mode — NOT portrait mode, NOT photo mode handheld, natural micro-tremor, subtle organic camera shake — no stabilization natural autofocus breathing on subject, raw handheld feel slight rolling shutter feel on edges during motion
+Camera: shot on iPhone 17 Pro, standard video mode — NOT portrait mode, NOT photo mode handheld, natural micro-tremor, subtle organic camera shake — no stabilization natural autofocus breathing on subject, raw handheld feel slight rolling shutter feel on edges during motion (SELFIE exception: front-facing iPhone selfie camera, standard photo mode, held by the creator at arm's length — still raw, still imperfect, still no portrait mode)
 Optics & depth: no artificial bokeh, no depth effect, no background blur no computational photography processing — raw capture only no portrait mode simulation — background naturally in focus or semi-sharp occasional soft focus acceptable — not every shot perfectly sharp slight overexposure or underexposure acceptable — never perfectly balanced
 Grain & texture: grain and noise visible especially in shadows and low light no artificial sharpening — edges slightly soft, not corrected skin texture visible and unretouched where applicable no HDR processing — flat, honest, unprocessed tonal range
 Color & grading: white balance not corrected — slight warm or cool cast natural to the scene no color grading, no LUT, no Instagram filter — pure raw iPhone color output colors slightly desaturated or uneven — as they appear in real life never cold white balance, never unnatural color grading
@@ -200,10 +213,10 @@ Lighting — raw ambient only: available light only — window light, soft ceili
 Authenticity markers (pick 2-3 per shot, scene-relevant): natural hard shadows from direct light source uneven exposure across the frame slight highlight blowout on bright surfaces visible skin texture and pores on hands or face natural reflections on packaging or glass slight motion blur from handheld movement ambient color cast from environment (orange tungsten / cool daylight / green neon) no harsh specular highlights on product, no blown metallic reflections, no mirror-like glare on packaging
 COMPOSITION RULES — MANDATORY: main subject occupies at least 40% of the frame product or body part always clearly identifiable background adds context — never competes with the subject slightly off-center framing — never perfectly centered no hero angle — camera held at whatever natural angle a real person would use framing imperfect — slightly off, partially cropped — never composed like a professional shot
 The space must feel real but clean: water droplets or light condensation on surfaces → OK one or two other products visible in background → OK used but intact towel visible → OK cracked surfaces, stained counters, dirty mirrors, post-its, excessive clutter → NEVER
-POV & SINGLE PERSON RULE — GLOBAL, APPLIES TO ALL SHOT TYPES: Whenever a human appears in any shot — USAGE, PRESENTATION, ECU, or IN-ACTION: It is always ONE single person interacting with their OWN body or the product First-person POV by default — camera looking down from the creator's own perspective Both hands in frame always belong to the SAME person — never two people, never external hands The creator is always acting on themselves — self-application, self-use, self-interaction Never generate two people in the same frame Never generate hands that appear to belong to a second person Never generate an external person applying product to someone else Exception: if the product category explicitly requires a third-person angle (e.g. face application visible in mirror) → use the most natural angle, but still ONE person only
+POV & SINGLE PERSON RULE — GLOBAL, APPLIES TO ALL SHOT TYPES: Whenever a human appears in any shot — USAGE, PRESENTATION, ECU, IN-ACTION, or SELFIE: It is always ONE single person interacting with their OWN body or the product First-person POV by default — camera looking down from the creator's own perspective (SELFIE exception: front-facing iPhone selfie POV, creator looks at their own camera at arm's length) Both hands in frame always belong to the SAME person — never two people, never external hands The creator is always acting on themselves — self-application, self-use, self-interaction Never generate two people in the same frame Never generate hands that appear to belong to a second person Never generate an external person applying product to someone else Exception: if the product category explicitly requires a third-person angle (e.g. face application visible in mirror) → use the most natural angle, but still ONE person only
 ⸻
 STEP 5 — CREATOR CONSISTENCY
-When creator appears (hands, forearm, partial body, partial face): Always match skin tone, age feel, and style inferred from SPECIFICATIONS or BRAND DNA target customer Clothing and accessories consistent across all shots — same hoodie, rings, nail color Creator never appears with full face or eyes visible In IN-ACTION shots: mouth, jaw, chin, profile, neck only — never eyes or full face LLM decides per shot whether creator appears, based on shot type
+When creator appears (hands, forearm, partial body, partial face, full face for SELFIE): Always match skin tone, age feel, and style inferred from SPECIFICATIONS or BRAND DNA target customer Clothing and accessories consistent across all shots — same hoodie, rings, nail color Creator never appears with full face or eyes visible EXCEPT in SELFIE shots, where the FULL FACE and eyes are visible (this is the entire point of SELFIE) In IN-ACTION shots: mouth, jaw, chin, profile, neck only — never eyes or full face In SELFIE shots: full face, eyes, expression all visible — driven by SPECIFICATIONS LLM decides per shot whether creator appears, based on shot type
 ⸻
 OUTPUT FORMAT
 Output exactly the requested number of prompts, each starting with ^ on its own line, separated by blank lines. No commentary, no headers, no numbering, no explanations — just the prompts. Every prompt is copy-paste ready and self-contained."""
@@ -223,7 +236,7 @@ There is NO separate PRODUCT USAGE field. Infer the gesture, quantity and rhythm
 ⸻
 STEP 1 — IMAGE ANALYSIS (internal, never shown to user)
 Before generating the prompt, silently analyze the reference image:
-What is in the frame? (product, hands, body part, surface, environment) What shot type is this? (USAGE / PRESENTATION / ECU / IN-ACTION) — infer from the image What is the natural action happening or about to happen? What is the lighting condition? (warm / cool / natural / artificial) What ambient elements are present? (steam, condensation, particles, reflections, shadows) What is the camera angle and distance? What face/side of the product is visible? — lock this orientation for the entire clip
+What is in the frame? (product, hands, body part, surface, environment, full face for SELFIE) What shot type is this? (USAGE / PRESENTATION / ECU / IN-ACTION / SELFIE) — infer from the image What is the natural action happening or about to happen? What is the lighting condition? (warm / cool / natural / artificial) What ambient elements are present? (steam, condensation, particles, reflections, shadows) What is the camera angle and distance? What face/side of the product is visible? — lock this orientation for the entire clip
 Use this to determine: subject movement, camera behavior, atmosphere, sound. Cross-reference with the BRAND DNA to ground gesture quantity and timing in real product usage.
 ⸻
 STEP 2 — DEMONSTRATIVE RHYTHM RULES
@@ -235,12 +248,14 @@ USAGE shots: → Start in-media-res — hand already gripping or reaching for th
 PRESENTATION shots: → Start with a micro-pause (0.5s) on the still product, then environment comes alive → Light shifts, shadow moves, steam rises — product stays the anchor
 ECU shots: → Start in-media-res — texture or detail already in sharp focus → Immediate micro-movement: droplet falls, cream spreads, light catches the label
 IN-ACTION shots: → Start in-media-res — body part already mid-action (brush already moving, hand already applying) → No build-up — drop the viewer directly into the gesture
+SELFIE shots: → Start with the creator already in frame, looking at camera or at the product — micro-pause (0.3s), then small natural human motion → Expression shifts (small smile widening, eyebrow raise, head tilt) or product is brought slightly closer to camera
 ⸻
 STEP 4 — ANIMATION LOGIC BY SHOT TYPE
 USAGE shots: → Animate the hand/arm gesture — slow reach, gentle squeeze, casual grip → Product reacts physically if relevant (liquid moving inside, cap pressing, tube deforming) — never rotates → Product stays in exact same orientation as reference image — static in space, hands move around it → Camera: subtle handheld drift, micro-shake, slight push-in toward product
 PRESENTATION shots: → Product completely static — never moves, never rotates, never shifts position → Environment subtly alive around it (light shift, shadow movement, steam, particles) → Camera: very slow creep or gentle drift across the scene, no zoom → Ambient life: curtain moving, light changing, condensation forming
 ECU shots: → Animate texture, liquid, or material detail — droplet falling, cream spreading, light catching the label → Product absolutely static — no rotation, no pivot, no micro-turn of any kind → Camera: ultra-slow micro-push, minimal movement, razor-sharp focus hold → Ambient: dust particles in light beam, subtle reflection shift
 IN-ACTION shots: → Animate the body part in use — mouth brushing, hand applying, lips sipping → Movement feels raw and human — slight head motion, natural muscle tension → Camera: handheld micro-tremor, autofocus breathing, no stabilization → Product may enter or exit frame naturally — but orientation strictly locked if visible
+SELFIE shots: → Animate the creator's face and the hand holding the product — small natural expression change (smile widens, eyebrow raise, eyes glance from camera to product and back), gentle head tilt, slight nod → Hand holding product can subtly bring it closer to camera or rotate the wrist a few degrees — but the product itself never rotates around its own axis (orientation locked to reference image) → Camera: front-facing iPhone selfie — held by the creator's own arm at arm's length, natural micro-tremor from the hand holding the phone, slight autofocus breathing on the face → Identity lock: face features, skin tone, hair, outfit must remain identical to the reference image — never morph, never age, never change ethnicity or hairstyle mid-clip → ONE single person — never duplicate the face, never introduce a second person
 ⸻
 STEP 5 — IPHONE UGC AESTHETIC
 Apply to every prompt without exception:
@@ -271,14 +286,15 @@ def generate_broll_image_prompts(
 ) -> list[str]:
     """Ask the LLM for B-roll image prompts. counts maps category -> int.
 
-    Categories expected: usage, presentation, ecu, in_action.
-    Returns a flat list ordered USAGE → PRESENTATION → ECU → IN-ACTION.
+    Categories expected: usage, presentation, ecu, in_action, selfie.
+    Returns a flat list ordered USAGE → PRESENTATION → ECU → IN-ACTION → SELFIE.
     """
     usage = max(0, int(counts.get("usage", 0)))
     pres = max(0, int(counts.get("presentation", 0)))
     ecu = max(0, int(counts.get("ecu", 0)))
     inact = max(0, int(counts.get("in_action", 0)))
-    total = usage + pres + ecu + inact
+    selfie = max(0, int(counts.get("selfie", 0)))
+    total = usage + pres + ecu + inact + selfie
     if total <= 0:
         raise ValueError("At least one B-roll category count must be > 0.")
 
@@ -288,13 +304,18 @@ def generate_broll_image_prompts(
         f"USAGE: {usage}\n"
         f"PRESENTATION: {pres}\n"
         f"ECU: {ecu}\n"
-        f"IN-ACTION: {inact}\n\n"
+        f"IN-ACTION: {inact}\n"
+        f"SELFIE: {selfie}\n\n"
         f"REFERENCE IMAGE: {'[attached]' if reference_image_url else '(none — infer product appearance from BRAND DNA)'}\n\n"
         f"Generate exactly {total} prompts in this order: {usage} USAGE, then {pres} PRESENTATION, "
-        f"then {ecu} ECU, then {inact} IN-ACTION. Each prompt starts with ^ on its own line, "
+        f"then {ecu} ECU, then {inact} IN-ACTION, then {selfie} SELFIE. Each prompt starts with ^ on its own line, "
         f"separated by blank lines. No headers, no numbering, no commentary."
     )
-    provider._log("INFO", f"Requesting {total} B-roll image prompts ({usage}U/{pres}P/{ecu}E/{inact}A)")
+    provider._log(
+        "INFO",
+        f"Requesting {total} B-roll image prompts "
+        f"({usage}U/{pres}P/{ecu}E/{inact}A/{selfie}S)",
+    )
     text = provider.call_llm(
         prompt=user_prompt,
         image_url=reference_image_url,
