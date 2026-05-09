@@ -4811,6 +4811,7 @@ class AnimationPage(QWidget):
         self._thread: QThread | None = None
         self._worker: "AnimationOpWorker | None" = None
         self._pending_resume: Path | None = None
+        self._pending_on_finish = None
         self._build()
         self.refresh_brands()
 
@@ -5620,10 +5621,20 @@ class AnimationPage(QWidget):
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.log.connect(self._append_log)
-        self._worker.finished.connect(lambda err: self._on_op_finished(err, on_finish))
+        # Stash on_finish on the page so the slot stays a bound method on
+        # this QObject — that gives the connection a real receiver thread
+        # (main). Connecting to a lambda gives the connection no receiver
+        # affinity and Qt invokes it on the *emitter's* thread, which here
+        # is the worker thread; calling self._thread.wait() from inside
+        # self._thread is what crashed Mimica with "Thread tried to wait
+        # on itself" earlier.
+        self._pending_on_finish = on_finish
+        self._worker.finished.connect(self._on_op_finished)
         self._thread.start()
 
-    def _on_op_finished(self, err: str, on_finish):
+    def _on_op_finished(self, err: str):
+        on_finish = self._pending_on_finish or (lambda _e: None)
+        self._pending_on_finish = None
         if self._thread:
             self._thread.quit()
             self._thread.wait()
