@@ -12,6 +12,7 @@ build_browsers/
 playwright_browsers/
 dist/
 build/
+dmg_build/
 *.app/
 *.spec.bak
 .claude/

@@ -10,17 +10,59 @@ C_RED='\033[31m'
 C_DIM='\033[2m'
 C_RESET='\033[0m'
 
-printf "\n${C_CYAN}  Ad Variator — starting…${C_RESET}\n\n"
+printf "\n${C_CYAN}  Mimica — starting…${C_RESET}\n\n"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  printf "${C_RED}python3 not found. Install from https://www.python.org/downloads/${C_RESET}\n"
+# Silent auto-update from GitHub before launching.
+# Skipped silently if: not a git clone, no git, local changes, or network is down.
+# Short timeouts (5s SSH connect, 5s low-speed HTTPS) so a flaky connection
+# can't block app startup. The `|| true` swallows pull failures so offline
+# users still get the app — they just stay on their current commit.
+if [ -d ".git" ] && command -v git >/dev/null 2>&1; then
+  if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+    printf "${C_DIM}Checking for updates…${C_RESET}\n"
+    BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "")
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_SSH_COMMAND="ssh -o ConnectTimeout=5 -o BatchMode=yes" \
+    GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=5 \
+      git pull --ff-only --quiet 2>/dev/null || true
+    AFTER=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$BEFORE" != "$AFTER" ]; then
+      printf "${C_GREEN}Updated to $(git rev-parse --short HEAD).${C_RESET}\n"
+    fi
+  else
+    printf "${C_YELLOW}Local changes detected — skipping auto-update.${C_RESET}\n"
+  fi
+fi
+
+# Pick the Python binary. The wrapper .app sets PYTHON_BIN to a verified
+# 3.10+ interpreter; running from a Terminal we fall back to system python3
+# but still version-check it so a stale venv from 3.9 can't silently corrupt
+# pip later.
+PY="${PYTHON_BIN:-python3}"
+
+if ! command -v "$PY" >/dev/null 2>&1; then
+  printf "${C_RED}$PY not found. Install Python 3.10+ from https://www.python.org/downloads/${C_RESET}\n"
   read -n 1 -s -r -p "Press any key to close..."
   exit 1
 fi
 
+if ! "$PY" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
+  printf "${C_RED}Python 3.10+ required. You have: $("$PY" --version 2>&1)${C_RESET}\n"
+  printf "${C_YELLOW}Install a newer Python:\n  • https://www.python.org/downloads/  (check \"Add Python to PATH\")\n  • or:  brew install python@3.12${C_RESET}\n"
+  read -n 1 -s -r -p "Press any key to close..."
+  exit 1
+fi
+
+# Repair a half-built venv (no pip) — happens after a failed/interrupted
+# install or a Python-version swap.
+if [ -d ".venv" ] && [ ! -x ".venv/bin/pip" ]; then
+  printf "${C_YELLOW}Broken venv detected — rebuilding…${C_RESET}\n"
+  rm -rf .venv
+fi
+
 if [ ! -d ".venv" ]; then
   printf "${C_DIM}Creating virtual environment…${C_RESET}\n"
-  python3 -m venv .venv
+  "$PY" -m venv .venv
 fi
 
 # shellcheck disable=SC1091
