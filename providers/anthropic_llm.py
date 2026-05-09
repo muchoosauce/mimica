@@ -64,7 +64,12 @@ class AnthropicLLM:
     @staticmethod
     def _fetch_image_b64(image_url: str) -> tuple[str, str]:
         """Download `image_url` and return (media_type, base64). Anthropic
-        only accepts a few media types — coerce anything weird to image/png."""
+        only accepts a few media types — coerce anything weird to image/png.
+
+        Used as a fallback when the URL isn't directly fetchable by Anthropic
+        (e.g. a localhost preview server). Carries a 5MB payload cap that
+        the URL source path doesn't have.
+        """
         r = requests.get(image_url, timeout=60)
         r.raise_for_status()
         media_type = (r.headers.get("Content-Type") or "image/png").split(";")[0].strip().lower()
@@ -84,16 +89,28 @@ class AnthropicLLM:
 
         content: list[dict] = []
         if image_url:
-            try:
-                media_type, b64 = self._fetch_image_b64(image_url)
+            # Prefer the URL source format: Anthropic fetches the image
+            # itself, no 5MB base64 payload cap, no client-side download
+            # / re-encode. The previous base64 path tripped a 400 from the
+            # Vision API on swap_product runs because the 1440×3840 grid
+            # PNG exceeded the encoded-payload size limit. We only fall
+            # back to base64 if the URL isn't a public http(s) one.
+            if image_url.lower().startswith(("http://", "https://")):
                 content.append({
                     "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": b64},
+                    "source": {"type": "url", "url": image_url},
                 })
-            except Exception as e:
-                raise ProviderError(
-                    f"Failed to fetch reference image for Anthropic: {e}"
-                ) from e
+            else:
+                try:
+                    media_type, b64 = self._fetch_image_b64(image_url)
+                    content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": b64},
+                    })
+                except Exception as e:
+                    raise ProviderError(
+                        f"Failed to fetch reference image for Anthropic: {e}"
+                    ) from e
         content.append({"type": "text", "text": prompt})
 
         try:

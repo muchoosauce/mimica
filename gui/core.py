@@ -2024,17 +2024,21 @@ def _extract_keyframes(video_path: Path, target_dir: Path, n: int) -> list[Path]
 
 
 def _compose_swap_grid(keyframes: list[Path], product: Path, target: Path) -> Path:
-    """Build a 2x2 grid of keyframes stacked above the product packshot.
+    """Build a 2x3 grid of keyframes + product packshot for Vision analysis.
 
-    All cells normalized to 720x1280 (vertical 9:16) with letterboxing. Final
-    image is 1440x3840 — tall, but fits in a single Claude Vision call.
+    Cells are 540x960 (vertical 9:16) with letterboxing — final image is
+    1080x2880, well below Anthropic's ~1568px long-edge resize threshold
+    so we don't waste bytes on pixels that get dropped server-side. Saved
+    as JPEG quality 4 (≈85%) to keep payloads under ~1MB even for busy
+    keyframes; PNG was producing 6-10MB outputs that tripped Anthropic's
+    base64 size limit on the swap workflow.
     """
     import subprocess
     if not keyframes:
         raise RuntimeError("compose: no keyframes")
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    cell_w, cell_h = 720, 1280
+    cell_w, cell_h = 540, 960
     inputs: list[str] = []
     # 4 keyframes (pad by repeating last if fewer than 4) + 1 product = 5 inputs.
     cells = list(keyframes[:4])
@@ -2061,9 +2065,12 @@ def _compose_swap_grid(keyframes: list[Path], product: Path, target: Path) -> Pa
         ";".join(scale_chain)
         + f";{full_inputs}xstack=inputs={n_cells}:layout={layout}[out]"
     )
+    # -q:v 4 maps to ~85% JPEG quality (1=best, 31=worst). High enough for
+    # Vision to read product details, small enough to stay well under
+    # Anthropic's 5MB base64 cap as a safety net.
     proc = subprocess.run(
         ["ffmpeg", "-y", *inputs, "-filter_complex", filter_complex,
-         "-map", "[out]", str(target)],
+         "-map", "[out]", "-q:v", "4", str(target)],
         capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0 or not target.exists():
@@ -2157,7 +2164,7 @@ def run_swap_analyze(
         on_log("OK", f"{len(keyframes)} keyframes extracted")
 
         on_log("INFO", "Composing analysis grid (source 2x2 + packshot)…")
-        grid = _compose_swap_grid(keyframes, prod, work_dir / "_grid.png")
+        grid = _compose_swap_grid(keyframes, prod, work_dir / "_grid.jpg")
         grid_url = provider.upload_image(grid)
 
         on_log("INFO", "Claude Vision is writing the swap brief…")
