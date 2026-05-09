@@ -64,6 +64,7 @@ _IMAGE_INPUT_CAPS = {
 _VIDEO_SLUGS = {
     "kling_3_std": "kling-3.0/video",
     "kling_3_pro": "kling-3.0/video",
+    "seedance_2":  "bytedance/seedance-2",
 }
 _VIDEO_MODES = {
     "kling_3_std": "std",
@@ -371,44 +372,65 @@ class KieProvider(Provider):
         label: str = "video",
     ) -> str:
         slug = _VIDEO_SLUGS.get(model)
-        mode = _VIDEO_MODES.get(model)
-        if not slug or not mode:
+        if not slug:
             raise ProviderError(f"Kie does not support video model {model!r}")
-        input_payload: dict = {
-            "prompt": prompt,
-            "image_urls": [image_url],
-            "duration": str(duration),
-            "aspect_ratio": aspect_ratio,
-            "mode": mode,
-            "multi_shots": False,
-        }
-        # Only send `sound` when explicitly enabled — leave the upstream
-        # default (silent) in place otherwise.
-        if sound:
-            input_payload["sound"] = True
-        self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
 
-        # Product reference locking via Kling's `kling_elements`. The element
-        # gives Kling a 2-4 image anchor for the product so logos, labels and
-        # printed text stay pixel-stable through the clip. We append `@product`
-        # to the prompt so Kling actually pulls the element into the result.
-        refs = list(product_reference_urls or [])
-        if refs:
-            if len(refs) == 1:
-                refs = refs * 2  # API requires 2-4 — duplicate the lone ref.
-            elif len(refs) > 4:
-                refs = refs[:4]
-            input_payload["kling_elements"] = [{
-                "name": "product",
-                "description": (
-                    "the product with all its visible packaging, logo, "
-                    "label text and printed characters preserved exactly"
-                ),
-                "element_input_urls": refs,
-            }]
-            if "@product" not in input_payload["prompt"]:
-                input_payload["prompt"] = input_payload["prompt"].rstrip() + " @product"
-            self._log("INFO", f"[{label}] product reference locking: on ({len(refs)} ref{'s' if len(refs) > 1 else ''})")
+        if model.startswith("kling_"):
+            mode = _VIDEO_MODES.get(model)
+            input_payload: dict = {
+                "prompt": prompt,
+                "image_urls": [image_url],
+                "duration": str(duration),
+                "aspect_ratio": aspect_ratio,
+                "mode": mode,
+                "multi_shots": False,
+            }
+            # Only send `sound` when explicitly enabled — leave the upstream
+            # default (silent) in place otherwise.
+            if sound:
+                input_payload["sound"] = True
+            self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
+
+            # Product reference locking via Kling's `kling_elements`. The element
+            # gives Kling a 2-4 image anchor for the product so logos, labels and
+            # printed text stay pixel-stable through the clip. We append `@product`
+            # to the prompt so Kling actually pulls the element into the result.
+            refs = list(product_reference_urls or [])
+            if refs:
+                if len(refs) == 1:
+                    refs = refs * 2  # API requires 2-4 — duplicate the lone ref.
+                elif len(refs) > 4:
+                    refs = refs[:4]
+                input_payload["kling_elements"] = [{
+                    "name": "product",
+                    "description": (
+                        "the product with all its visible packaging, logo, "
+                        "label text and printed characters preserved exactly"
+                    ),
+                    "element_input_urls": refs,
+                }]
+                if "@product" not in input_payload["prompt"]:
+                    input_payload["prompt"] = input_payload["prompt"].rstrip() + " @product"
+                self._log("INFO", f"[{label}] product reference locking: on ({len(refs)} ref{'s' if len(refs) > 1 else ''})")
+        elif model == "seedance_2":
+            # Seedance 2.0 image-to-video: the input still becomes the first frame,
+            # product reference images go into reference_image_urls (1-4 max).
+            # Sound is opt-in (default off in our UI) → generate_audio mirrors that.
+            input_payload = {
+                "prompt": prompt,
+                "first_frame_url": image_url,
+                "duration": int(duration),
+                "aspect_ratio": aspect_ratio,
+                "resolution": "720p",
+                "generate_audio": bool(sound),
+            }
+            self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
+            refs = list(product_reference_urls or [])
+            if refs:
+                input_payload["reference_image_urls"] = refs[:4]
+                self._log("INFO", f"[{label}] product reference locking: on ({len(refs[:4])} ref{'s' if len(refs[:4]) > 1 else ''})")
+        else:
+            raise ProviderError(f"Kie does not support video model {model!r}")
         try:
             task_id = self._create_task(slug, input_payload, label)
             record = self._poll_task(task_id, label)
