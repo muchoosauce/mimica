@@ -303,19 +303,25 @@ class DashboardPage(QWidget):
         badge = QLabel(number)
         badge.setFixedSize(32, 32)
         badge.setAlignment(Qt.AlignCenter)
+        # Dark elevated bg with mono-style number — readable on the dark cards.
         badge.setStyleSheet(
-            f"background: {t.BG_CANVAS}; color: {t.TEXT}; "
+            f"background: {t.BG_ELEVATED}; color: {t.TEXT_MUTED}; "
+            f"border: 1px solid {t.BORDER_MUTED}; "
             f"border-radius: 16px; font-size: 12px; font-weight: 600;"
         )
         top.addWidget(badge); top.addStretch()
 
         halo = QFrame()
         halo.setFixedSize(56, 56)
+        # Subtle violet glass tint instead of opaque white — sits clean
+        # on the dark cards.
         halo.setStyleSheet(
-            f"background: rgba(255,255,255,0.7); border-radius: 28px;"
+            f"background: rgba(124, 92, 255, 0.14); "
+            f"border: 1px solid rgba(124, 92, 255, 0.22); "
+            f"border-radius: 28px;"
         )
         hl = QVBoxLayout(halo); hl.setContentsMargins(0, 0, 0, 0)
-        ic = icon_label(icon, 24, t.ACCENT_STRONG); ic.setAlignment(Qt.AlignCenter)
+        ic = icon_label(icon, 24, t.ACCENT_SOFT); ic.setAlignment(Qt.AlignCenter)
         hl.addWidget(ic, alignment=Qt.AlignCenter)
         top.addWidget(halo)
         lay.addLayout(top)
@@ -2924,12 +2930,12 @@ class BRollPage(QWidget):
         for i, pill in enumerate(self._step_pills):
             if i == idx:
                 pill.setStyleSheet(
-                    f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
+                    f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
                     f"border-radius: 12px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
-                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"background: {t.SUCCESS_BG}; color: {t.SUCCESS}; padding: 6px 14px; "
                     f"border-radius: 12px; font-size: 11px; font-weight: 700;"
                 )
             else:
@@ -4212,12 +4218,12 @@ class TwinPage(QWidget):
         for i, pill in enumerate(self._step_pills):
             if i == idx:
                 pill.setStyleSheet(
-                    f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
+                    f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
                     f"border-radius: 12px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
-                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"background: {t.SUCCESS_BG}; color: {t.SUCCESS}; padding: 6px 14px; "
                     f"border-radius: 12px; font-size: 11px; font-weight: 700;"
                 )
             else:
@@ -4868,12 +4874,12 @@ class AnimationPage(QWidget):
         for i, pill in enumerate(self._step_pills):
             if i == idx:
                 pill.setStyleSheet(
-                    f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
+                    f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
                     f"border-radius: 12px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
-                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"background: {t.SUCCESS_BG}; color: {t.SUCCESS}; padding: 6px 14px; "
                     f"border-radius: 12px; font-size: 11px; font-weight: 700;"
                 )
             else:

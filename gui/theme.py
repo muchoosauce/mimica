@@ -1,44 +1,60 @@
-"""Mimica light-mode lavender theme — design tokens + Qt stylesheet.
+"""Mimica dark violet theme — design tokens + Qt stylesheet.
 
-Mirrors the design system produced by Claude Design (see Mimica dashboard
-mock). Translated to Qt's stylesheet language: solid colors, simple
-gradients, border-radius, padding, hover states. No backdrop blur, no
-real-time animations.
+Translation of the C2 web mockup (Atlas-inspired dark + violet) to Qt's
+stylesheet language. Token names are preserved from the previous lavender
+theme so existing pages and widgets keep working — only the values change.
+
+What carries over from the web mockup:
+  - Ink near-black canvas (#0A0A0F) with subtle warmth.
+  - Violet electric accent (#7C5CFF) with violet→pink secondary gradient.
+  - Hairline borders rgba(255,255,255,~6%).
+  - Mono numerics via JetBrains Mono is intentionally NOT bundled here —
+    the desktop app sticks to Inter to keep the bundle lean. Numbers stay
+    legible without a mono swap.
+
+What does NOT translate (Qt stylesheet limitations):
+  - SVG noise grain → omitted; flat dark surfaces instead.
+  - Outer drop-shadows and bloom glows → stylesheet box-shadow doesn't exist
+    in QSS. Where a shadow really matters (primary CTA), apply
+    QGraphicsDropShadowEffect at the widget level — not done here, kept for
+    a follow-up if it's missed visually.
+  - Backdrop-blur and animated pulse keyframes → not in QSS. Static states.
 """
 
 # ─── Design tokens ──────────────────────────────────────────────────────────
 
-BG_CANVAS       = "#FFFFFF"
-BG_SIDEBAR      = "#F2F0F7"
-BG_ELEVATED     = "#FAF8FF"
-BG_HOVER        = "#F4F1FF"
-BG_INPUT        = "#FAF8FF"
+BG_CANVAS       = "#0A0A0F"   # ink, near-black with warmth
+BG_SIDEBAR      = "#0C0C12"   # slightly darker than canvas
+BG_ELEVATED     = "#1A1A22"   # popovers, hover surfaces
+BG_HOVER        = "#1A1A22"
+BG_INPUT        = "#131318"
 
-CARD_LAVENDER   = "#EEEAFF"
-CARD_ROSE       = "#FCE7F0"
-CARD_VIOLET     = "#E5DEFF"
+CARD_LAVENDER   = "#1A1530"   # tinted dark surface (was light lavender)
+CARD_ROSE       = "#2A1A22"   # tinted dark rose
+CARD_VIOLET     = "#1F1A30"   # tinted dark violet
 
-TEXT            = "#1B1A2E"
-TEXT_MUTED      = "#6E6A8A"
-TEXT_DIM        = "#A29DC4"
-TEXT_INVERSE    = "#FFFFFF"
+TEXT            = "#F4F4F6"
+TEXT_MUTED      = "#9999A0"
+TEXT_DIM        = "#5C5C66"
+TEXT_INVERSE    = "#0A0A0F"   # text on accent (dark on violet)
 
-ACCENT          = "#A78BFA"
-ACCENT_SOFT     = "#C4B5FD"
-ACCENT_STRONG   = "#8B6FE8"
-ACCENT_BG       = "#F4F1FF"
+ACCENT          = "#7C5CFF"   # electric violet — primary
+ACCENT_SOFT     = "#9C84FF"
+ACCENT_STRONG   = "#6A4CFF"
+ACCENT_BG       = "rgba(124, 92, 255, 0.12)"   # subtle accent fill (sidebar active)
+ACCENT_PINK     = "#EC4899"   # secondary, used in the violet→pink gradient
+
+BORDER          = "rgba(255, 255, 255, 0.10)"
+BORDER_MUTED    = "rgba(255, 255, 255, 0.06)"
 
 SUCCESS         = "#10B981"
-SUCCESS_BG      = "#E7F8F0"
+SUCCESS_BG      = "rgba(16, 185, 129, 0.12)"
 WARNING         = "#F59E0B"
 ERROR           = "#EF4444"
 
-BORDER          = "#E9E4FF"
-BORDER_MUTED    = "#EAEAF2"
-
 # Back-compat aliases (older modules reference these names)
 BG              = BG_CANVAS
-BG_CARD         = BG_CANVAS
+BG_CARD         = BG_ELEVATED
 BORDER_LIGHT    = BORDER_MUTED
 ACCENT_LIGHT    = ACCENT_SOFT
 ACCENT_DEEP     = ACCENT_STRONG
@@ -85,54 +101,55 @@ QWidget#Sidebar QPushButton#GhostBtn {{
 }}
 
 QFrame#Card {{
-    background: {BG_CANVAS};
-    border: 1px solid {BORDER};
+    background: {BG_ELEVATED};
+    border: 1px solid {BORDER_MUTED};
     border-radius: 20px;
 }}
 
 QFrame#CardFlat {{
-    background: {BG_CANVAS};
+    background: {BG_INPUT};
     border-radius: 14px;
 }}
 
 QFrame#CardHero {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 {CARD_LAVENDER}, stop:1 {ACCENT_BG});
+        stop:0 {CARD_LAVENDER}, stop:1 {BG_ELEVATED});
+    border: 1px solid {BORDER_MUTED};
     border-radius: 20px;
 }}
 
 QFrame#StatCard {{
-    background: {BG_CANVAS};
-    border: 1px solid {BORDER};
+    background: {BG_ELEVATED};
+    border: 1px solid {BORDER_MUTED};
     border-radius: 28px;
 }}
 
 QFrame#CardLavender {{
     background: {CARD_LAVENDER};
-    border: 1px solid transparent;
+    border: 1px solid {BORDER_MUTED};
     border-radius: 28px;
 }}
 
 QFrame#CardRose {{
     background: {CARD_ROSE};
-    border: 1px solid transparent;
+    border: 1px solid {BORDER_MUTED};
     border-radius: 28px;
 }}
 
 QFrame#CardViolet {{
     background: {CARD_VIOLET};
-    border: 1px solid transparent;
+    border: 1px solid {BORDER_MUTED};
     border-radius: 28px;
 }}
 
 QFrame#RunCard {{
-    background: {BG_CANVAS};
+    background: {BG_ELEVATED};
     border: 1px solid {BORDER_MUTED};
     border-radius: 20px;
 }}
 
 QFrame#ProviderStatusCard {{
-    background: {BG_CANVAS};
+    background: {BG_ELEVATED};
     border: 1px solid {BORDER_MUTED};
     border-radius: 14px;
 }}
@@ -145,21 +162,22 @@ QPushButton#SidebarItem {{
     border-radius: 22px;
     padding: 10px 14px;
     text-align: left;
-    color: {TEXT};
+    color: {TEXT_MUTED};
     font-size: 13px;
     font-weight: 500;
 }}
 QPushButton#SidebarItem:hover {{
     background: {BG_HOVER};
+    color: {TEXT};
 }}
 
 QPushButton#SidebarItemActive {{
     background: {ACCENT_BG};
-    border: none;
+    border: 1px solid {ACCENT_BG};
     border-radius: 22px;
     padding: 10px 14px;
     text-align: left;
-    color: {ACCENT_STRONG};
+    color: {ACCENT_SOFT};
     font-size: 13px;
     font-weight: 600;
 }}
@@ -167,22 +185,24 @@ QPushButton#SidebarItemActive {{
 /* ─── Buttons ─────────────────────────────────────────────────────────── */
 
 QPushButton#PrimaryBtn {{
-    background: {ACCENT};
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {ACCENT}, stop:1 {ACCENT_PINK});
     border: 1px solid transparent;
     border-radius: 22px;
     padding: 10px 18px;
-    color: {TEXT_INVERSE};
+    color: #FFFFFF;
     font-weight: 600;
     font-size: 13px;
 }}
 QPushButton#PrimaryBtn:hover {{
-    background: {ACCENT_STRONG};
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {ACCENT_STRONG}, stop:1 {ACCENT_PINK});
 }}
 QPushButton#PrimaryBtn:pressed {{
     background: {ACCENT_STRONG};
 }}
 QPushButton#PrimaryBtn:disabled {{
-    background: {BORDER};
+    background: {BG_HOVER};
     color: {TEXT_DIM};
 }}
 
@@ -198,11 +218,12 @@ QPushButton#GhostBtn {{
 QPushButton#GhostBtn:hover {{
     background: {BG_HOVER};
     border: 1px solid {ACCENT};
+    color: {ACCENT_SOFT};
 }}
 
 QPushButton#OnCardBtn {{
-    background: {BG_CANVAS};
-    border: 1px solid transparent;
+    background: {BG_INPUT};
+    border: 1px solid {BORDER_MUTED};
     border-radius: 22px;
     padding: 9px 16px;
     color: {TEXT};
@@ -211,11 +232,12 @@ QPushButton#OnCardBtn {{
 }}
 QPushButton#OnCardBtn:hover {{
     border: 1px solid {ACCENT};
+    color: {ACCENT_SOFT};
 }}
 
 QPushButton#SearchBtn {{
-    background: {BG_ELEVATED};
-    border: 1px solid transparent;
+    background: {BG_INPUT};
+    border: 1px solid {BORDER_MUTED};
     border-radius: 22px;
     padding: 9px 14px;
     color: {TEXT_MUTED};
@@ -224,6 +246,7 @@ QPushButton#SearchBtn {{
 }}
 QPushButton#SearchBtn:hover {{
     background: {BG_HOVER};
+    color: {TEXT};
 }}
 
 QPushButton {{
@@ -238,12 +261,13 @@ QPushButton {{
 QPushButton:hover {{
     background: {BG_HOVER};
     border: 1px solid {ACCENT};
+    color: {ACCENT_SOFT};
 }}
 
 /* ─── Chips ───────────────────────────────────────────────────────────── */
 
 QPushButton#ChipOff {{
-    background: {BG_CANVAS};
+    background: {BG_INPUT};
     border: 1px solid {BORDER_MUTED};
     border-radius: 22px;
     padding: 6px 12px;
@@ -258,10 +282,10 @@ QPushButton#ChipOff:hover {{
 
 QPushButton#ChipOn {{
     background: {ACCENT_BG};
-    border: 1px solid transparent;
+    border: 1px solid {ACCENT};
     border-radius: 22px;
     padding: 6px 12px;
-    color: {ACCENT_STRONG};
+    color: {ACCENT_SOFT};
     font-weight: 600;
     font-size: 12px;
 }}
@@ -276,22 +300,22 @@ QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
     color: {TEXT};
     font-size: 13px;
     selection-background-color: {ACCENT_BG};
-    selection-color: {ACCENT_STRONG};
+    selection-color: {ACCENT_SOFT};
 }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
 QComboBox:focus, QSpinBox:focus {{
     border: 1px solid {ACCENT};
-    background: {BG_CANVAS};
+    background: {BG_ELEVATED};
 }}
 
 QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox QAbstractItemView {{
-    background: {BG_CANVAS};
+    background: {BG_ELEVATED};
     border: 1px solid {BORDER};
     border-radius: 14px;
     padding: 4px;
     selection-background-color: {ACCENT_BG};
-    selection-color: {ACCENT_STRONG};
+    selection-color: {ACCENT_SOFT};
 }}
 
 QSpinBox::up-button, QSpinBox::down-button {{ width: 18px; }}
@@ -311,24 +335,24 @@ QRadioButton::indicator, QCheckBox::indicator {{
 QRadioButton::indicator:unchecked {{
     border: 1.5px solid {BORDER};
     border-radius: 8px;
-    background: {BG_CANVAS};
+    background: {BG_INPUT};
 }}
 QRadioButton::indicator:checked {{
     border: 1.5px solid {ACCENT};
     border-radius: 8px;
-    background: {BG_CANVAS};
+    background: {ACCENT};
     image: none;
 }}
 
 /* ─── Tables / Lists ──────────────────────────────────────────────────── */
 
 QListWidget, QTableWidget {{
-    background: {BG_CANVAS};
+    background: {BG_ELEVATED};
     border: 1px solid {BORDER_MUTED};
     border-radius: 14px;
     padding: 4px;
     selection-background-color: {ACCENT_BG};
-    selection-color: {ACCENT_STRONG};
+    selection-color: {ACCENT_SOFT};
 }}
 QListWidget::item, QTableWidget::item {{
     padding: 8px 10px;
@@ -339,7 +363,7 @@ QListWidget::item:hover, QTableWidget::item:hover {{
 }}
 QListWidget::item:selected, QTableWidget::item:selected {{
     background: {ACCENT_BG};
-    color: {ACCENT_STRONG};
+    color: {ACCENT_SOFT};
 }}
 
 QHeaderView::section {{
@@ -415,7 +439,7 @@ QLabel#Muted {{
 }}
 QLabel#Cursive {{
     font-family: "Caveat", "Inter", cursive;
-    color: {ACCENT_STRONG};
+    color: {ACCENT_SOFT};
     font-size: 32px;
     font-weight: 500;
 }}

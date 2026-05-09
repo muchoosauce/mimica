@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton,
+    QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget
 )
 
@@ -13,7 +14,7 @@ from .pages import (
     FunnelAdsPage, GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinPage
 )
 from .swap_page import SwapPage
-from .widgets import icon_label, svg_icon, ICONS
+from .widgets import GradientText, icon_label, svg_icon, ICONS
 
 
 class SidebarItem(QPushButton):
@@ -71,23 +72,25 @@ class Sidebar(QWidget):
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(4)
 
-        # Logo + name
-        logo_row = QHBoxLayout(); logo_row.setSpacing(10); logo_row.setContentsMargins(0, 0, 0, 0)
-        logo_box = QFrame()
-        logo_box.setFixedSize(28, 28)
-        logo_box.setStyleSheet(
-            f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-            f"stop:0 {t.ACCENT_SOFT}, stop:1 {t.ACCENT_STRONG});"
-            f"border-radius: 8px;"
+        # Logo: cursive "Mimica" wordmark in a violet → pink gradient,
+        # painted directly on the dark sidebar (no chrome around it).
+        # Same energy as the "today" mark in the C2 mockup.
+        logo_row = QHBoxLayout()
+        logo_row.setSpacing(0)
+        logo_row.setContentsMargins(0, 0, 0, 0)
+
+        wordmark = GradientText(
+            "Mimica",
+            family="Caveat",
+            pixel_size=28,
+            color_start=t.ACCENT_SOFT,
+            color_end=t.ACCENT_PINK,
+            weight=QFont.Medium,
+            italic=True,
         )
-        ll = QVBoxLayout(logo_box); ll.setContentsMargins(0, 0, 0, 0)
-        m = QLabel("M"); m.setAlignment(Qt.AlignCenter)
-        m.setStyleSheet("color: white; font-size: 14px; font-weight: 700; letter-spacing: -0.02em; background: transparent;")
-        ll.addWidget(m)
-        logo_row.addWidget(logo_box)
-        name = QLabel("Mimica")
-        name.setStyleSheet("font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: " + t.TEXT + ";")
-        logo_row.addWidget(name); logo_row.addStretch()
+        wordmark.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        logo_row.addWidget(wordmark, alignment=Qt.AlignLeft)
+        logo_row.addStretch()
         root.addLayout(logo_row)
         root.addSpacing(24)
 

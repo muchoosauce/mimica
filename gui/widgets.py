@@ -718,3 +718,74 @@ def open_path(path: Path):
     else:
         import os as _os
         _os.startfile(str(path))  # type: ignore
+
+
+class GradientText(QLabel):
+    """A QLabel that paints its text filled with a horizontal linear gradient.
+
+    Used for the cursive "Mimica" wordmark (Caveat italic, violet → pink)
+    inside the white sidebar pill. Qt stylesheet has no equivalent — text
+    fill must happen in paintEvent via QPainterPath + QLinearGradient.
+
+    Sizing: tight bounding box around the rendered glyphs (Caveat italic
+    has long descenders that QFontMetrics.height() under-reports, so we
+    use the actual path's boundingRect to size the widget). Transparent
+    background so the parent's color (e.g. white pill) shows through.
+    """
+    def __init__(self, text: str, *, family: str = "Caveat", pixel_size: int = 22,
+                 color_start: str = t.ACCENT, color_end: str = t.ACCENT_PINK,
+                 weight: int = QFont.Medium, italic: bool = True):
+        super().__init__(text)
+        self._c1 = QColor(color_start)
+        self._c2 = QColor(color_end)
+
+        font = QFont(family)
+        font.setPixelSize(pixel_size)
+        font.setWeight(weight)
+        font.setItalic(italic)
+        self.setFont(font)
+
+        # Transparent background so the parent's bg shows through.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+
+        # Path-based bounding rect under-reports italic right-side overhang
+        # for fonts like Caveat (the trailing "a" gets clipped). Use the
+        # max of path bbox and QFontMetrics.horizontalAdvance + a generous
+        # pad so the last glyph always has room to breathe.
+        path = QPainterPath()
+        path.addText(0, 0, font, text)
+        br = path.boundingRect()
+
+        from PySide6.QtGui import QFontMetricsF
+        fm = QFontMetricsF(font)
+        advance = fm.horizontalAdvance(text)
+        path_w = max(br.width(), advance)
+
+        # 12px horizontal pad (6 each side) absorbs italic overhang;
+        # 6px vertical pad covers ascent/descent rounding.
+        self.setFixedSize(int(path_w + 12), int(br.height() + 6))
+
+    def paintEvent(self, event):  # noqa: N802 (Qt naming)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        # Recompute the path each paint (cheap, <1ms for short strings) so
+        # the widget can react to font swaps if any.
+        path = QPainterPath()
+        path.addText(0, 0, self.font(), self.text())
+        br = path.boundingRect()
+
+        # Translate the path so its bounding box sits centered horizontally
+        # with 6px lead, and 3px from the top. addText draws with baseline
+        # at y=0, so glyphs ascend negative; br.top() is the negative top
+        # of the bounding box.
+        path.translate(6 - br.left(), 3 - br.top())
+
+        gradient = QLinearGradient(0, 0, self.width(), 0)
+        gradient.setColorAt(0.0, self._c1)
+        gradient.setColorAt(1.0, self._c2)
+        painter.setPen(Qt.NoPen)
+        painter.fillPath(path, QBrush(gradient))
+        painter.end()

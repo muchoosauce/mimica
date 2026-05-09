@@ -43,7 +43,7 @@ _bootstrap_frozen()
 
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -62,6 +62,18 @@ def _load_fonts() -> None:
             QFontDatabase.addApplicationFont(str(f))
 
 
+def _load_app_icon(app: QApplication) -> None:
+    """Set the dock / window icon from gui/assets/icon.png.
+
+    On macOS this swaps the rocket-launcher icon out of the Dock while the
+    app is running. Note: the wrapper .app's static icon (used in Finder
+    when the app isn't running) comes from wrapper/AppIcon.icns instead.
+    """
+    icon_path = Path(__file__).resolve().parent / "gui" / "assets" / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
+
 def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
@@ -69,6 +81,7 @@ def main():
     app.setOrganizationName("mimica")
 
     _load_fonts()
+    _load_app_icon(app)
 
     f = QFont("Inter")
     if not f.exactMatch():
