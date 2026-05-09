@@ -77,6 +77,42 @@ class AnthropicLLM:
             media_type = "image/png"
         return media_type, base64.b64encode(r.content).decode("ascii")
 
+    @staticmethod
+    def _format_error(e: Exception) -> str:
+        """Pull the most informative string out of an anthropic.APIError.
+
+        Default str(e) truncates the response body, so a 400 from Vision
+        ends up as `Error code: 400 - {'type': 'error', 'error': {... 'mes`
+        with the actual reason cut off. Reach into .body / .message to
+        recover the full diagnostic.
+        """
+        body = getattr(e, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error") or {}
+            err_type = err.get("type")
+            err_msg = err.get("message")
+            if err_type or err_msg:
+                return f"{err_type or 'unknown'}: {err_msg or '(no message)'}"
+        return str(e)
+
+    def _call_with_image(
+        self,
+        client,
+        prompt: str,
+        system_prompt: str,
+        image_block: dict | None,
+    ):
+        content: list[dict] = []
+        if image_block:
+            content.append(image_block)
+        content.append({"type": "text", "text": prompt})
+        return client.messages.create(
+            model=_DEFAULT_MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": content}],
+        )
+
     def call_llm(
         self,
         *,
@@ -87,46 +123,59 @@ class AnthropicLLM:
     ) -> str:
         client = self._ensure_client()
 
-        content: list[dict] = []
+        # Build the URL-source block (preferred — Anthropic fetches the
+        # image itself, no 5MB base64 cap) and a base64 fallback. We try
+        # URL first; if Anthropic can't reach the URL or rejects it, we
+        # fall back to base64 with the bytes we download ourselves.
+        url_block = None
+        b64_block = None
+        b64_error: str | None = None
+
         if image_url:
-            # Prefer the URL source format: Anthropic fetches the image
-            # itself, no 5MB base64 payload cap, no client-side download
-            # / re-encode. The previous base64 path tripped a 400 from the
-            # Vision API on swap_product runs because the 1440×3840 grid
-            # PNG exceeded the encoded-payload size limit. We only fall
-            # back to base64 if the URL isn't a public http(s) one.
             if image_url.lower().startswith(("http://", "https://")):
-                content.append({
+                url_block = {
                     "type": "image",
                     "source": {"type": "url", "url": image_url},
-                })
-            else:
-                try:
-                    media_type, b64 = self._fetch_image_b64(image_url)
-                    content.append({
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": b64},
-                    })
-                except Exception as e:
-                    raise ProviderError(
-                        f"Failed to fetch reference image for Anthropic: {e}"
-                    ) from e
-        content.append({"type": "text", "text": prompt})
+                }
+            try:
+                media_type, b64 = self._fetch_image_b64(image_url)
+                b64_block = {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": b64},
+                }
+            except Exception as e:
+                b64_error = str(e)
 
-        try:
-            resp = client.messages.create(
-                model=_DEFAULT_MODEL,
-                max_tokens=_MAX_TOKENS,
-                system=system_prompt,
-                messages=[{"role": "user", "content": content}],
+        attempts = [b for b in (url_block, b64_block) if b]
+        if image_url and not attempts:
+            raise ProviderError(
+                f"Failed to prepare reference image for Anthropic: {b64_error}"
             )
-        except Exception as e:
-            msg = str(e)
-            if is_censorship_error(e):
-                raise CensorshipError(msg) from e
-            if is_transient(e):
-                raise TransientError(msg) from e
-            raise ProviderError(f"{label} Anthropic call failed: {msg}") from e
+
+        last_exc: Exception | None = None
+        for i, block in enumerate(attempts or [None]):
+            try:
+                resp = self._call_with_image(client, prompt, system_prompt, block)
+                break
+            except Exception as e:
+                last_exc = e
+                if is_censorship_error(e):
+                    raise CensorshipError(self._format_error(e)) from e
+                # Log the full detail and try the next strategy if any.
+                detail = self._format_error(e)
+                source_kind = "url" if block is url_block else "base64"
+                if i < len(attempts) - 1:
+                    self._log("WARN", f"{label} Anthropic {source_kind} source failed ({detail}); retrying with fallback")
+                    continue
+                # No more strategies left.
+                if is_transient(e):
+                    raise TransientError(detail) from e
+                raise ProviderError(f"{label} Anthropic call failed: {detail}") from e
+        else:
+            # Either no attempts were made (no image), or none succeeded.
+            if last_exc is not None:
+                detail = self._format_error(last_exc)
+                raise ProviderError(f"{label} Anthropic call failed: {detail}") from last_exc
 
         parts: list[str] = []
         for block in resp.content:

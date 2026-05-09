@@ -120,10 +120,14 @@ def _attach_anthropic_llm_route(provider: Provider) -> Provider:
             # there is pointless. Surface the error to let the soften path run.
             raise
         except Exception as e:
+            # Generous truncation: Anthropic 4xx bodies routinely run past
+            # the previous 120-char cap with the actual reason living in
+            # the tail. We surface up to 500 chars so the activity panel
+            # shows enough to debug without having to dig into log files.
             provider._log(
                 "WARN",
                 f"[{label}] Anthropic failed ({e.__class__.__name__}: "
-                f"{str(e)[:120]}); falling back to {fallback_label}",
+                f"{str(e)[:500]}); falling back to {fallback_label}",
             )
             return original_call_llm(
                 prompt=prompt, image_url=image_url,
