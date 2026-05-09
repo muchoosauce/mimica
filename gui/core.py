@@ -156,6 +156,26 @@ ENV_FILE = USER_DATA_DIR / ".env"
 # net for source-mode runs where .env sits next to the project root.
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None, override=True)
 
+USER_PROFILE_FILE = USER_DATA_DIR / "user.json"
+
+
+def load_user_name() -> Optional[str]:
+    if not USER_PROFILE_FILE.exists():
+        return None
+    try:
+        data = json.loads(USER_PROFILE_FILE.read_text())
+    except Exception:
+        return None
+    name = (data.get("name") or "").strip()
+    return name or None
+
+
+def save_user_name(name: str) -> None:
+    name = (name or "").strip()
+    if not name:
+        return
+    USER_PROFILE_FILE.write_text(json.dumps({"name": name}, indent=2))
+
 # Pricing exposed for the cost-estimate widgets in the UI.
 COST_PER_IMAGE = pv.COST_PER_IMAGE
 RESOLUTIONS = ["1k", "2k", "4k"]

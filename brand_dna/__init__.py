@@ -172,12 +172,24 @@ def generate(
         encoding="utf-8",
     )
 
+    # Clean up the scraped/staged images directory now that Claude has finished
+    # analysing them. The user attaches their own packshots manually on the
+    # review screen, so persisting these temp images on disk just clutters the
+    # output folder. We keep dna.md and raw.json (paths in raw.json may now be
+    # dead — that's fine, raw.json is for debug only).
+    import shutil as _sh
+    if img_dir.exists():
+        try:
+            _sh.rmtree(img_dir)
+        except Exception as e:
+            on_log("WARN", f"Could not clean up images dir: {e}")
+
     return BrandDNAResult(
         dna_text=dna_md,
-        candidates=candidates,
+        candidates=[],
         sites=sites,
         documents=documents,
-        creative_images=creative_images,
+        creative_images=[],
         output_dir=out_dir,
         raw_sections=dna_model.model_dump(),
     )

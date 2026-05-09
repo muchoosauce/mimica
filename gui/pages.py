@@ -8,10 +8,10 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QScrollArea,
-    QSizePolicy, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit,
-    QVBoxLayout, QWidget
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton,
+    QScrollArea, QSizePolicy, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QTextEdit, QVBoxLayout, QWidget
 )
 
 from . import core
@@ -59,6 +59,8 @@ class DashboardPage(QWidget):
         self._spend_period = "1M"
         self._build()
         self.refresh()
+        self._apply_welcome_name()
+        QTimer.singleShot(0, self._prompt_for_name_if_missing)
 
     def _build(self):
         outer = QVBoxLayout(self)
@@ -97,7 +99,7 @@ class DashboardPage(QWidget):
         left.addWidget(eyebrow)
         left.addSpacing(12)
 
-        self.welcome = QLabel("Welcome back, Sofiane")
+        self.welcome = QLabel("Welcome back")
         self.welcome.setObjectName("H1")
         self.welcome.setWordWrap(True)
         left.addWidget(self.welcome)
@@ -147,22 +149,10 @@ class DashboardPage(QWidget):
         lay.setContentsMargins(24, 24, 24, 24)
         lay.setSpacing(16)
 
-        # Row 1 — Active provider balance
-        prov_block = QVBoxLayout(); prov_block.setSpacing(10)
-        prov_head = QHBoxLayout(); prov_head.setSpacing(8); prov_head.setContentsMargins(0, 0, 0, 0)
-        prov_eyebrow = QLabel("ACTIVE PROVIDER BALANCE"); prov_eyebrow.setObjectName("Muted")
-        prov_head.addWidget(prov_eyebrow); prov_head.addStretch()
-        topup1 = QPushButton("Top up  ↗")
-        topup1.setStyleSheet(
-            f"background: transparent; border: none; color: {t.TEXT_MUTED}; "
-            f"font-size: 11px; font-weight: 500;"
-        )
-        topup1.setCursor(Qt.PointingHandCursor)
-        topup1.clicked.connect(self.open_settings.emit)
-        prov_head.addWidget(topup1)
-        prov_block.addLayout(prov_head)
-
-        prov_row = QHBoxLayout(); prov_row.setSpacing(8); prov_row.setContentsMargins(0, 0, 0, 0)
+        # Active provider chip (kept visible — used by refresh() to show which
+        # provider is in use). The balance figure used to live next to it but
+        # was hardcoded; no provider exposes a public balance endpoint, so it
+        # has been removed rather than show stale numbers.
         self.provider_chip = QLabel("MuAPI")
         self.provider_chip.setStyleSheet(
             f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
@@ -170,64 +160,17 @@ class DashboardPage(QWidget):
             f"font-size: 11px; font-weight: 600;"
         )
         self.provider_chip.setFixedHeight(22)
-        self.provider_balance = QLabel("$24.15")
-        self.provider_balance.setStyleSheet(
-            f"color: {t.TEXT}; font-size: 24px; font-weight: 700; letter-spacing: -0.02em;"
-        )
-        prov_remaining = QLabel("remaining")
-        prov_remaining.setStyleSheet(
-            f"color: {t.TEXT_MUTED}; font-size: 12px; font-weight: 500;"
-        )
-        prov_row.addWidget(self.provider_chip, alignment=Qt.AlignVCenter)
-        prov_row.addWidget(self.provider_balance, alignment=Qt.AlignVCenter)
-        prov_row.addWidget(prov_remaining, alignment=Qt.AlignVCenter)
-        prov_row.addStretch()
-        prov_block.addLayout(prov_row)
-        lay.addLayout(prov_block)
+        prov_chip_row = QHBoxLayout(); prov_chip_row.setContentsMargins(0, 0, 0, 0)
+        prov_chip_row.addWidget(QLabel("ACTIVE PROVIDER"), alignment=Qt.AlignVCenter)
+        prov_chip_row.itemAt(0).widget().setObjectName("Muted")
+        prov_chip_row.addSpacing(8)
+        prov_chip_row.addWidget(self.provider_chip, alignment=Qt.AlignVCenter)
+        prov_chip_row.addStretch()
+        lay.addLayout(prov_chip_row)
 
         lay.addWidget(self._divider())
 
-        # Row 2 — Anthropic balance
-        anth_block = QVBoxLayout(); anth_block.setSpacing(10)
-        anth_head = QHBoxLayout(); anth_head.setSpacing(8); anth_head.setContentsMargins(0, 0, 0, 0)
-        anth_eyebrow = QLabel("ANTHROPIC BALANCE"); anth_eyebrow.setObjectName("Muted")
-        anth_head.addWidget(anth_eyebrow); anth_head.addStretch()
-        topup2 = QPushButton("Top up  ↗")
-        topup2.setStyleSheet(
-            f"background: transparent; border: none; color: {t.TEXT_MUTED}; "
-            f"font-size: 11px; font-weight: 500;"
-        )
-        topup2.setCursor(Qt.PointingHandCursor)
-        topup2.clicked.connect(self.open_settings.emit)
-        anth_head.addWidget(topup2)
-        anth_block.addLayout(anth_head)
-
-        anth_row = QHBoxLayout(); anth_row.setSpacing(8); anth_row.setContentsMargins(0, 0, 0, 0)
-        self.anthropic_chip = QLabel("Anthropic")
-        self.anthropic_chip.setStyleSheet(
-            f"background: {t.ACCENT_BG}; color: {t.ACCENT_STRONG}; "
-            f"padding: 4px 10px; border-radius: 9999px; "
-            f"font-size: 11px; font-weight: 600;"
-        )
-        self.anthropic_chip.setFixedHeight(22)
-        self.anthropic_balance = QLabel("$11.80")
-        self.anthropic_balance.setStyleSheet(
-            f"color: {t.TEXT}; font-size: 24px; font-weight: 700; letter-spacing: -0.02em;"
-        )
-        anth_remaining = QLabel("remaining")
-        anth_remaining.setStyleSheet(
-            f"color: {t.TEXT_MUTED}; font-size: 12px; font-weight: 500;"
-        )
-        anth_row.addWidget(self.anthropic_chip, alignment=Qt.AlignVCenter)
-        anth_row.addWidget(self.anthropic_balance, alignment=Qt.AlignVCenter)
-        anth_row.addWidget(anth_remaining, alignment=Qt.AlignVCenter)
-        anth_row.addStretch()
-        anth_block.addLayout(anth_row)
-        lay.addLayout(anth_block)
-
-        lay.addWidget(self._divider())
-
-        # Row 3 — Estimated spend with period segmented control
+        # Estimated spend with period segmented control
         spend_block = QVBoxLayout(); spend_block.setSpacing(10)
         spend_head = QHBoxLayout(); spend_head.setSpacing(8); spend_head.setContentsMargins(0, 0, 0, 0)
         spend_eyebrow = QLabel("ESTIMATED SPEND"); spend_eyebrow.setObjectName("Muted")
@@ -300,6 +243,20 @@ class DashboardPage(QWidget):
             btn.setProperty("active", "1" if p == period else "0")
             btn.style().unpolish(btn); btn.style().polish(btn)
         self._refresh_spend()
+
+    def _apply_welcome_name(self):
+        name = core.load_user_name()
+        self.welcome.setText(f"Welcome back, {name}" if name else "Welcome back")
+
+    def _prompt_for_name_if_missing(self):
+        if core.load_user_name():
+            return
+        name, ok = QInputDialog.getText(
+            self, "Welcome", "What's your name?\nWe'll greet you on the dashboard.",
+        )
+        if ok and name.strip():
+            core.save_user_name(name)
+            self._apply_welcome_name()
 
     # ── Section: What are we making today? (3 tinted cards) ─────────────────
 
@@ -1613,7 +1570,6 @@ class BrandDNAGeneratorDialog(QDialog):
         self._result = None
         self._worker: BrandDNAWorker | None = None
         self._thread: QThread | None = None
-        self._candidate_checks: list[tuple[QPushButton, object]] = []
         self._build()
 
     def _build(self):
@@ -1830,18 +1786,21 @@ class BrandDNAGeneratorDialog(QDialog):
         left_w = QWidget(); left_w.setLayout(left)
         cols.addWidget(left_w, 6)
 
-        # Right: candidate images
+        # Right: manual product image upload (you attach your own packshot —
+        # we don't pre-pick from scraped candidates).
         right = QVBoxLayout(); right.setSpacing(10)
-        right.addWidget(_field_label("PRODUCT IMAGE CANDIDATES  ·  pick the ones to attach"))
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self._cand_container = QWidget()
-        self._cand_grid = QGridLayout(self._cand_container)
-        self._cand_grid.setSpacing(8); self._cand_grid.setContentsMargins(0, 0, 0, 0)
-        self._cand_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        scroll.setWidget(self._cand_container)
-        scroll.setMinimumWidth(280)
-        right.addWidget(scroll, 1)
+        right.addWidget(_field_label("PRODUCT IMAGES  ·  attach your own packshots"))
+        hint = QLabel(
+            "Click + to upload your own product photos. The Brand DNA above was "
+            "generated from the sources you provided — these images are what the "
+            "brand will use as references for ad generation."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 12px;")
+        right.addWidget(hint)
+        self._product_images_editor = ProductImagesEditor()
+        right.addWidget(self._product_images_editor)
+        right.addStretch()
         right_w = QWidget(); right_w.setLayout(right)
         cols.addWidget(right_w, 4)
 
@@ -1859,48 +1818,10 @@ class BrandDNAGeneratorDialog(QDialog):
 
     def _populate_review(self):
         self._dna_edit.setPlainText(self._result.dna_text)
-        # Clear existing
-        while self._cand_grid.count():
-            item = self._cand_grid.takeAt(0)
-            wid = item.widget()
-            if wid: wid.deleteLater()
-        self._candidate_checks.clear()
-
-        # Show product-tagged candidates first, then others.
-        cands = sorted(
-            self._result.candidates,
-            key=lambda c: (0 if c.tag == "product" else 1 if c.tag == "lifestyle" else 2),
-        )
-        for i, cand in enumerate(cands[:24]):
-            wrap = QFrame()
-            wrap.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 10px; padding: 6px;")
-            wl = QVBoxLayout(wrap); wl.setSpacing(4); wl.setContentsMargins(6, 6, 6, 6)
-            try:
-                thumb = ThumbLabel(Path(cand.path), 110, 110, 8)
-                wl.addWidget(thumb, alignment=Qt.AlignCenter)
-            except Exception:
-                ph = QLabel("?"); ph.setFixedSize(110, 110)
-                ph.setAlignment(Qt.AlignCenter)
-                wl.addWidget(ph)
-            tag_lbl = QLabel(cand.tag or "?")
-            tag_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 10px;")
-            tag_lbl.setAlignment(Qt.AlignCenter)
-            wl.addWidget(tag_lbl)
-            chk = QPushButton("✓ Keep" if cand.tag == "product" else "Keep")
-            chk.setCheckable(True)
-            chk.setChecked(cand.tag == "product")
-            chk.setCursor(Qt.PointingHandCursor)
-            chk.setObjectName("PrimaryBtn" if cand.tag == "product" else "GhostBtn")
-            chk.toggled.connect(
-                lambda checked, b=chk: (
-                    b.setObjectName("PrimaryBtn" if checked else "GhostBtn"),
-                    b.setText("✓ Keep" if checked else "Keep"),
-                    b.style().unpolish(b), b.style().polish(b),
-                )
-            )
-            wl.addWidget(chk)
-            self._cand_grid.addWidget(wrap, i // 2, i % 2)
-            self._candidate_checks.append((chk, cand))
+        # Scraped candidates are intentionally not surfaced to the user —
+        # they were used in-memory by Claude for visual context during DNA
+        # generation, then the on-disk copies are wiped. The user attaches
+        # their own product images via the editor on the right.
 
     def _save_brand(self):
         name = self._name_edit.text().strip()
@@ -1911,10 +1832,10 @@ class BrandDNAGeneratorDialog(QDialog):
         if not dna_text:
             QMessageBox.warning(self, "Empty DNA", "The DNA text is empty.")
             return
-        kept = [str(cand.path) for chk, cand in self._candidate_checks if chk.isChecked()]
+        kept = self._product_images_editor.paths()
         if not kept:
             QMessageBox.warning(self, "No product image",
-                                "Pick at least one image to use as the brand's reference.")
+                                "Upload at least one product image (click + on the right).")
             return
         try:
             core.save_brand(name=name, dna=dna_text, product_image_sources=kept)
@@ -3077,11 +2998,11 @@ class BRollPage(QWidget):
         cnt_l = QLabel("SHOTS PER CATEGORY"); cnt_l.setObjectName("Muted")
         form.addWidget(cnt_l)
         cnt_row = QHBoxLayout(); cnt_row.setSpacing(10)
-        self.cnt_usage = self._count_spinner("USAGE", 2)
-        self.cnt_pres = self._count_spinner("PRESENTATION", 2)
-        self.cnt_ecu = self._count_spinner("ECU", 2)
-        self.cnt_inact = self._count_spinner("IN-ACTION", 2)
-        self.cnt_selfie = self._count_spinner("SELFIE", 0)
+        self.cnt_usage = self._count_spinner("USAGE")
+        self.cnt_pres = self._count_spinner("PRESENTATION")
+        self.cnt_ecu = self._count_spinner("ECU")
+        self.cnt_inact = self._count_spinner("IN-ACTION")
+        self.cnt_selfie = self._count_spinner("SELFIE")
         for col in (self.cnt_usage, self.cnt_pres, self.cnt_ecu,
                     self.cnt_inact, self.cnt_selfie):
             cnt_row.addLayout(col["layout"], 1)
@@ -3140,10 +3061,10 @@ class BRollPage(QWidget):
         self.cost_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
         form.addWidget(self.cost_label)
         self._update_cost()
-        for s in (self.cnt_usage["spin"], self.cnt_pres["spin"],
-                  self.cnt_ecu["spin"], self.cnt_inact["spin"],
-                  self.cnt_selfie["spin"]):
-            s.valueChanged.connect(self._update_cost)
+        for c in (self.cnt_usage["combo"], self.cnt_pres["combo"],
+                  self.cnt_ecu["combo"], self.cnt_inact["combo"],
+                  self.cnt_selfie["combo"]):
+            c.currentIndexChanged.connect(self._update_cost)
         self.res.currentTextChanged.connect(self._update_cost)
         self.image_model.currentIndexChanged.connect(self._update_cost)
 
@@ -3193,12 +3114,15 @@ class BRollPage(QWidget):
         body.addWidget(right_w, 5)
         return wrap
 
-    def _count_spinner(self, label_text: str, default: int) -> dict:
+    def _count_spinner(self, label_text: str) -> dict:
         col = QVBoxLayout(); col.setSpacing(6)
         col.addWidget(_field_label(label_text))
-        spin = QSpinBox(); spin.setRange(0, 12); spin.setValue(default)
-        col.addWidget(spin)
-        return {"layout": col, "spin": spin}
+        combo = QComboBox()
+        for i in range(0, 11):
+            combo.addItem(str(i), userData=i)
+        combo.setCurrentIndex(0)
+        col.addWidget(combo)
+        return {"layout": col, "combo": combo}
 
     def _build_approve_panel(self) -> QWidget:
         wrap = QWidget()
@@ -3341,11 +3265,11 @@ class BRollPage(QWidget):
 
     def _counts(self) -> dict[str, int]:
         return {
-            "usage": self.cnt_usage["spin"].value(),
-            "presentation": self.cnt_pres["spin"].value(),
-            "ecu": self.cnt_ecu["spin"].value(),
-            "in_action": self.cnt_inact["spin"].value(),
-            "selfie": self.cnt_selfie["spin"].value(),
+            "usage": int(self.cnt_usage["combo"].currentText()),
+            "presentation": int(self.cnt_pres["combo"].currentText()),
+            "ecu": int(self.cnt_ecu["combo"].currentText()),
+            "in_action": int(self.cnt_inact["combo"].currentText()),
+            "selfie": int(self.cnt_selfie["combo"].currentText()),
         }
 
     def _update_cost(self):
