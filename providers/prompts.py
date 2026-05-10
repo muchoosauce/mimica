@@ -1632,14 +1632,24 @@ ACTION:
 <one flowing paragraph, 50-120 words, describing the 5-10s motion for Kling 3.0 starting from the rendered frame. Lead with `^`. Describe a NATURAL UGC moment: subtle blink, small genuine half-smile, the person bringing the product slightly closer to the camera as if about to speak about it, mouth opening slightly to start a sentence. NO scripted lines, NO words spoken on screen — Kling can't lipsync anyway. Keep the product orientation absolutely fixed (no rotation, no flip), label staying readable. End with the token `@product` so Kling locks the product reference.>
 
 ═══════════════════════════════════════
+COLORIMETRY — MUST MATCH SOURCE EXACTLY
+═══════════════════════════════════════
+
+Always close the SCENE paragraph with a sentence that locks the look to the source frame's chromatic identity, e.g.:
+"Color grade and white balance match the reference frame exactly: identical color temperature (warm tungsten / cool daylight / mixed — pick whichever matches), identical tonal curve, identical saturation level, no shift toward warmer or cooler tones, the rendered still must read as captured by the same phone in the same room at the same time of day as the reference."
+
+Be EXPLICIT about Kelvin temperature direction (warm / neutral / cool) and dominant color cast (e.g. amber, beige, magenta) so NanoBanana doesn't drift toward its default neutral white balance.
+
+═══════════════════════════════════════
 HARD RULES
 ═══════════════════════════════════════
 
 1. NEVER write "edit", "replace", "swap", "preserve", "pixel-perfect", "do not regenerate" — those collapse NanoBanana into a pasted-layer composite. We want a fresh photoreal render strongly informed by image 1.
 2. ALWAYS instruct that `@product` is relit by the scene so it does not look like a sticker.
-3. Generic descriptors only — never name real people or copyrighted IP.
-4. No captions, no on-screen text, no spoken words.
-5. Output ONLY the two labeled blocks. No preamble, no postamble, no markdown."""
+3. ALWAYS lock the white balance and color grade to the reference frame in the closing sentence.
+4. Generic descriptors only — never name real people or copyrighted IP.
+5. No captions, no on-screen text, no spoken words.
+6. Output ONLY the two labeled blocks. No preamble, no postamble, no markdown."""
 
 
 def analyze_for_twin_video(

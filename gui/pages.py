@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -13,6 +13,16 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QSlider, QSpinBox, QStackedWidget, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
 )
+
+# QtMultimedia ships with PySide6 on every supported platform but the install
+# can omit the multimedia plugins on a stripped Linux build — fall back to a
+# thumbnail-only Result step in that case rather than crashing the whole app.
+try:
+    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput  # noqa: F401
+    from PySide6.QtMultimediaWidgets import QVideoWidget  # noqa: F401
+    _HAS_VIDEO_PLAYER = True
+except Exception:
+    _HAS_VIDEO_PLAYER = False
 
 from . import core
 from . import theme as t
@@ -5175,13 +5185,43 @@ class TwinVideoPage(QWidget):
         wrap = QWidget()
         body = QHBoxLayout(wrap); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(14)
 
+        # The form is dense — wrap it in a scroll area so widgets don't get
+        # squished or rendered on top of one another at smaller window sizes.
         form_card = Card()
         form_card.setMinimumWidth(520)
         card_lay = QVBoxLayout(form_card)
-        card_lay.setContentsMargins(22, 20, 22, 20); card_lay.setSpacing(16)
+        card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        form_inner = QWidget()
+        form = QVBoxLayout(form_inner)
+        form.setContentsMargins(22, 20, 22, 20); form.setSpacing(16)
+        scroll.setWidget(form_inner)
+        card_lay.addWidget(scroll)
+
+        # 1. BRAND — first row so the user picks the product before anything
+        # else, with a 48×48 thumbnail next to the combo to confirm at a
+        # glance which packaging will be injected (same pattern as Adapt).
+        brand_l = QLabel("BRAND  ·  source of the new product"); brand_l.setObjectName("Muted")
+        form.addWidget(brand_l)
+        brand_row = QHBoxLayout(); brand_row.setSpacing(10); brand_row.setContentsMargins(0, 0, 0, 0)
+        self.brand_combo = QComboBox()
+        self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
+        brand_row.addWidget(self.brand_combo, 1)
+        self.brand_thumb = QLabel()
+        self.brand_thumb.setFixedSize(48, 48)
+        self.brand_thumb.setStyleSheet(
+            f"background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED}; "
+            f"border-radius: 12px;"
+        )
+        brand_row.addWidget(self.brand_thumb)
+        form.addLayout(brand_row)
+
+        # 2. SOURCE FRAME
         ref_l = QLabel("SOURCE FRAME"); ref_l.setObjectName("Muted")
-        card_lay.addWidget(ref_l)
+        form.addWidget(ref_l)
         sub = QLabel(
             "Drop one frame from your old UGC ad. We use it as the visual reference "
             "for the person, the room, the lighting and the camera vibe — and "
@@ -5190,30 +5230,23 @@ class TwinVideoPage(QWidget):
         )
         sub.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
         sub.setWordWrap(True)
-        card_lay.addWidget(sub)
+        form.addWidget(sub)
         self.drop = DropZone()
         self.drop.file_dropped.connect(self._on_frame_picked)
-        card_lay.addWidget(self.drop)
+        form.addWidget(self.drop)
 
-        brand_l = QLabel("BRAND  ·  source of the new product"); brand_l.setObjectName("Muted")
-        card_lay.addWidget(brand_l)
-        self.brand_combo = QComboBox()
-        # Switching brand mid-flow must drop the cached product URLs and the
-        # already-rendered frame — otherwise the next render reuses the OLD
-        # brand's uploads and generates the wrong product in hand.
-        self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
-        card_lay.addWidget(self.brand_combo)
-
+        # 3. HINT
         hint_l = QLabel("HINT  ·  optional"); hint_l.setObjectName("Muted")
-        card_lay.addWidget(hint_l)
+        form.addWidget(hint_l)
         self.hint = QTextEdit()
         self.hint.setPlaceholderText(
             "Optional directive: 'wider framing', 'brighter morning light', "
             "'creator brings the product closer to her face', etc."
         )
         self.hint.setMinimumHeight(64); self.hint.setMaximumHeight(96)
-        card_lay.addWidget(self.hint)
+        form.addWidget(self.hint)
 
+        # 4. Params row — duration + audio
         params_row = QHBoxLayout(); params_row.setSpacing(14)
 
         col_dur = QVBoxLayout(); col_dur.setSpacing(4)
@@ -5253,8 +5286,9 @@ class TwinVideoPage(QWidget):
         )
         col_aud.addWidget(self.audio_toggle)
         params_row.addLayout(col_aud, 1)
-        card_lay.addLayout(params_row)
+        form.addLayout(params_row)
 
+        # 5. Models + resolution row
         models_row = QHBoxLayout(); models_row.setSpacing(14)
         col_im = QVBoxLayout(); col_im.setSpacing(6)
         col_im.addWidget(_field_label("Image model"))
@@ -5277,15 +5311,20 @@ class TwinVideoPage(QWidget):
         self.resolution.setCurrentText("1k")
         col_res.addWidget(self.resolution)
         models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1); models_row.addLayout(col_res, 1)
-        card_lay.addLayout(models_row)
+        form.addLayout(models_row)
 
-        card_lay.addStretch()
+        form.addStretch()
 
+        # 6. Analyze button — sits OUTSIDE the scroll area so it's always
+        # reachable even on small windows.
+        btn_row = QHBoxLayout(); btn_row.setContentsMargins(22, 12, 22, 18)
         self.analyze_btn = QPushButton("Analyze frame")
         self.analyze_btn.setObjectName("PrimaryBtn"); self.analyze_btn.setCursor(Qt.PointingHandCursor)
         self.analyze_btn.clicked.connect(self._start_analyze)
         self.analyze_btn.setEnabled(False)
-        card_lay.addWidget(self.analyze_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self.analyze_btn)
+        card_lay.addLayout(btn_row)
 
         body.addWidget(form_card, 1)
 
@@ -5428,17 +5467,96 @@ class TwinVideoPage(QWidget):
         hl.addWidget(new_btn)
         col.addWidget(head)
 
+        body = QHBoxLayout(); body.setSpacing(14)
+
+        # Left: embedded video preview (or thumbnail fallback). The card
+        # owns the QVideoWidget + QMediaPlayer so they live as long as the
+        # page; we only set the source URL when a clip exists.
+        player_card = Card()
+        player_lay = QVBoxLayout(player_card)
+        player_lay.setContentsMargins(20, 18, 20, 18); player_lay.setSpacing(10)
+        player_lay.addWidget(QLabel("Generated clip", objectName="H3"))
+        if _HAS_VIDEO_PLAYER:
+            self.video_widget = QVideoWidget()
+            self.video_widget.setMinimumSize(360, 480)
+            self.video_widget.setStyleSheet(
+                f"background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED}; "
+                f"border-radius: 12px;"
+            )
+            self.video_player = QMediaPlayer(self)
+            self.video_audio = QAudioOutput(self)
+            self.video_player.setAudioOutput(self.video_audio)
+            self.video_player.setVideoOutput(self.video_widget)
+            player_lay.addWidget(self.video_widget, 1)
+            ctrl_row = QHBoxLayout(); ctrl_row.setSpacing(8); ctrl_row.setContentsMargins(0, 0, 0, 0)
+            self.play_btn = QPushButton("▶ Play")
+            self.play_btn.setObjectName("GhostBtn"); self.play_btn.setCursor(Qt.PointingHandCursor)
+            self.play_btn.setEnabled(False)
+            self.play_btn.clicked.connect(self._toggle_playback)
+            ctrl_row.addWidget(self.play_btn)
+            self.replay_btn = QPushButton("↺ Replay")
+            self.replay_btn.setObjectName("GhostBtn"); self.replay_btn.setCursor(Qt.PointingHandCursor)
+            self.replay_btn.setEnabled(False)
+            self.replay_btn.clicked.connect(self._replay)
+            ctrl_row.addWidget(self.replay_btn)
+            ctrl_row.addStretch()
+            player_lay.addLayout(ctrl_row)
+        else:
+            self.video_widget = None
+            self.video_player = None
+            self.video_audio = None
+            self.play_btn = None
+            self.replay_btn = None
+            self.video_thumb = QLabel("waiting for clip…")
+            self.video_thumb.setAlignment(Qt.AlignCenter)
+            self.video_thumb.setMinimumSize(360, 480)
+            self.video_thumb.setStyleSheet(
+                f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; "
+                f"border: 1px solid {t.BORDER_MUTED}; border-radius: 12px;"
+            )
+            player_lay.addWidget(self.video_thumb, 1)
+            open_in_player = QPushButton("Open in default player")
+            open_in_player.setObjectName("GhostBtn"); open_in_player.setCursor(Qt.PointingHandCursor)
+            open_in_player.clicked.connect(self._open_clip_externally)
+            player_lay.addWidget(open_in_player)
+        body.addWidget(player_card, 3)
+
         log_card = Card()
         log_lay = QVBoxLayout(log_card); log_lay.setContentsMargins(20, 18, 20, 18); log_lay.setSpacing(10)
         log_lay.addWidget(QLabel("Activity", objectName="H2"))
         self.result_log = QPlainTextEdit(); self.result_log.setReadOnly(True)
         self.result_log.setMinimumHeight(140)
         log_lay.addWidget(self.result_log)
-        col.addWidget(log_card, 1)
+        body.addWidget(log_card, 2)
+        col.addLayout(body, 1)
 
         return wrap
 
     # ── Logic ──────────────────────────────────────────────────────────────
+
+    def _toggle_playback(self):
+        if not self.video_player:
+            return
+        from PySide6.QtMultimedia import QMediaPlayer as _MP
+        if self.video_player.playbackState() == _MP.PlayingState:
+            self.video_player.pause()
+            self.play_btn.setText("▶ Play")
+        else:
+            self.video_player.play()
+            self.play_btn.setText("⏸ Pause")
+
+    def _replay(self):
+        if self.video_player:
+            self.video_player.setPosition(0)
+            self.video_player.play()
+            if self.play_btn:
+                self.play_btn.setText("⏸ Pause")
+
+    def _open_clip_externally(self):
+        if self._out_dir:
+            clip = self._out_dir / "clip.mp4"
+            if clip.exists():
+                open_path(clip)
 
     def refresh_brands(self):
         cur = self.brand_combo.currentText() if hasattr(self, "brand_combo") else ""
@@ -5449,6 +5567,27 @@ class TwinVideoPage(QWidget):
             i = self.brand_combo.findText(cur)
             if i >= 0:
                 self.brand_combo.setCurrentIndex(i)
+        self._refresh_brand_thumb()
+
+    def _refresh_brand_thumb(self):
+        """Show the selected brand's hero product image in the 48px chip
+        next to the combo, so the user knows which packaging will be
+        injected before clicking Analyze."""
+        if not hasattr(self, "brand_thumb"):
+            return
+        from .widgets import round_pixmap
+        name = self.brand_combo.currentText() if self.brand_combo.count() else ""
+        brand = core.load_brands().get(name) if name else None
+        pi = (brand or {}).get("product_image", "")
+        if pi and Path(pi).exists():
+            self.brand_thumb.setPixmap(round_pixmap(Path(pi), 48, 48, 12))
+            self.brand_thumb.setStyleSheet("background: transparent;")
+        else:
+            self.brand_thumb.clear()
+            self.brand_thumb.setStyleSheet(
+                f"background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED}; "
+                f"border-radius: 12px;"
+            )
 
     def _on_frame_picked(self, p: str):
         self._frame_path = p or None
@@ -5473,6 +5612,7 @@ class TwinVideoPage(QWidget):
             self.animate_btn.setEnabled(False)
         if hasattr(self, "preview_open_btn"):
             self.preview_open_btn.setEnabled(False)
+        self._refresh_brand_thumb()
 
     def _append_log(self, target: QPlainTextEdit, level: str, msg: str):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -5662,13 +5802,27 @@ class TwinVideoPage(QWidget):
     def _on_animate_done(self, _out: str):
         self._thread.quit(); self._thread.wait()
         self.cancel_btn.hide()
-        if self._out_dir and (self._out_dir / "clip.mp4").exists():
+        clip = (self._out_dir / "clip.mp4") if self._out_dir else None
+        if clip and clip.exists():
             self.result_pill.setText("Done")
             self.result_pill.setStyleSheet(
                 f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
                 f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
             self.open_folder_btn.setEnabled(True)
+            # Hook the clip into the embedded player and start it autoplay
+            # so the user sees the result the second the step opens.
+            if self.video_player is not None:
+                self.video_player.setSource(QUrl.fromLocalFile(str(clip)))
+                self.video_player.play()
+                if self.play_btn:
+                    self.play_btn.setEnabled(True); self.play_btn.setText("⏸ Pause")
+                if self.replay_btn:
+                    self.replay_btn.setEnabled(True)
+            else:
+                # Fallback path (no QtMultimedia): just label the placeholder.
+                if hasattr(self, "video_thumb") and self.video_thumb is not None:
+                    self.video_thumb.setText("clip.mp4 ready — click button to open")
         else:
             self.result_pill.setText("Failed")
             self.result_pill.setStyleSheet(
@@ -5783,6 +5937,16 @@ class TwinVideoPage(QWidget):
         self.preview_log.clear()
         self.result_log.clear()
         self.animate_btn.setEnabled(False)
+        # Stop and clear the video player so the previous clip doesn't linger.
+        if self.video_player is not None:
+            self.video_player.stop()
+            self.video_player.setSource(QUrl())
+            if self.play_btn:
+                self.play_btn.setEnabled(False); self.play_btn.setText("▶ Play")
+            if self.replay_btn:
+                self.replay_btn.setEnabled(False)
+        elif hasattr(self, "video_thumb") and self.video_thumb is not None:
+            self.video_thumb.setText("waiting for clip…")
         self._set_step(0)
 
 
