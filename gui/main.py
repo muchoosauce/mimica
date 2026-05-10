@@ -299,6 +299,7 @@ class MainWindow(QMainWindow):
         self.history.open_run.connect(self._open_run)
         self.detail.back.connect(lambda: self._on_nav("history"))
         self.detail.resume_broll.connect(self._resume_broll)
+        self.detail.resume_twin_video.connect(self._resume_twin_video)
         self.adapt.open_brands.connect(lambda: self._on_nav("brands"))
         self.broll.open_brands.connect(lambda: self._on_nav("brands"))
         self.funnel.open_brands.connect(lambda: self._on_nav("brands"))
@@ -362,3 +363,7 @@ class MainWindow(QMainWindow):
     def _resume_broll(self, run: dict):
         if self.broll.load_run(run):
             self._on_nav("broll")
+
+    def _resume_twin_video(self, run: dict):
+        if self.twin.load_twin_video_run(run):
+            self._on_nav("twin")

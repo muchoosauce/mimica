@@ -1004,8 +1004,8 @@ class HistoryPage(QWidget):
 
 class RunDetailPage(QWidget):
     back = Signal()
-    resume_broll = Signal(dict)  # Emit when user wants to resume a B-roll image
-                                 # run at the approval / video-generation step.
+    resume_broll = Signal(dict)      # B-roll image run → animation step
+    resume_twin_video = Signal(dict)  # Twin Video run → animate from saved frame
 
     def __init__(self):
         super().__init__()
@@ -1069,17 +1069,32 @@ class RunDetailPage(QWidget):
         except Exception: pass
         self.open_btn.clicked.connect(lambda _=None, path=r["dir"]: open_path(path))
 
-        # Show the Continue-to-videos shortcut iff this is a B-roll image run
-        # whose images haven't been animated yet (no .mp4 files in the dir).
-        is_broll_images = r.get("type") == "broll_images"
+        # Show the Continue shortcut for runs that have a usable artifact on
+        # disk but no final clip yet — saves the user from redoing setup.
+        run_type = r.get("type")
         has_videos = any(str(img).lower().endswith(".mp4") for img in r.get("images", []))
-        if is_broll_images and not has_videos and ok > 0:
+        run_dir = Path(r.get("dir") or "")
+        has_twin_frame = (
+            run_type == "twin_video"
+            and run_dir.exists()
+            and (run_dir / "generated_frame.png").exists()
+        )
+
+        if run_type == "broll_images" and not has_videos and ok > 0:
+            self.continue_btn.setText("Continue to videos →")
+            self.continue_btn.show()
+        elif has_twin_frame and not has_videos:
+            self.continue_btn.setText("Resume animation →")
             self.continue_btn.show()
         else:
             self.continue_btn.hide()
 
     def _emit_resume(self):
-        if self._current_run:
+        if not self._current_run:
+            return
+        if self._current_run.get("type") == "twin_video":
+            self.resume_twin_video.emit(self._current_run)
+        else:
             self.resume_broll.emit(self._current_run)
 
         while self.grid.count():
@@ -4363,7 +4378,13 @@ class TwinVideoFrameWorker(QObject):
 
 
 class TwinVideoAnimateWorker(QObject):
-    """Animate a previously-generated starting frame into a Kling clip."""
+    """Animate a previously-generated starting frame into a Kling clip.
+
+    When resuming a run from History, the in-memory URLs are gone (cached
+    only on the active page session). The worker can take a local
+    `image_path` instead of an `image_url` and re-upload it before calling
+    Kling — same for the brand's product references.
+    """
     log = Signal(str, str)
     result = Signal(dict)
     finished = Signal(str)
@@ -4371,10 +4392,12 @@ class TwinVideoAnimateWorker(QObject):
     def __init__(self, out_dir: str, image_url: str, action_prompt: str,
                  brand_name: str, product_urls: list, duration: int,
                  aspect: str, sound: bool, scene_prompt_used: str,
-                 source_frame: str, image_model: str, video_model: str):
+                 source_frame: str, image_model: str, video_model: str,
+                 image_path: str = ""):
         super().__init__()
         self._out_dir = out_dir
         self._image_url = image_url
+        self._image_path = image_path  # fallback to upload from disk if URL missing
         self._action_prompt = action_prompt
         self._brand_name = brand_name
         self._product_urls = product_urls
@@ -4390,7 +4413,52 @@ class TwinVideoAnimateWorker(QObject):
     def cancel(self):
         self._cancel = True
 
+    def _emit_log(self, lvl: str, msg: str):
+        self.log.emit(lvl, msg)
+
+    def _ensure_urls(self) -> bool:
+        """Re-upload local files if the cached URLs are missing. Returns
+        True on success."""
+        if self._image_url and self._product_urls:
+            return True
+        provider = core.get_active_provider()
+        provider.set_logger(self._emit_log)
+        if not provider.is_configured():
+            self._emit_log("ERR", f"{provider.display_name} key not set.")
+            return False
+        try:
+            if not self._image_url:
+                if not self._image_path or not Path(self._image_path).exists():
+                    self._emit_log("ERR", "No image URL and no local image path to upload.")
+                    return False
+                self._emit_log("INFO", "Re-uploading generated frame for animation...")
+                self._image_url = provider.upload_image(Path(self._image_path))
+            if not self._product_urls:
+                brands = core.load_brands()
+                brand = brands.get(self._brand_name) or {}
+                paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+                if not paths:
+                    self._emit_log("ERR", f"Brand '{self._brand_name}' has no product images on disk.")
+                    return False
+                self._emit_log("INFO", f"Re-uploading {len(paths)} product reference(s)...")
+                self._product_urls = []
+                for pp in paths[:4]:
+                    try:
+                        self._product_urls.append(provider.upload_image(pp))
+                    except Exception as e:
+                        self._emit_log("WARN", f"Skipped {pp.name}: {e}")
+                if not self._product_urls:
+                    self._emit_log("ERR", "No product references uploaded.")
+                    return False
+        except Exception as e:
+            self._emit_log("ERR", f"Re-upload failed: {e}")
+            return False
+        return True
+
     def run(self):
+        if not self._ensure_urls():
+            self.finished.emit("")
+            return
         out = core.run_twin_video_animate(
             out_dir=Path(self._out_dir),
             image_url=self._image_url,
@@ -4400,7 +4468,7 @@ class TwinVideoAnimateWorker(QObject):
             duration=self._duration,
             aspect=self._aspect,
             sound=self._sound,
-            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_log=self._emit_log,
             on_result=lambda r: self.result.emit(r),
             should_cancel=lambda: self._cancel,
             scene_prompt_used=self._scene_prompt_used,
@@ -5285,6 +5353,11 @@ class TwinVideoPage(QWidget):
         back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
         back.clicked.connect(lambda: self._set_step(1))
         hl.addWidget(back)
+        self.preview_open_btn = QPushButton("Open folder")
+        self.preview_open_btn.setObjectName("GhostBtn"); self.preview_open_btn.setCursor(Qt.PointingHandCursor)
+        self.preview_open_btn.setEnabled(False)
+        self.preview_open_btn.clicked.connect(self._open_out_folder)
+        hl.addWidget(self.preview_open_btn)
         self.rerender_btn = QPushButton("Re-render frame")
         self.rerender_btn.setObjectName("GhostBtn"); self.rerender_btn.setCursor(Qt.PointingHandCursor)
         self.rerender_btn.clicked.connect(self._start_render_frame)
@@ -5484,6 +5557,7 @@ class TwinVideoPage(QWidget):
         self._image_url = out.get("image_url")
         self._image_path = Path(out["image_path"]) if out.get("image_path") else None
         self._scene_prompt_used = out.get("scene_prompt_used") or self.scene_edit.toPlainText()
+        self.preview_open_btn.setEnabled(bool(self._out_dir and self._out_dir.exists()))
 
         # Display the local PNG in the preview thumb. Scale to fit the label
         # while preserving aspect ratio; keep transformation smooth.
@@ -5511,7 +5585,11 @@ class TwinVideoPage(QWidget):
     # ── Phase B-2: animate the validated frame ────────────────────────────
 
     def _start_animate(self):
-        if not self._image_url or not self._out_dir:
+        if not self._out_dir:
+            QMessageBox.warning(self, "No frame", "Render an image first."); return
+        # On a resumed run the in-memory URL is gone but the local image is
+        # still on disk — the worker will re-upload it on demand.
+        if not self._image_url and not (self._image_path and Path(self._image_path).exists()):
             QMessageBox.warning(self, "No frame", "Render an image first."); return
         action = self.action_edit.toPlainText().strip()
         if not action:
@@ -5530,7 +5608,8 @@ class TwinVideoPage(QWidget):
         self._thread = QThread()
         self._animate_worker = TwinVideoAnimateWorker(
             out_dir=str(self._out_dir),
-            image_url=self._image_url,
+            image_url=self._image_url or "",
+            image_path=str(self._image_path) if self._image_path else "",
             action_prompt=action,
             brand_name=self.brand_combo.currentText(),
             product_urls=list(self._product_urls),
@@ -5577,6 +5656,96 @@ class TwinVideoPage(QWidget):
     def _open_out_folder(self):
         if self._out_dir and self._out_dir.exists():
             open_path(self._out_dir)
+
+    def load_run(self, run: dict) -> bool:
+        """Rehydrate the page at the Preview step from a previous Twin Video
+        run on disk. Used when the user reopens a run from History whose
+        starting frame was generated but whose Kling animation never
+        succeeded — they pick up right before the Animate button.
+
+        Re-upload of the frame and product refs is deferred to the moment
+        the user actually clicks Animate (handled inside the worker).
+        """
+        run_dir = Path(run.get("dir") or "")
+        if not run_dir.exists():
+            QMessageBox.warning(self, "Run unavailable", f"Folder not found:\n{run_dir}")
+            return False
+        if run.get("type") != "twin_video":
+            return False
+        gen_frame = run_dir / "generated_frame.png"
+        if not gen_frame.exists():
+            QMessageBox.information(
+                self, "Nothing to resume",
+                "This run has no generated_frame.png — start over from Setup.",
+            )
+            return False
+
+        # Read the prompts the user reviewed last time, if they were saved.
+        scene_path = run_dir / "scene_prompt.txt"
+        action_path = run_dir / "action_prompt.txt"
+        scene = scene_path.read_text(encoding="utf-8").strip() if scene_path.exists() else ""
+        action = action_path.read_text(encoding="utf-8").strip() if action_path.exists() else ""
+
+        # The original source frame may have been copied with .png/.jpg/etc.
+        source_frames = sorted(run_dir.glob("source_frame.*"))
+        source_frame_path = str(source_frames[0]) if source_frames else ""
+
+        params = run.get("params") or {}
+        brand_name = run.get("brand", "")
+
+        # Reset caches — uploads will happen on demand inside the worker.
+        self._out_dir = run_dir
+        self._frame_path = source_frame_path
+        self._image_path = gen_frame
+        self._image_url = None
+        self._source_frame_url = None
+        self._product_urls = []
+        self._scene_prompt_used = scene
+
+        # Restore form fields where we can.
+        if brand_name:
+            i = self.brand_combo.findText(brand_name)
+            if i >= 0:
+                self.brand_combo.setCurrentIndex(i)
+        self.scene_edit.setPlainText(scene)
+        self.action_edit.setPlainText(action)
+        if params.get("duration"):
+            try:
+                self.duration_slider.setValue(int(params["duration"]))
+            except Exception:
+                pass
+        self.audio_toggle.setChecked(bool(params.get("sound", False)))
+        if params.get("image_model"):
+            for i in range(self.image_model.count()):
+                if self.image_model.itemData(i) == params["image_model"]:
+                    self.image_model.setCurrentIndex(i); break
+        if params.get("video_model"):
+            for i in range(self.video_model.count()):
+                if self.video_model.itemData(i) == params["video_model"]:
+                    self.video_model.setCurrentIndex(i); break
+
+        # Show the saved frame in the Preview thumb.
+        from PySide6.QtGui import QPixmap
+        pm = QPixmap(str(gen_frame))
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self.preview_thumb.width(), self.preview_thumb.height(),
+                Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
+            self.preview_thumb.setPixmap(scaled)
+
+        self.preview_log.clear()
+        self.result_log.clear()
+        self._append_log(self.preview_log, "INFO", f"Resumed from {run_dir.name}")
+        self.preview_pill.setText("Resumed")
+        self.preview_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+        self.animate_btn.setEnabled(True)
+        self.preview_open_btn.setEnabled(True)
+        self._set_step(2)
+        return True
 
     def _reset_for_new_run(self):
         # Wipe per-run caches so the next render creates a fresh output dir
@@ -5693,6 +5862,14 @@ class TwinHubPage(QWidget):
         if hasattr(self.image_page, "refresh_brands"):
             self.image_page.refresh_brands()
         self.video_page.refresh_brands()
+
+    def load_twin_video_run(self, run: dict) -> bool:
+        """Switch to the Video tab and rehydrate it from a previous run on
+        disk. Returns True if the run was loaded."""
+        ok = self.video_page.load_run(run)
+        if ok:
+            self._set_mode("video")
+        return ok
 
 
 # ─── Animation (multi-shot narrative video) ──────────────────────────────────
