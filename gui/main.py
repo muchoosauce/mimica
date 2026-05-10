@@ -11,7 +11,7 @@ from . import core
 from . import theme as t
 from .pages import (
     AdaptPage, AnimationPage, BatchFixPage, BrandsPage, BRollPage, DashboardPage,
-    FunnelAdsPage, GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinPage
+    FunnelAdsPage, GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinHubPage
 )
 from .swap_page import SwapPage
 from pathlib import Path as _PathForAssets
@@ -268,7 +268,7 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardPage()
         self.animation = AnimationPage()
         self.funnel = FunnelAdsPage()
-        self.twin = TwinPage()
+        self.twin = TwinHubPage()
         self.swap = SwapPage()
         self.generate = GeneratePage()
         self.adapt = AdaptPage()
@@ -303,6 +303,7 @@ class MainWindow(QMainWindow):
         self.broll.open_brands.connect(lambda: self._on_nav("brands"))
         self.funnel.open_brands.connect(lambda: self._on_nav("brands"))
         self.animation.open_brands.connect(lambda: self._on_nav("brands"))
+        self.twin.open_brands.connect(lambda: self._on_nav("brands"))
         self.settings.provider_changed.connect(self._on_provider_changed)
 
         self._on_nav("dashboard")

@@ -41,6 +41,7 @@ from providers.prompts import (
     FUNNEL_STAGES,
     FUNNEL_SYSTEM_PROMPTS,
     analyze_image_for_twin as _analyze_twin,
+    analyze_for_twin_video as _analyze_twin_video,
     analyze_video_for_swap as _analyze_swap,
     generate_animation_character_prompt as _gen_anim_char_prompt,
     generate_broll_image_prompts as _gen_broll_img_prompts,
@@ -1941,6 +1942,309 @@ def run_twin_generate(
     except Exception as e:
         on_log("ERR", str(e))
         return out_dir
+
+
+# ─── Twin VIDEO pipeline (UGC hook clone with brand product injection) ──────
+#
+# Different intent from Twin (image): we take a frame from the user's old UGC
+# ad and clone the scene into a NEW 5-10s clip with their new brand product
+# injected. Two phases:
+#   A. analyze — Vision LLM looks at the frame + the brand DNA → returns
+#      {scene, action} prompts the user can review/edit.
+#   B. generate — image gen with the product as ref produces a fresh starting
+#      frame, then Kling 3.0 animates it with the action prompt + product
+#      locking. Output is a single mp4 + report.json so it shows in History.
+
+def run_twin_video_analyze(
+    frame_path: str,
+    brand_name: str,
+    hint: str,
+    on_log: Callable[[str, str], None],
+    *,
+    provider_name: Optional[str] = None,
+) -> Optional[dict]:
+    """Phase A — analyze a UGC frame and return {scene, action, brand_dna,
+    product_paths} for the user to review before generating.
+    Returns None on error.
+    """
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    src = Path(frame_path).expanduser().resolve()
+    if not src.exists():
+        on_log("ERR", f"File not found: {src}")
+        return None
+
+    brands = load_brands()
+    brand = brands.get(brand_name)
+    if not brand:
+        on_log("ERR", f"Brand '{brand_name}' not found.")
+        return None
+    product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+    if not product_paths:
+        on_log("ERR", f"Brand '{brand_name}' has no product images on disk.")
+        return None
+
+    brand_dna = (brand.get("dna") or "").strip()
+    # The vision LLM only needs a tight product description, not the whole DNA
+    # (which can be 5000+ chars and dilutes the analysis). Pull a couple of
+    # paragraphs around "Product" / "packaging" if present, else fall back to
+    # the first 1200 chars.
+    product_blurb = _extract_product_blurb(brand_dna) or brand_dna[:1200]
+
+    try:
+        on_log("INFO", f"Uploading reference frame: {src.name}")
+        frame_url = provider.upload_image(src)
+        on_log("INFO", "Analyzing frame + product with vision LLM...")
+        out = _analyze_twin_video(
+            provider, frame_url=frame_url,
+            product_description=product_blurb, hint=hint,
+        )
+        on_log(
+            "OK",
+            f"Analysis done · scene {len(out['scene'].split())} words · "
+            f"action {len(out['action'].split())} words",
+        )
+        out["brand_dna"] = brand_dna
+        out["product_paths"] = [str(p) for p in product_paths]
+        out["frame_path"] = str(src)
+        return out
+    except Exception as e:
+        on_log("ERR", str(e))
+        return None
+
+
+def _extract_product_blurb(dna: str) -> str:
+    """Pull the section of a Brand DNA describing packaging/product cues, if
+    present. Looks for headings like '## Product', '## Packaging', etc.
+    """
+    if not dna:
+        return ""
+    lines = dna.splitlines()
+    keep: list[str] = []
+    grabbing = False
+    for line in lines:
+        ls = line.strip().lower()
+        if ls.startswith("##") or ls.startswith("# "):
+            grabbing = any(
+                k in ls for k in
+                ("product", "packaging", "visual style", "signature", "pack")
+            )
+            if grabbing:
+                keep.append(line)
+                continue
+            if keep and not grabbing:
+                break
+        elif grabbing:
+            keep.append(line)
+    return "\n".join(keep).strip()
+
+
+def run_twin_video_generate(
+    frame_path: str,
+    scene_prompt: str,
+    action_prompt: str,
+    brand_name: str,
+    duration: int,
+    aspect: str,
+    sound: bool,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    video_model: str = DEFAULT_VIDEO_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Phase B — render a new starting frame (image gen with product ref),
+    then animate it into a Kling clip. Writes report.json with
+    type='twin_video' so the run shows up in History.
+    """
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+    if video_model not in VIDEO_MODELS:
+        on_log("ERR", f"Unknown video model: {video_model!r}")
+        return None
+    if not (scene_prompt or "").strip() or not (action_prompt or "").strip():
+        on_log("ERR", "Empty scene or action prompt.")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    brands = load_brands()
+    brand = brands.get(brand_name)
+    if not brand:
+        on_log("ERR", f"Brand '{brand_name}' not found.")
+        return None
+    product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
+    if not product_paths:
+        on_log("ERR", f"Brand '{brand_name}' has no product images on disk.")
+        return None
+
+    src = Path(frame_path).expanduser().resolve()
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    label = _safe_name(brand_name) or "brand"
+    out_dir = base / f"{ts}_twin_video_{label}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+    on_log(
+        "INFO",
+        f"Provider: {provider.display_name} · Image: {IMAGE_MODEL_LABELS[image_model]} · "
+        f"Video: {VIDEO_MODEL_LABELS[video_model]} · {duration}s · {aspect}",
+    )
+
+    # Persist the prompts the user reviewed, plus a copy of the source frame,
+    # so the run is reproducible and inspectable from the dir alone.
+    (out_dir / "scene_prompt.txt").write_text(scene_prompt.strip() + "\n", encoding="utf-8")
+    (out_dir / "action_prompt.txt").write_text(action_prompt.strip() + "\n", encoding="utf-8")
+    if src.exists():
+        try:
+            shutil.copy2(src, out_dir / f"source_frame{src.suffix or '.png'}")
+        except Exception:
+            pass
+
+    result_entry: dict = {
+        "index": 1, "category": "twin_video", "status": "pending",
+        "scene_prompt": scene_prompt, "action_prompt": action_prompt,
+    }
+
+    try:
+        # 1) Upload product refs once — used for both image gen and Kling locking.
+        on_log("INFO", f"Uploading {len(product_paths)} product reference image(s)...")
+        product_urls: list[str] = []
+        for pp in product_paths[:4]:
+            if should_cancel():
+                return out_dir
+            try:
+                product_urls.append(provider.upload_image(pp))
+            except Exception as e:
+                on_log("WARN", f"Skipped product ref {pp.name}: {e}")
+        if not product_urls:
+            on_log("ERR", "No product references uploaded — abort.")
+            return out_dir
+
+        if should_cancel():
+            return out_dir
+
+        # 2) Image generation: inject the user's product into the cloned scene.
+        # Pass the product image(s) as image-to-image references via call_image
+        # so the model preserves logo / label / color faithfully.
+        on_log("INFO", "Generating starting frame with product injected...")
+        local_scene = scene_prompt
+        try:
+            try:
+                start_img_url = provider.call_image(
+                    model=image_model, prompt=local_scene,
+                    image_urls=product_urls,
+                    resolution="1080x1920" if aspect == "9:16" else "1024x1024",
+                    aspect_ratio=aspect, label="twin-vid-frame",
+                )
+            except CensorshipError:
+                on_log("WARN", "Frame blocked by content filter — softening prompt")
+                local_scene = _soften(provider, local_scene, "")
+                start_img_url = provider.call_image(
+                    model=image_model, prompt=local_scene,
+                    image_urls=product_urls,
+                    resolution="1080x1920" if aspect == "9:16" else "1024x1024",
+                    aspect_ratio=aspect, label="twin-vid-frame-retry",
+                )
+        except Exception as e:
+            on_log("ERR", f"Image generation failed: {e}")
+            result_entry["status"] = "error"; result_entry["error"] = str(e)
+            on_result(result_entry)
+            _write_twin_video_report(out_dir, ts, brand_name, video_model, image_model,
+                                     duration, aspect, sound, [result_entry], src)
+            return out_dir
+
+        frame_dest = out_dir / "generated_frame.png"
+        try:
+            provider.download(start_img_url, frame_dest)
+            on_log("OK", f"Starting frame ready: {frame_dest.name}")
+        except Exception as e:
+            on_log("WARN", f"Could not save frame locally: {e}")
+
+        if should_cancel():
+            return out_dir
+
+        # 3) Animate via Kling 3.0 image-to-video. Pass product URLs again so
+        # call_video can use them as kling_elements for locking (with the
+        # locking-failure fallback we wired yesterday).
+        on_log("INFO", "Animating with Kling...")
+        clip_url = provider.call_video(
+            model=video_model, prompt=action_prompt,
+            image_url=start_img_url,
+            duration=int(duration), aspect_ratio=aspect, sound=bool(sound),
+            product_reference_urls=product_urls, label="twin-video",
+        )
+        clip_dest = out_dir / "clip.mp4"
+        provider.download(clip_url, clip_dest)
+        on_log("OK", f"Clip saved: {clip_dest.name}")
+
+        result_entry.update({
+            "status": "ok",
+            "image_url": start_img_url,
+            "video_url": clip_url,
+            "file": clip_dest.name,
+            "scene_prompt": local_scene,
+        })
+        on_result(result_entry)
+        _write_twin_video_report(
+            out_dir, ts, brand_name, video_model, image_model,
+            duration, aspect, sound, [result_entry], src,
+        )
+        on_log("OK", "Twin video done.")
+        return out_dir
+
+    except Exception as e:
+        on_log("ERR", str(e))
+        result_entry["status"] = "error"; result_entry["error"] = str(e)
+        on_result(result_entry)
+        _write_twin_video_report(
+            out_dir, ts, brand_name, video_model, image_model,
+            duration, aspect, sound, [result_entry], src,
+        )
+        return out_dir
+
+
+def _write_twin_video_report(
+    out_dir: Path, ts: str, brand_name: str, video_model: str,
+    image_model: str, duration: int, aspect: str, sound: bool,
+    results: list[dict], source_frame: Path,
+) -> None:
+    report = {
+        "type": "twin_video",
+        "timestamp": ts,
+        "brand": brand_name,
+        "source_frame": str(source_frame),
+        "params": {
+            "duration": int(duration),
+            "aspect_ratio": aspect,
+            "sound": bool(sound),
+            "image_model": image_model,
+            "video_model": video_model,
+            "provider": get_active_provider_name(),
+            "iterations": 1,
+        },
+        "results": results,
+    }
+    try:
+        (out_dir / "report.json").write_text(
+            json.dumps(report, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 # ─── Swap product pipeline (Seedance v2 video-to-video) ─────────────────────

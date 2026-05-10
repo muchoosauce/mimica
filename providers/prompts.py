@@ -1571,6 +1571,117 @@ def analyze_image_for_twin(
     return cleaned
 
 
+# ─── TWIN VIDEO (UGC hook recreation with brand product injection) ──────────
+#
+# Different intent than TWIN_SYSTEM_PROMPT: instead of recreating an image, we
+# clone a UGC scene from a frame of the user's old video and inject their NEW
+# brand product into it. Output is structured (JSON-ish) with two fields so
+# the pipeline can route them: `scene` drives the start-frame image generation,
+# `action` drives the Kling video animation.
+
+TWIN_VIDEO_SYSTEM_PROMPT = """You are a UGC video direction expert. The user gives you ONE frame from an existing UGC ad and a description of THEIR new product. Your job: imagine a fresh 5-10 second UGC hook clip with the SAME person, SAME outfit, SAME location, SAME mood — but with the user's new product replacing whatever the original product was.
+
+═══════════════════════════════════════
+WHAT TO CAPTURE FROM THE REFERENCE FRAME
+═══════════════════════════════════════
+
+Silently read:
+- SUBJECT: a single creator (gender, approximate age range, ethnicity descriptor, hair, build) — describe generically, never name a real person
+- WARDROBE: top, bottom (if visible), accessories, fabric textures
+- LOCATION: bedroom / kitchen / bathroom / outdoor street / car / studio — specific decor cues (subway tile, oak counter, beige curtains, etc.)
+- LIGHTING: time of day, direction, color temperature, hardness
+- CAMERA: phone front / back, distance (selfie / arm / mid), angle
+- MOOD: candid / intimate / energetic / relaxed
+- AESTHETIC: raw iPhone capture / polished studio / film grain / portrait mode — describe the exact rendering style
+
+Mentally STRIP every overlay (caption, sticker, logo on the original product, watermark, text). The clone must produce a clean, overlay-free clip.
+
+═══════════════════════════════════════
+WHAT THE USER'S PRODUCT IS
+═══════════════════════════════════════
+
+The user message contains a PRODUCT block with the new product's description (packaging, label color, format, key visual cues). This product replaces whatever was in the source frame's hands. Always refer to it as `@product` in the action prompt — Kling resolves that token to the locked product reference.
+
+═══════════════════════════════════════
+OUTPUT FORMAT — STRICT
+═══════════════════════════════════════
+
+Output exactly two labeled blocks, in this order, nothing else:
+
+SCENE:
+<one flowing paragraph, 80-160 words, describing the FIRST FRAME of the new clip — same person/outfit/location/lighting as the reference, holding @product naturally at chest or eye level, label readable, body composed but not posed. This text is fed to a text-to-image model (NanoBanana 2) with the product image as reference, so describe the scene with rich sensory detail but keep the product description matching the user's description.>
+
+ACTION:
+<one flowing paragraph, 50-120 words, describing the 5-10s motion for Kling 3.0. Lead with `^`. Describe a NATURAL UGC moment: the person looks at the product, brings it slightly closer to the camera, gives a small genuine half-smile or mouths the start of a sentence as if about to speak about it. NO scripted lines, NO words spoken on screen — Kling can't lipsync anyway. Keep the product orientation absolutely fixed (no rotation, no flip), label staying readable. End with the token `@product` so Kling locks the product reference.>
+
+═══════════════════════════════════════
+HARD RULES
+═══════════════════════════════════════
+
+1. Person, outfit, location, lighting, camera aesthetic = COPIED from reference (keep the vibe).
+2. Product = ALWAYS the user's new product (from PRODUCT block), referenced as `@product` in ACTION.
+3. Generic descriptors only — never name real people, real brands other than via `@product`.
+4. No spoken words, no captions, no on-screen text.
+5. No camera tricks (zoom out, drone, dolly) — UGC means held-by-hand stable framing.
+6. Output ONLY the two labeled blocks. No preamble, no postamble, no markdown."""
+
+
+def analyze_for_twin_video(
+    provider: "Provider",
+    frame_url: str,
+    product_description: str,
+    hint: str = "",
+) -> dict:
+    """Vision-LLM call: read a UGC ad frame and return {scene, action} prompts
+    tailored to clone the scene with a different product injected.
+
+    `product_description` is a short paragraph from the brand's DNA describing
+    the packaging (label colors, format, container shape, signature cues). It
+    is interpolated into the SCENE block so NanoBanana renders the new product
+    accurately even before the image-to-image reference is applied.
+
+    Returns: {"scene": <str>, "action": <str>}.
+    """
+    user_lines = [
+        "Reference UGC frame: [attached]",
+        "",
+        "PRODUCT (the user's new product to inject in place of the original):",
+        product_description.strip() or "(no product description supplied)",
+    ]
+    h = (hint or "").strip()
+    if h:
+        user_lines.append("")
+        user_lines.append(f"HINT: {h}")
+    user_lines.append("")
+    user_lines.append(
+        "Output the two labeled blocks SCENE: and ACTION: per the system rules."
+    )
+    text = provider.call_llm(
+        prompt="\n".join(user_lines),
+        image_url=frame_url,
+        system_prompt=TWIN_VIDEO_SYSTEM_PROMPT,
+        label="LLM-twin-video",
+    )
+    raw = (text or "").strip()
+    # Forgiving parser: split on the labels regardless of casing / surrounding
+    # whitespace, fall back to the whole text in either field if one is missing.
+    import re
+    m_scene = re.search(r"SCENE\s*:\s*(.*?)(?=\n\s*ACTION\s*:|$)", raw, re.IGNORECASE | re.DOTALL)
+    m_action = re.search(r"ACTION\s*:\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
+    scene = (m_scene.group(1) if m_scene else raw).strip()
+    action = (m_action.group(1) if m_action else "").strip()
+    if not action:
+        # Last-ditch: use the scene as the action seed, prefix with ^.
+        action = "^ " + scene
+    if not action.lstrip().startswith("^"):
+        action = "^ " + action
+    if "@product" not in action:
+        action = action.rstrip() + " @product"
+    if not scene:
+        raise RuntimeError("Twin video analysis returned empty SCENE block.")
+    return {"scene": scene, "action": action}
+
+
 def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:
     """Ask the LLM to rewrite a content-filter-rejected prompt."""
     text = provider.call_llm(

@@ -4293,6 +4293,56 @@ class TwinGenerateWorker(QObject):
         self.finished.emit(str(out) if out else "")
 
 
+class TwinVideoAnalyzeWorker(QObject):
+    log = Signal(str, str)
+    finished = Signal(dict)  # {scene, action, brand_dna, product_paths, frame_path}
+
+    def __init__(self, frame_path: str, brand_name: str, hint: str):
+        super().__init__()
+        self._frame = frame_path
+        self._brand = brand_name
+        self._hint = hint
+
+    def run(self):
+        out = core.run_twin_video_analyze(
+            self._frame, self._brand, self._hint,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+        ) or {}
+        self.finished.emit(out)
+
+
+class TwinVideoGenerateWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    out_dir_signal = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, frame_path: str, scene_prompt: str, action_prompt: str,
+                 brand_name: str, duration: int, aspect: str, sound: bool,
+                 image_model: str, video_model: str):
+        super().__init__()
+        self._args = (frame_path, scene_prompt, action_prompt, brand_name,
+                      duration, aspect, sound)
+        self._image_model = image_model
+        self._video_model = video_model
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_twin_video_generate(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            image_model=self._image_model,
+            video_model=self._video_model,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
 class TwinPage(QWidget):
     def __init__(self):
         super().__init__()
@@ -4911,6 +4961,493 @@ class TwinPage(QWidget):
             item = self.video_grid.takeAt(0)
             w = item.widget()
             if w: w.deleteLater()
+
+
+class TwinVideoPage(QWidget):
+    """Clone a UGC hook from a source frame, swap the product for the user's
+    brand product, animate into a Kling clip. Distinct from TwinPage which
+    only recreates an image (text-to-image, no product injection)."""
+    open_brands = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._analyze_worker: TwinVideoAnalyzeWorker | None = None
+        self._gen_worker: TwinVideoGenerateWorker | None = None
+        self._thread: QThread | None = None
+        self._frame_path: str | None = None
+        self._out_dir: Path | None = None
+        self._build()
+        self.refresh_brands()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
+
+        self.stepper = QHBoxLayout()
+        self.stepper.setSpacing(8); self.stepper.setContentsMargins(0, 0, 0, 0)
+        self._step_pills: list[QLabel] = []
+        for name in ("1. Setup", "2. Review", "3. Result"):
+            pill = QLabel(name)
+            pill.setStyleSheet(
+                f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                f"border-radius: 999px; font-size: 11px; font-weight: 700;"
+            )
+            self._step_pills.append(pill)
+            self.stepper.addWidget(pill)
+        self.stepper.addStretch()
+        root.addLayout(self.stepper)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._build_setup_panel())
+        self.stack.addWidget(self._build_review_panel())
+        self.stack.addWidget(self._build_result_panel())
+        root.addWidget(self.stack, 1)
+        self._set_step(0)
+
+    def _set_step(self, idx: int):
+        self.stack.setCurrentIndex(idx)
+        for i, pill in enumerate(self._step_pills):
+            if i == idx:
+                pill.setStyleSheet(
+                    f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
+                )
+            elif i < idx:
+                pill.setStyleSheet(
+                    f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
+                )
+            else:
+                pill.setStyleSheet(
+                    f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
+                )
+
+    # ── Step 1: Setup ───────────────────────────────────────────────────────
+
+    def _build_setup_panel(self) -> QWidget:
+        wrap = QWidget()
+        body = QHBoxLayout(wrap); body.setContentsMargins(0, 0, 0, 0); body.setSpacing(14)
+
+        form_card = Card()
+        form_card.setMinimumWidth(520)
+        card_lay = QVBoxLayout(form_card)
+        card_lay.setContentsMargins(22, 20, 22, 20); card_lay.setSpacing(16)
+
+        ref_l = QLabel("SOURCE FRAME"); ref_l.setObjectName("Muted")
+        card_lay.addWidget(ref_l)
+        sub = QLabel(
+            "Drop one frame extracted from your old UGC ad. The person, outfit, "
+            "location and mood are cloned; only the product is replaced by the "
+            "selected brand's product."
+        )
+        sub.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        sub.setWordWrap(True)
+        card_lay.addWidget(sub)
+        self.drop = DropZone()
+        self.drop.path_changed.connect(self._on_frame_picked)
+        card_lay.addWidget(self.drop)
+
+        brand_l = QLabel("BRAND  ·  source of the new product"); brand_l.setObjectName("Muted")
+        card_lay.addWidget(brand_l)
+        self.brand_combo = QComboBox()
+        card_lay.addWidget(self.brand_combo)
+
+        hint_l = QLabel("HINT  ·  optional"); hint_l.setObjectName("Muted")
+        card_lay.addWidget(hint_l)
+        self.hint = QTextEdit()
+        self.hint.setPlaceholderText(
+            "Optional directive: 'wider framing', 'brighter morning light', "
+            "'creator brings the product closer to her face', etc."
+        )
+        self.hint.setMinimumHeight(64); self.hint.setMaximumHeight(96)
+        card_lay.addWidget(self.hint)
+
+        params_row = QHBoxLayout(); params_row.setSpacing(14)
+
+        col_dur = QVBoxLayout(); col_dur.setSpacing(4)
+        dur_top = QHBoxLayout(); dur_top.setContentsMargins(0, 0, 0, 0); dur_top.setSpacing(8)
+        dur_top.addWidget(_field_label("Duration"))
+        dur_top.addStretch()
+        self.duration_value_lbl = QLabel("5s")
+        self.duration_value_lbl.setStyleSheet(
+            f"background: {t.BG_INPUT}; color: {t.TEXT}; padding: 2px 10px; "
+            f"border-radius: 8px; font-size: 12px; font-weight: 600;"
+        )
+        dur_top.addWidget(self.duration_value_lbl)
+        col_dur.addLayout(dur_top)
+        self.duration_slider = QSlider(Qt.Horizontal)
+        self.duration_slider.setRange(5, 10); self.duration_slider.setValue(5)
+        self.duration_slider.valueChanged.connect(
+            lambda v: self.duration_value_lbl.setText(f"{v}s")
+        )
+        col_dur.addWidget(self.duration_slider)
+        params_row.addLayout(col_dur, 3)
+
+        col_aud = QVBoxLayout(); col_aud.setSpacing(4)
+        col_aud.addWidget(_field_label("Native audio (×1.5)"))
+        self.audio_toggle = QPushButton("Audio OFF")
+        self.audio_toggle.setCheckable(True); self.audio_toggle.setChecked(False)
+        self.audio_toggle.setCursor(Qt.PointingHandCursor)
+        self.audio_toggle.setMinimumWidth(120)
+        self.audio_toggle.setStyleSheet(
+            f"QPushButton {{ background: {t.BG_INPUT}; color: {t.TEXT_DIM}; "
+            f"border: 1px solid {t.BORDER}; border-radius: 999px; padding: 6px 14px; "
+            f"font-size: 12px; font-weight: 600; }}"
+            f"QPushButton:checked {{ background: {t.ACCENT}; color: white; "
+            f"border: 1px solid {t.ACCENT}; }}"
+        )
+        self.audio_toggle.toggled.connect(
+            lambda on: self.audio_toggle.setText("Audio ON" if on else "Audio OFF")
+        )
+        col_aud.addWidget(self.audio_toggle)
+        params_row.addLayout(col_aud, 1)
+        card_lay.addLayout(params_row)
+
+        models_row = QHBoxLayout(); models_row.setSpacing(14)
+        col_im = QVBoxLayout(); col_im.setSpacing(6)
+        col_im.addWidget(_field_label("Image model"))
+        self.image_model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.image_model.addItem(label, userData=slug)
+        self.image_model.setCurrentIndex(0)
+        col_im.addWidget(self.image_model)
+        col_vm = QVBoxLayout(); col_vm.setSpacing(6)
+        col_vm.addWidget(_field_label("Video model"))
+        self.video_model = QComboBox()
+        for slug, label in core.VIDEO_MODEL_CHOICES:
+            self.video_model.addItem(label, userData=slug)
+        self.video_model.setCurrentIndex(0)
+        col_vm.addWidget(self.video_model)
+        models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1)
+        card_lay.addLayout(models_row)
+
+        card_lay.addStretch()
+
+        self.analyze_btn = QPushButton("Analyze frame")
+        self.analyze_btn.setObjectName("PrimaryBtn"); self.analyze_btn.setCursor(Qt.PointingHandCursor)
+        self.analyze_btn.clicked.connect(self._start_analyze)
+        self.analyze_btn.setEnabled(False)
+        card_lay.addWidget(self.analyze_btn)
+
+        body.addWidget(form_card, 1)
+
+        log_card = Card()
+        log_lay = QVBoxLayout(log_card); log_lay.setContentsMargins(20, 18, 20, 18); log_lay.setSpacing(10)
+        h = QLabel("Activity"); h.setObjectName("H2")
+        log_lay.addWidget(h)
+        self.analyze_log = QPlainTextEdit(); self.analyze_log.setReadOnly(True)
+        log_lay.addWidget(self.analyze_log, 1)
+        body.addWidget(log_card, 1)
+
+        return wrap
+
+    # ── Step 2: Review ─────────────────────────────────────────────────────
+
+    def _build_review_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Review prompts"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        back = QPushButton("← Back to setup")
+        back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(back)
+        self.generate_btn = QPushButton("Generate clip")
+        self.generate_btn.setObjectName("PrimaryBtn"); self.generate_btn.setCursor(Qt.PointingHandCursor)
+        self.generate_btn.clicked.connect(self._start_generate)
+        hl.addWidget(self.generate_btn)
+        col.addWidget(head)
+
+        body = QHBoxLayout(); body.setSpacing(14)
+
+        scene_card = Card()
+        sc_lay = QVBoxLayout(scene_card); sc_lay.setContentsMargins(20, 18, 20, 18); sc_lay.setSpacing(8)
+        sc_lay.addWidget(QLabel("SCENE  ·  drives the new starting frame", objectName="Muted"))
+        self.scene_edit = QPlainTextEdit()
+        self.scene_edit.setPlaceholderText("Scene description…")
+        sc_lay.addWidget(self.scene_edit, 1)
+        body.addWidget(scene_card, 1)
+
+        action_card = Card()
+        ac_lay = QVBoxLayout(action_card); ac_lay.setContentsMargins(20, 18, 20, 18); ac_lay.setSpacing(8)
+        ac_lay.addWidget(QLabel("ACTION  ·  drives the Kling motion", objectName="Muted"))
+        self.action_edit = QPlainTextEdit()
+        self.action_edit.setPlaceholderText("Kling action prompt…")
+        ac_lay.addWidget(self.action_edit, 1)
+        body.addWidget(action_card, 1)
+        col.addLayout(body, 1)
+        return wrap
+
+    # ── Step 3: Result ─────────────────────────────────────────────────────
+
+    def _build_result_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Twin video"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        self.result_pill = StatusPill("Idle", t.TEXT_MUTED)
+        hl.addWidget(self.result_pill)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("GhostBtn"); self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel_generate); self.cancel_btn.hide()
+        hl.addWidget(self.cancel_btn)
+        self.open_folder_btn = QPushButton("Open folder")
+        self.open_folder_btn.setObjectName("GhostBtn"); self.open_folder_btn.setCursor(Qt.PointingHandCursor)
+        self.open_folder_btn.setEnabled(False)
+        self.open_folder_btn.clicked.connect(self._open_out_folder)
+        hl.addWidget(self.open_folder_btn)
+        new_btn = QPushButton("New run")
+        new_btn.setObjectName("GhostBtn"); new_btn.setCursor(Qt.PointingHandCursor)
+        new_btn.clicked.connect(lambda: self._set_step(0))
+        hl.addWidget(new_btn)
+        col.addWidget(head)
+
+        log_card = Card()
+        log_lay = QVBoxLayout(log_card); log_lay.setContentsMargins(20, 18, 20, 18); log_lay.setSpacing(10)
+        log_lay.addWidget(QLabel("Activity", objectName="H2"))
+        self.result_log = QPlainTextEdit(); self.result_log.setReadOnly(True)
+        self.result_log.setMinimumHeight(140)
+        log_lay.addWidget(self.result_log)
+        col.addWidget(log_card, 1)
+
+        return wrap
+
+    # ── Logic ──────────────────────────────────────────────────────────────
+
+    def refresh_brands(self):
+        cur = self.brand_combo.currentText() if hasattr(self, "brand_combo") else ""
+        self.brand_combo.clear()
+        for name in sorted(core.load_brands().keys()):
+            self.brand_combo.addItem(name)
+        if cur:
+            i = self.brand_combo.findText(cur)
+            if i >= 0:
+                self.brand_combo.setCurrentIndex(i)
+
+    def _on_frame_picked(self, p: str):
+        self._frame_path = p or None
+        self.analyze_btn.setEnabled(bool(self._frame_path))
+
+    def _append_log(self, target: QPlainTextEdit, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        target.appendPlainText(f"[{ts}] {level:<4} {msg}")
+
+    def _start_analyze(self):
+        if not self._frame_path:
+            QMessageBox.warning(self, "No frame", "Drop a source frame first."); return
+        if self.brand_combo.count() == 0:
+            QMessageBox.warning(self, "No brand", "Add a brand in the Brands page first.")
+            self.open_brands.emit(); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self.analyze_log.clear()
+        self.analyze_btn.setEnabled(False); self.analyze_btn.setText("Analyzing…")
+        self._thread = QThread()
+        self._analyze_worker = TwinVideoAnalyzeWorker(
+            self._frame_path,
+            self.brand_combo.currentText(),
+            self.hint.toPlainText(),
+        )
+        self._analyze_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._analyze_worker.run)
+        self._analyze_worker.log.connect(
+            lambda lvl, msg: self._append_log(self.analyze_log, lvl, msg)
+        )
+        self._analyze_worker.finished.connect(self._on_analyze_done)
+        self._thread.start()
+
+    def _on_analyze_done(self, out: dict):
+        self._thread.quit(); self._thread.wait()
+        self.analyze_btn.setEnabled(True); self.analyze_btn.setText("Analyze frame")
+        scene = (out or {}).get("scene", "")
+        action = (out or {}).get("action", "")
+        if not scene or not action:
+            QMessageBox.warning(self, "Analysis failed",
+                                "The LLM did not return a usable scene + action. Check the log.")
+            return
+        self.scene_edit.setPlainText(scene)
+        self.action_edit.setPlainText(action)
+        self._set_step(1)
+
+    def _start_generate(self):
+        scene = self.scene_edit.toPlainText().strip()
+        action = self.action_edit.toPlainText().strip()
+        if not scene or not action:
+            QMessageBox.warning(self, "Empty prompts", "Both scene and action are required."); return
+        if not self._frame_path:
+            QMessageBox.warning(self, "No frame", "Source frame missing."); return
+
+        self.result_log.clear()
+        self._out_dir = None
+        self.open_folder_btn.setEnabled(False)
+        self.cancel_btn.show(); self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
+        self.result_pill.setText("Running")
+        self.result_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+        self._set_step(2)
+
+        self._thread = QThread()
+        self._gen_worker = TwinVideoGenerateWorker(
+            frame_path=self._frame_path,
+            scene_prompt=scene,
+            action_prompt=action,
+            brand_name=self.brand_combo.currentText(),
+            duration=self.duration_slider.value(),
+            aspect="9:16",
+            sound=self.audio_toggle.isChecked(),
+            image_model=self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+            video_model=self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
+        )
+        self._gen_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._gen_worker.run)
+        self._gen_worker.log.connect(
+            lambda lvl, msg: self._append_log(self.result_log, lvl, msg)
+        )
+        self._gen_worker.out_dir_signal.connect(self._on_gen_dir)
+        self._gen_worker.finished.connect(self._on_gen_done)
+        self._thread.start()
+
+    def _cancel_generate(self):
+        if self._gen_worker:
+            self._gen_worker.cancel()
+        self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
+
+    def _on_gen_dir(self, p: str):
+        self._out_dir = Path(p)
+
+    def _on_gen_done(self, _out: str):
+        self._thread.quit(); self._thread.wait()
+        self.cancel_btn.hide()
+        if self._out_dir and (self._out_dir / "clip.mp4").exists():
+            self.result_pill.setText("Done")
+            self.result_pill.setStyleSheet(
+                f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+            )
+            self.open_folder_btn.setEnabled(True)
+        else:
+            self.result_pill.setText("Failed")
+            self.result_pill.setStyleSheet(
+                f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+            )
+
+    def _open_out_folder(self):
+        if self._out_dir and self._out_dir.exists():
+            open_path(self._out_dir)
+
+
+class TwinHubPage(QWidget):
+    """Wraps Twin (image) and TwinVideoPage behind a segmented control so the
+    sidebar entry "Twin" houses both modes without polluting the nav."""
+    open_brands = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Twin"); h1.setObjectName("H1")
+        sub = QLabel(
+            "Recreate any visual reference. Image mode redraws a still from scratch; "
+            "Video mode clones a UGC hook with your brand product injected."
+        )
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        seg_row = QHBoxLayout(); seg_row.setSpacing(8); seg_row.setContentsMargins(0, 0, 0, 0)
+        self._mode_btns: dict[str, QPushButton] = {}
+        for key, label in (("image", "Image"), ("video", "Video")):
+            btn = QPushButton(label)
+            btn.setCheckable(True); btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(36); btn.setMinimumWidth(140)
+            btn.clicked.connect(lambda _=False, k=key: self._set_mode(k))
+            seg_row.addWidget(btn)
+            self._mode_btns[key] = btn
+        seg_row.addStretch()
+        root.addLayout(seg_row)
+
+        self.image_page = TwinPage()
+        self.video_page = TwinVideoPage()
+        # The sub-pages render their own "Twin" header — hide it here to avoid
+        # duplicating the H1 inside the hub.
+        for sp in (self.image_page, self.video_page):
+            try:
+                sp.layout().setContentsMargins(0, 0, 0, 0)
+            except Exception:
+                pass
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.image_page)
+        self.stack.addWidget(self.video_page)
+        root.addWidget(self.stack, 1)
+
+        self.image_page.open_brands.connect(self.open_brands.emit) if hasattr(
+            self.image_page, "open_brands"
+        ) else None
+        self.video_page.open_brands.connect(self.open_brands.emit)
+
+        self._set_mode("image")
+
+    def _set_mode(self, key: str):
+        for k, btn in self._mode_btns.items():
+            active = (k == key)
+            btn.setChecked(active)
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton {"
+                    f" background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                    f" stop:0 {t.ACCENT}, stop:1 {t.ACCENT_PINK});"
+                    f" color: #FFFFFF;"
+                    f" border: 1px solid transparent;"
+                    f" border-radius: 999px;"
+                    f" font-size: 12px; font-weight: 700;"
+                    f" padding: 0 18px;"
+                    " }"
+                    "QPushButton:checked {"
+                    f" background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                    f" stop:0 {t.ACCENT}, stop:1 {t.ACCENT_PINK});"
+                    f" color: #FFFFFF;"
+                    " }"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton {"
+                    f" background: {t.BG_INPUT}; color: {t.TEXT_DIM};"
+                    f" border: 1px solid {t.BORDER};"
+                    f" border-radius: 999px;"
+                    f" font-size: 12px; font-weight: 600;"
+                    f" padding: 0 18px;"
+                    " }"
+                    "QPushButton:hover {"
+                    f" background: {t.BG_HOVER}; color: {t.TEXT};"
+                    f" border: 1px solid {t.ACCENT};"
+                    " }"
+                )
+        self.stack.setCurrentIndex(0 if key == "image" else 1)
+
+    def refresh_brands(self):
+        if hasattr(self.image_page, "refresh_brands"):
+            self.image_page.refresh_brands()
+        self.video_page.refresh_brands()
 
 
 # ─── Animation (multi-shot narrative video) ──────────────────────────────────
