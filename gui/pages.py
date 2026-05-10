@@ -6276,7 +6276,14 @@ class AnimationPage(QWidget):
         bl2 = QLabel("BRIEF  ·  one shot per line"); bl2.setObjectName("Muted")
         fl.addWidget(bl2)
         self.brief = QTextEdit()
-        self.brief.setPlaceholderText(
+        # Qt's QTextEdit only renders the first line of a multi-line
+        # placeholder, so the example multi-shot pattern lives below the
+        # textarea as a static dim-styled label instead.
+        self.brief.setPlaceholderText("One shot per line — describe what happens in each plan.")
+        self.brief.setMinimumHeight(160)
+        fl.addWidget(self.brief)
+        example_lbl = QLabel(
+            "Example:\n"
             "Plan 1 — A hand opens the cream jar in a soft morning bathroom.\n"
             "Plan 2 — Macro of cream applied to the cheek.\n"
             "Plan 3 — Side profile, the creator looks at the jar and smiles.\n"
@@ -6284,8 +6291,13 @@ class AnimationPage(QWidget):
             "Plan 5 — Hand places the jar back on the marble shelf.\n"
             "Plan 6 — Pack-shot: the jar centered on a clean countertop."
         )
-        self.brief.setMinimumHeight(140)
-        fl.addWidget(self.brief)
+        example_lbl.setStyleSheet(
+            f"color: {t.TEXT_MUTED}; font-size: 11px; line-height: 1.5; "
+            f"padding: 8px 12px; background: {t.BG_INPUT}; "
+            f"border: 1px solid {t.BORDER_MUTED}; border-radius: 12px;"
+        )
+        example_lbl.setWordWrap(True)
+        fl.addWidget(example_lbl)
 
         pl = QLabel("PRODUCT  ·  optional"); pl.setObjectName("Muted")
         fl.addWidget(pl)
