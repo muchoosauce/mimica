@@ -3969,17 +3969,44 @@ class FunnelAdsPage(QWidget):
             active = (s == stage)
             btn.setChecked(active)
             if active:
+                # Match PrimaryBtn: violet→pink gradient + white text + pill.
+                # Explicit `:checked` rule prevents Qt's default checked-state
+                # cascade from bleeding through (the green-ish flash seen
+                # before came from that interaction).
                 btn.setStyleSheet(
-                    f"QPushButton {{ background: {t.ACCENT}22; color: {t.ACCENT}; "
-                    f"border: 1.5px solid {t.ACCENT}; border-radius: 12px; "
-                    f"font-size: 12px; font-weight: 700; padding: 0 16px; }}"
+                    "QPushButton {"
+                    f" background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                    f" stop:0 {t.ACCENT}, stop:1 {t.ACCENT_PINK});"
+                    f" color: #FFFFFF;"
+                    f" border: 1px solid transparent;"
+                    f" border-radius: 999px;"
+                    f" font-size: 12px; font-weight: 700;"
+                    f" padding: 0 16px;"
+                    " }"
+                    "QPushButton:checked {"
+                    f" background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                    f" stop:0 {t.ACCENT}, stop:1 {t.ACCENT_PINK});"
+                    f" color: #FFFFFF;"
+                    f" border: 1px solid transparent;"
+                    " }"
+                    "QPushButton:hover {"
+                    f" background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                    f" stop:0 {t.ACCENT_STRONG}, stop:1 {t.ACCENT_PINK});"
+                    " }"
                 )
             else:
                 btn.setStyleSheet(
-                    f"QPushButton {{ background: {t.BG_INPUT}; color: {t.TEXT_DIM}; "
-                    f"border: 1.5px solid {t.BORDER}; border-radius: 12px; "
-                    f"font-size: 12px; font-weight: 600; padding: 0 16px; }}"
-                    f"QPushButton:hover {{ background: {t.BG_HOVER}; color: {t.TEXT}; }}"
+                    "QPushButton {"
+                    f" background: {t.BG_INPUT}; color: {t.TEXT_DIM};"
+                    f" border: 1px solid {t.BORDER};"
+                    f" border-radius: 999px;"
+                    f" font-size: 12px; font-weight: 600;"
+                    f" padding: 0 16px;"
+                    " }"
+                    "QPushButton:hover {"
+                    f" background: {t.BG_HOVER}; color: {t.TEXT};"
+                    f" border: 1px solid {t.ACCENT};"
+                    " }"
                 )
 
         # Rebuild segment rows for the chosen stage. Preserve previously
