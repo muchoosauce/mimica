@@ -2815,6 +2815,7 @@ def create_animation_project(
     style_refs: Optional[list[str]] = None,
     default_duration: int = ANIMATION_DEFAULT_DURATION,
     style: str = "realistic",
+    style_custom_image: Optional[str] = None,
 ) -> Path:
     """Create a fresh project on disk with status='brief'. Copies the product
     and style-ref images into the project folder so the run is self-contained
@@ -2852,6 +2853,18 @@ def create_animation_project(
         except Exception:
             pass
 
+    # Custom style ref image — copied into refs/ so the project stays
+    # self-contained and resumable even if the user's source file moves.
+    saved_custom_style = ""
+    if style == "custom" and style_custom_image and Path(style_custom_image).exists():
+        src = Path(style_custom_image)
+        dst = refs_dir / f"style_custom{src.suffix.lower() or '.jpg'}"
+        try:
+            shutil.copy2(src, dst)
+            saved_custom_style = str(dst)
+        except Exception:
+            pass
+
     state = {
         "type": "animation",
         "version": 1,
@@ -2867,6 +2880,7 @@ def create_animation_project(
         "product": saved_product,
         "style_refs": saved_refs,
         "style": style or "realistic",
+        "style_custom_image": saved_custom_style,
         "scenario": {},
         "characters": {},
         "shots": {},
@@ -3073,8 +3087,11 @@ def run_animation_shot_image(
     # renders and avoids fighting between style ref and the anchor.
     style_key = (state.get("style") or "").strip()
     if is_anchor_shot and style_key and style_key != "realistic":
-        from providers.prompts import resolve_style_ref
-        ref_path = resolve_style_ref(style_key)
+        if style_key == "custom":
+            ref_path = state.get("style_custom_image") or ""
+        else:
+            from providers.prompts import resolve_style_ref
+            ref_path = resolve_style_ref(style_key)
         if ref_path and Path(ref_path).exists():
             refs.append(Path(ref_path))
     if use_anchor and not is_anchor_shot:

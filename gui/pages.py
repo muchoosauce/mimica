@@ -6250,6 +6250,11 @@ class AnimationPage(QWidget):
         self.image_model = QComboBox()
         for slug, label in core.IMAGE_MODEL_CHOICES:
             self.image_model.addItem(label, userData=slug)
+        # Nano Banana Pro preserves small logo / label text better than Banana 2
+        # or GPT Image 2 — best default for multi-shot ads.
+        for i in range(self.image_model.count()):
+            if self.image_model.itemData(i) == "nano_banana_pro":
+                self.image_model.setCurrentIndex(i); break
         col_im.addWidget(self.image_model)
         col_vm = QVBoxLayout(); col_vm.setSpacing(6)
         col_vm.addWidget(_field_label("Video model"))
@@ -6299,25 +6304,30 @@ class AnimationPage(QWidget):
         example_lbl.setWordWrap(True)
         fl.addWidget(example_lbl)
 
-        # Style picker — 4×N grid of clickable vignettes. The anchor (shot 1)
-        # render injects the chosen preset's ref image + style descriptor; all
-        # later shots inherit the aesthetic through the anchor.
-        sl = QLabel("STYLE"); sl.setObjectName("Muted")
-        fl.addWidget(sl)
+        # Style picker — compact "Style: <current> ▾" button that opens a
+        # popover with the full 4×N preset grid + a Custom option. Keeps the
+        # Brief panel tight while leaving 16 looks one click away.
         self.style_key = "realistic"
-        self.style_tiles: dict[str, QFrame] = {}
-        style_grid = QGridLayout()
-        style_grid.setSpacing(8); style_grid.setContentsMargins(0, 0, 0, 0)
-        from providers.prompts import ANIMATION_STYLES, resolve_style_ref
-        items = list(ANIMATION_STYLES.items())
-        cols = 4
-        for i, (key, st) in enumerate(items):
-            r, c = divmod(i, cols)
-            tile = self._make_style_tile(key, st, resolve_style_ref(key))
-            style_grid.addWidget(tile, r, c)
-            self.style_tiles[key] = tile
-        fl.addLayout(style_grid)
-        self._refresh_style_tiles()
+        self.style_custom_image = ""   # filled when user picks "Custom..."
+        sl_row = QHBoxLayout(); sl_row.setSpacing(10); sl_row.setContentsMargins(0, 0, 0, 0)
+        sl = QLabel("STYLE"); sl.setObjectName("Muted")
+        sl_row.addWidget(sl)
+        self.style_thumb = QLabel()
+        self.style_thumb.setFixedSize(36, 36)
+        self.style_thumb.setStyleSheet(
+            f"background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED}; "
+            f"border-radius: 8px;"
+        )
+        sl_row.addWidget(self.style_thumb)
+        self.style_btn = QPushButton("Realistic  ▾")
+        self.style_btn.setObjectName("GhostBtn")
+        self.style_btn.setCursor(Qt.PointingHandCursor)
+        self.style_btn.setMinimumWidth(180)
+        self.style_btn.clicked.connect(self._open_style_picker)
+        sl_row.addWidget(self.style_btn)
+        sl_row.addStretch()
+        fl.addLayout(sl_row)
+        self._refresh_style_button()
 
         pl = QLabel("PRODUCT  ·  optional"); pl.setObjectName("Muted")
         fl.addWidget(pl)
@@ -6954,8 +6964,9 @@ class AnimationPage(QWidget):
         # Restore the picked style preset, falling back to "realistic" for
         # legacy projects that pre-date the style picker.
         self.style_key = self._state.get("style") or "realistic"
-        if hasattr(self, "style_tiles"):
-            self._refresh_style_tiles()
+        self.style_custom_image = self._state.get("style_custom_image") or ""
+        if hasattr(self, "style_btn"):
+            self._refresh_style_button()
 
     def _populate_all(self):
         self._populate_scenario()
@@ -6965,69 +6976,135 @@ class AnimationPage(QWidget):
         self._populate_shots()
         self._populate_export()
 
-    # ── Style picker helpers ─────────────────────────────────────────────
+    # ── Style picker (compact button + popover) ─────────────────────────
 
-    def _make_style_tile(self, key: str, st: dict, ref_path: str) -> QFrame:
-        """Build one clickable vignette in the style grid. Selection state
-        is repainted by _refresh_style_tiles()."""
-        tile = QFrame()
-        tile.setObjectName("StyleTile")
-        tile.setCursor(Qt.PointingHandCursor)
-        tile.setFixedSize(110, 132)
-        lay = QVBoxLayout(tile)
-        lay.setContentsMargins(6, 6, 6, 4); lay.setSpacing(4)
-        thumb = QLabel()
-        thumb.setFixedSize(96, 92)
-        thumb.setAlignment(Qt.AlignCenter)
-        if ref_path and Path(ref_path).exists():
+    def _current_style_label(self) -> str:
+        from providers.prompts import ANIMATION_STYLES
+        if self.style_key == "custom":
+            return "Custom"
+        return (ANIMATION_STYLES.get(self.style_key) or {}).get("label") or self.style_key
+
+    def _current_style_ref_path(self) -> str:
+        if self.style_key == "custom":
+            return self.style_custom_image or ""
+        from providers.prompts import resolve_style_ref
+        return resolve_style_ref(self.style_key)
+
+    def _refresh_style_button(self):
+        self.style_btn.setText(f"{self._current_style_label()}  ▾")
+        ref = self._current_style_ref_path()
+        if ref and Path(ref).exists():
             from PySide6.QtGui import QPixmap
-            pm = QPixmap(ref_path).scaled(
-                96, 92, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation,
+            pm = QPixmap(ref).scaled(
+                36, 36, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation,
             )
-            thumb.setPixmap(pm)
-            thumb.setStyleSheet("border-radius: 8px;")
+            self.style_thumb.setPixmap(pm)
+            self.style_thumb.setStyleSheet("border-radius: 8px;")
         else:
-            # "Realistic" / no-ref case — show a dimmed placeholder so the
-            # tile reads as "no stylization" rather than "missing image".
-            thumb.setText("—")
-            thumb.setStyleSheet(
-                f"background: {t.BG_INPUT}; color: {t.TEXT_MUTED}; "
-                f"border-radius: 8px; font-size: 18px;"
+            self.style_thumb.clear()
+            self.style_thumb.setStyleSheet(
+                f"background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED}; "
+                f"border-radius: 8px;"
             )
-        lay.addWidget(thumb, alignment=Qt.AlignCenter)
-        lbl = QLabel(st.get("label", key))
-        lbl.setAlignment(Qt.AlignCenter)
-        lbl.setStyleSheet(f"color: {t.TEXT}; font-size: 10px; font-weight: 600;")
-        lay.addWidget(lbl)
-        tile.mousePressEvent = lambda _ev, k=key: self._on_style_picked(k)
-        return tile
 
-    def _on_style_picked(self, key: str):
-        self.style_key = key or "realistic"
-        self._refresh_style_tiles()
+    def _open_style_picker(self):
+        """Pop up the grid of presets + a Custom slot. Sized so 16 tiles
+        fit in a 4×4 grid without scrolling, with Realistic + Custom as
+        separate header / footer entries."""
+        from providers.prompts import ANIMATION_STYLES, resolve_style_ref
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Pick a style")
+        dlg.setModal(True)
+        dlg.setStyleSheet(f"QDialog {{ background: {t.BG_ELEVATED}; }}")
+        root = QVBoxLayout(dlg); root.setContentsMargins(16, 16, 16, 16); root.setSpacing(10)
+        root.addWidget(QLabel("Pick a style preset, or upload your own.",
+                              styleSheet=f"color: {t.TEXT_DIM}; font-size: 12px;"))
 
-    def _refresh_style_tiles(self):
-        for k, tile in self.style_tiles.items():
-            selected = (k == self.style_key)
-            if selected:
-                tile.setStyleSheet(
-                    "QFrame#StyleTile {"
-                    f" background: {t.BG_ELEVATED};"
-                    f" border: 2px solid {t.ACCENT};"
-                    f" border-radius: 12px;"
-                    " }"
+        grid = QGridLayout(); grid.setSpacing(8); grid.setContentsMargins(0, 0, 0, 0)
+        items = [(k, v) for k, v in ANIMATION_STYLES.items()]
+        cols = 4
+
+        def make_tile(key: str, label: str, ref_path: str, is_selected: bool) -> QFrame:
+            tile = QFrame(); tile.setObjectName("StyleTile")
+            tile.setCursor(Qt.PointingHandCursor)
+            tile.setFixedSize(120, 140)
+            lay = QVBoxLayout(tile)
+            lay.setContentsMargins(6, 6, 6, 4); lay.setSpacing(4)
+            thumb = QLabel(); thumb.setFixedSize(104, 100); thumb.setAlignment(Qt.AlignCenter)
+            if ref_path and Path(ref_path).exists():
+                from PySide6.QtGui import QPixmap
+                pm = QPixmap(ref_path).scaled(
+                    104, 100, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation,
                 )
+                thumb.setPixmap(pm); thumb.setStyleSheet("border-radius: 8px;")
             else:
-                tile.setStyleSheet(
-                    "QFrame#StyleTile {"
-                    f" background: {t.BG_INPUT};"
-                    f" border: 1px solid {t.BORDER_MUTED};"
-                    f" border-radius: 12px;"
-                    " }"
-                    "QFrame#StyleTile:hover {"
-                    f" border: 1px solid {t.ACCENT_SOFT};"
-                    " }"
+                thumb.setText("—" if key != "custom" else "+")
+                thumb.setStyleSheet(
+                    f"background: {t.BG_INPUT}; color: {t.TEXT_MUTED}; "
+                    f"border-radius: 8px; font-size: 22px; font-weight: 600;"
                 )
+            lay.addWidget(thumb, alignment=Qt.AlignCenter)
+            name = QLabel(label); name.setAlignment(Qt.AlignCenter)
+            name.setStyleSheet(f"color: {t.TEXT}; font-size: 10px; font-weight: 600;")
+            lay.addWidget(name)
+            border = t.ACCENT if is_selected else t.BORDER_MUTED
+            bw = "2px" if is_selected else "1px"
+            tile.setStyleSheet(
+                "QFrame#StyleTile {"
+                f" background: {t.BG_INPUT if not is_selected else t.BG_HOVER};"
+                f" border: {bw} solid {border};"
+                f" border-radius: 12px;"
+                " }"
+                "QFrame#StyleTile:hover {"
+                f" border: 2px solid {t.ACCENT_SOFT};"
+                " }"
+            )
+            return tile
+
+        def pick_preset(k: str):
+            self.style_key = k
+            self._refresh_style_button()
+            dlg.accept()
+
+        def pick_custom():
+            path, _ = QFileDialog.getOpenFileName(
+                dlg, "Pick a custom style reference image", "",
+                "Images (*.png *.jpg *.jpeg *.webp)"
+            )
+            if not path:
+                return
+            self.style_key = "custom"
+            self.style_custom_image = path
+            self._refresh_style_button()
+            dlg.accept()
+
+        # Fill grid: presets first
+        for i, (key, st) in enumerate(items):
+            r, c = divmod(i, cols)
+            tile = make_tile(
+                key, st.get("label", key), resolve_style_ref(key),
+                is_selected=(self.style_key == key),
+            )
+            tile.mousePressEvent = lambda _ev, k=key: pick_preset(k)
+            grid.addWidget(tile, r, c)
+        # Custom tile at the end
+        n = len(items)
+        r, c = divmod(n, cols)
+        custom_tile = make_tile(
+            "custom", "Custom (upload)",
+            self.style_custom_image if self.style_key == "custom" else "",
+            is_selected=(self.style_key == "custom"),
+        )
+        custom_tile.mousePressEvent = lambda _ev: pick_custom()
+        grid.addWidget(custom_tile, r, c)
+
+        root.addLayout(grid)
+        btn_row = QHBoxLayout(); btn_row.addStretch()
+        close = QPushButton("Close"); close.setObjectName("GhostBtn"); close.setCursor(Qt.PointingHandCursor)
+        close.clicked.connect(dlg.reject)
+        btn_row.addWidget(close)
+        root.addLayout(btn_row)
+        dlg.exec()
 
     # ── Worker dispatch ─────────────────────────────────────────────────────
 
@@ -7124,6 +7201,7 @@ class AnimationPage(QWidget):
                 style_refs=self.style_refs_paths,
                 default_duration=int(self.duration.currentData() or core.ANIMATION_DEFAULT_DURATION),
                 style=self.style_key,
+                style_custom_image=self.style_custom_image or None,
             )
         except Exception as e:
             QMessageBox.critical(self, "Project init failed", str(e)); return
