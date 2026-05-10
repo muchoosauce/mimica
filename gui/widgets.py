@@ -704,7 +704,7 @@ class StatusPill(QLabel):
         super().__init__(text)
         self.setStyleSheet(
             f"background: {color}22; color: {color};"
-            f" padding: 4px 10px; border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f" padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self.setFixedHeight(22)
 

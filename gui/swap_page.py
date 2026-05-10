@@ -297,7 +297,7 @@ class SwapPage(QWidget):
             pill = QLabel(name)
             pill.setStyleSheet(
                 f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 700;"
             )
             self._step_pills.append(pill)
             self.stepper.addWidget(pill)
@@ -317,17 +317,17 @@ class SwapPage(QWidget):
             if i == idx:
                 pill.setStyleSheet(
                     f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
                     f"background: {t.GREEN}22; color: {t.GREEN}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             else:
                 pill.setStyleSheet(
                     f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
 
     # ── Step 1: Setup ───────────────────────────────────────────────────────

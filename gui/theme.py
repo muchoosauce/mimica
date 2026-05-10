@@ -108,7 +108,7 @@ QFrame#Card {{
 
 QFrame#CardFlat {{
     background: {BG_INPUT};
-    border-radius: 14px;
+    border-radius: 20px;
 }}
 
 QFrame#CardHero {{
@@ -121,25 +121,25 @@ QFrame#CardHero {{
 QFrame#StatCard {{
     background: {BG_ELEVATED};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 28px;
+    border-radius: 20px;
 }}
 
 QFrame#CardLavender {{
     background: {CARD_LAVENDER};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 28px;
+    border-radius: 20px;
 }}
 
 QFrame#CardRose {{
     background: {CARD_ROSE};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 28px;
+    border-radius: 20px;
 }}
 
 QFrame#CardViolet {{
     background: {CARD_VIOLET};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 28px;
+    border-radius: 20px;
 }}
 
 QFrame#RunCard {{
@@ -151,7 +151,7 @@ QFrame#RunCard {{
 QFrame#ProviderStatusCard {{
     background: {BG_ELEVATED};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 14px;
+    border-radius: 20px;
 }}
 
 /* ─── Sidebar nav items ──────────────────────────────────────────────── */
@@ -159,7 +159,7 @@ QFrame#ProviderStatusCard {{
 QPushButton#SidebarItem {{
     background: transparent;
     border: none;
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 10px 14px;
     text-align: left;
     color: {TEXT_MUTED};
@@ -174,7 +174,7 @@ QPushButton#SidebarItem:hover {{
 QPushButton#SidebarItemActive {{
     background: {ACCENT_BG};
     border: 1px solid {ACCENT_BG};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 10px 14px;
     text-align: left;
     color: {ACCENT_SOFT};
@@ -188,7 +188,7 @@ QPushButton#PrimaryBtn {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 {ACCENT}, stop:1 {ACCENT_PINK});
     border: 1px solid transparent;
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 10px 18px;
     color: #FFFFFF;
     font-weight: 600;
@@ -209,7 +209,7 @@ QPushButton#PrimaryBtn:disabled {{
 QPushButton#GhostBtn {{
     background: transparent;
     border: 1px solid {BORDER};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 9px 16px;
     color: {TEXT};
     font-weight: 500;
@@ -224,7 +224,7 @@ QPushButton#GhostBtn:hover {{
 QPushButton#OnCardBtn {{
     background: {BG_INPUT};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 9px 16px;
     color: {TEXT};
     font-weight: 600;
@@ -238,7 +238,7 @@ QPushButton#OnCardBtn:hover {{
 QPushButton#SearchBtn {{
     background: {BG_INPUT};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 9px 14px;
     color: {TEXT_MUTED};
     font-weight: 500;
@@ -252,7 +252,7 @@ QPushButton#SearchBtn:hover {{
 QPushButton {{
     background: transparent;
     border: 1px solid {BORDER};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 8px 14px;
     color: {TEXT};
     font-weight: 500;
@@ -269,7 +269,7 @@ QPushButton:hover {{
 QPushButton#ChipOff {{
     background: {BG_INPUT};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 6px 12px;
     color: {TEXT_MUTED};
     font-weight: 500;
@@ -283,7 +283,7 @@ QPushButton#ChipOff:hover {{
 QPushButton#ChipOn {{
     background: {ACCENT_BG};
     border: 1px solid {ACCENT};
-    border-radius: 22px;
+    border-radius: 999px;
     padding: 6px 12px;
     color: {ACCENT_SOFT};
     font-weight: 600;
@@ -295,7 +295,7 @@ QPushButton#ChipOn {{
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
     background: {BG_INPUT};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 14px;
+    border-radius: 12px;
     padding: 10px 14px;
     color: {TEXT};
     font-size: 13px;
@@ -312,7 +312,7 @@ QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox QAbstractItemView {{
     background: {BG_ELEVATED};
     border: 1px solid {BORDER};
-    border-radius: 14px;
+    border-radius: 12px;
     padding: 4px;
     selection-background-color: {ACCENT_BG};
     selection-color: {ACCENT_SOFT};
@@ -349,7 +349,7 @@ QRadioButton::indicator:checked {{
 QListWidget, QTableWidget {{
     background: {BG_ELEVATED};
     border: 1px solid {BORDER_MUTED};
-    border-radius: 14px;
+    border-radius: 16px;
     padding: 4px;
     selection-background-color: {ACCENT_BG};
     selection-color: {ACCENT_SOFT};

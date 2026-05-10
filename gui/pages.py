@@ -791,7 +791,7 @@ class GeneratePage(QWidget):
         self.go_btn.hide(); self.cancel_btn.show()
         self.live_pill.setText("Running"); self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -847,7 +847,7 @@ class GeneratePage(QWidget):
         self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
         self.live_pill.setText("Done"); self.live_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         if out_dir:
             self._out_dir = Path(out_dir)
@@ -1777,7 +1777,7 @@ class BrandDNAGeneratorDialog(QDialog):
             self._pill.setText("Failed")
             self._pill.setStyleSheet(
                 f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
-                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
             self._cancel_run.setEnabled(True); self._cancel_run.setText("Back")
             self._cancel_run.clicked.disconnect()
@@ -1792,7 +1792,7 @@ class BrandDNAGeneratorDialog(QDialog):
         self._pill.setText("Done")
         self._pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self._populate_review()
         self._stack.setCurrentIndex(2)
@@ -2050,7 +2050,7 @@ class FixDialog(QDialog):
         self.pill.setText("Running")
         self.pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -2081,7 +2081,7 @@ class FixDialog(QDialog):
             self.pill.setText("Done")
             self.pill.setStyleSheet(
                 f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
             self.fixed_path.emit(out_path)
             QTimer.singleShot(600, self.accept)
@@ -2089,7 +2089,7 @@ class FixDialog(QDialog):
             self.pill.setText("Failed")
             self.pill.setStyleSheet(
                 f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
-                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
 
 
@@ -2322,7 +2322,7 @@ class BatchFixPage(QWidget):
         self.live_pill.setText("Running")
         self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -2373,7 +2373,7 @@ class BatchFixPage(QWidget):
         self.live_pill.setText(label)
         self.live_pill.setStyleSheet(
             f"background: {color}22; color: {color}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
     def _clear_grid(self):
@@ -2677,7 +2677,7 @@ class AdaptPage(QWidget):
         self.live_pill.setText("Running")
         self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -2750,7 +2750,7 @@ class AdaptPage(QWidget):
         self.live_pill.setText("Done")
         self.live_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         if out_dir:
             self._out_dir = Path(out_dir)
@@ -2936,7 +2936,7 @@ class BRollPage(QWidget):
             pill = QLabel(name)
             pill.setStyleSheet(
                 f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 700;"
             )
             self._step_pills.append(pill)
             self.stepper.addWidget(pill)
@@ -2957,17 +2957,17 @@ class BRollPage(QWidget):
             if i == idx:
                 pill.setStyleSheet(
                     f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
                     f"background: {t.SUCCESS_BG}; color: {t.SUCCESS}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             else:
                 pill.setStyleSheet(
                     f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
 
     def _build_setup_panel(self) -> QWidget:
@@ -3373,7 +3373,7 @@ class BRollPage(QWidget):
         self.live_pill.setText("Running")
         self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -3428,7 +3428,7 @@ class BRollPage(QWidget):
         self.video_pill.setText("Idle")
         self.video_pill.setStyleSheet(
             f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self._populate_approval_grid()
         self._set_step(1)
@@ -3463,7 +3463,7 @@ class BRollPage(QWidget):
         self.live_pill.setText("Done")
         self.live_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         if out_dir:
             self._images_dir = Path(out_dir)
@@ -3542,7 +3542,7 @@ class BRollPage(QWidget):
         self.video_pill.setText("Running")
         self.video_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self._set_step(2)
 
@@ -3627,7 +3627,7 @@ class BRollPage(QWidget):
         self.video_pill.setText("Done")
         self.video_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         if out_dir:
             self._videos_dir = Path(out_dir)
@@ -4137,7 +4137,7 @@ class FunnelAdsPage(QWidget):
         self.live_pill.setText("Running")
         self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -4197,7 +4197,7 @@ class FunnelAdsPage(QWidget):
         self.live_pill.setText("Done")
         self.live_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         if out_dir:
             self._out_dir = Path(out_dir)
@@ -4307,7 +4307,7 @@ class TwinPage(QWidget):
             pill = QLabel(name)
             pill.setStyleSheet(
                 f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 700;"
             )
             self._step_pills.append(pill)
             self.stepper.addWidget(pill)
@@ -4328,17 +4328,17 @@ class TwinPage(QWidget):
             if i == idx:
                 pill.setStyleSheet(
                     f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
                     f"background: {t.SUCCESS_BG}; color: {t.SUCCESS}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             else:
                 pill.setStyleSheet(
                     f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
 
     # ── Step 1: Setup ───────────────────────────────────────────────────────
@@ -4473,7 +4473,7 @@ class TwinPage(QWidget):
         self.live_pill.setText("Running")
         self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
 
         self._thread = QThread()
@@ -4495,13 +4495,13 @@ class TwinPage(QWidget):
             self.live_pill.setText("Failed")
             self.live_pill.setStyleSheet(
                 f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
-                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
             return
         self.live_pill.setText("Done")
         self.live_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self.prompt_edit.setPlainText(prompt)
         self._set_step(1)
@@ -4777,7 +4777,7 @@ class TwinPage(QWidget):
         self.video_pill.setText("Running")
         self.video_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self._set_step(3)
 
@@ -4858,7 +4858,7 @@ class TwinPage(QWidget):
         self.video_pill.setText("Done")
         self.video_pill.setStyleSheet(
             f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         if out_dir:
             self._videos_dir = Path(out_dir)
@@ -4945,7 +4945,7 @@ class AnimationPage(QWidget):
             pill = QLabel(name)
             pill.setStyleSheet(
                 f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 700;"
             )
             self._step_pills.append(pill)
             stepper.addWidget(pill)
@@ -4985,17 +4985,17 @@ class AnimationPage(QWidget):
             if i == idx:
                 pill.setStyleSheet(
                     f"background: {t.ACCENT}; color: #FFFFFF; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             elif i < idx:
                 pill.setStyleSheet(
                     f"background: {t.SUCCESS_BG}; color: {t.SUCCESS}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
             else:
                 pill.setStyleSheet(
                     f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
-                    f"border-radius: 12px; font-size: 11px; font-weight: 700;"
+                    f"border-radius: 999px; font-size: 11px; font-weight: 700;"
                 )
 
     # ── Panel 1: Brief ──────────────────────────────────────────────────────
@@ -5723,7 +5723,7 @@ class AnimationPage(QWidget):
         self.live_pill.setText("Running")
         self.live_pill.setStyleSheet(
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
-            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
         self._thread = QThread()
         self._worker = AnimationOpWorker(op_callable)
@@ -5753,13 +5753,13 @@ class AnimationPage(QWidget):
             self.live_pill.setText("Error")
             self.live_pill.setStyleSheet(
                 f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
-                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
         else:
             self.live_pill.setText("Done")
             self.live_pill.setStyleSheet(
                 f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
-                f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
             )
         if self._project_dir:
             self._state = core.load_animation_state(self._project_dir)
