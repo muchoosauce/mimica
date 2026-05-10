@@ -6277,9 +6277,12 @@ class AnimationPage(QWidget):
         fl.addWidget(bl2)
         self.brief = QTextEdit()
         self.brief.setPlaceholderText(
-            "Plan 1 (3s) — A hand opens the cream jar in a soft morning bathroom.\n"
-            "Plan 2 (4s) — Macro of cream applied to the cheek.\n"
-            "Plan 3 (4s) — Smiling face in the mirror, natural light."
+            "Plan 1 — A hand opens the cream jar in a soft morning bathroom.\n"
+            "Plan 2 — Macro of cream applied to the cheek.\n"
+            "Plan 3 — Side profile, the creator looks at the jar and smiles.\n"
+            "Plan 4 — Smiling face in the mirror, natural window light.\n"
+            "Plan 5 — Hand places the jar back on the marble shelf.\n"
+            "Plan 6 — Pack-shot: the jar centered on a clean countertop."
         )
         self.brief.setMinimumHeight(140)
         fl.addWidget(self.brief)
