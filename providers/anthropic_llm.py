@@ -61,21 +61,65 @@ class AnthropicLLM:
             self._client = anthropic.Anthropic()
         return self._client
 
-    @staticmethod
-    def _fetch_image_b64(image_url: str) -> tuple[str, str]:
-        """Download `image_url` and return (media_type, base64). Anthropic
-        only accepts a few media types — coerce anything weird to image/png.
+    # Anthropic Vision rejects base64 image content > 5 MB. We pre-compress
+    # so the fallback path actually works on big brand product PNGs (we've
+    # seen 8-15 MB exports) — otherwise the request errors out with
+    # "Image exceeds 5 MB maximum" right after the URL fetch fails.
+    _ANTHROPIC_BASE64_LIMIT = 5 * 1024 * 1024
 
-        Used as a fallback when the URL isn't directly fetchable by Anthropic
-        (e.g. a localhost preview server). Carries a 5MB payload cap that
-        the URL source path doesn't have.
+    @classmethod
+    def _fetch_image_b64(cls, image_url: str) -> tuple[str, str]:
+        """Download `image_url` and return (media_type, base64), recompressed
+        to fit Anthropic's 5MB cap on inline base64 images.
+
+        Anthropic only accepts image/png, image/jpeg, image/webp, image/gif —
+        anything else gets normalized to image/png. If the raw bytes exceed
+        the cap we re-encode through PIL as JPEG with progressive quality /
+        dimension reductions until it fits.
         """
         r = requests.get(image_url, timeout=60)
         r.raise_for_status()
         media_type = (r.headers.get("Content-Type") or "image/png").split(";")[0].strip().lower()
         if media_type not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
             media_type = "image/png"
-        return media_type, base64.b64encode(r.content).decode("ascii")
+        raw = r.content
+        if len(raw) <= cls._ANTHROPIC_BASE64_LIMIT:
+            return media_type, base64.b64encode(raw).decode("ascii")
+
+        # Over the cap — re-encode to JPEG with descending quality until it
+        # fits. Same pattern as the upload compression in muapi.py.
+        try:
+            from PIL import Image
+            import io
+            im = Image.open(io.BytesIO(raw))
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            max_dim = 2400
+            quality = 85
+            for _ in range(6):
+                w, h = im.size
+                if max(w, h) > max_dim:
+                    scale = max_dim / max(w, h)
+                    im_s = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+                else:
+                    im_s = im
+                buf = io.BytesIO()
+                im_s.save(buf, "JPEG", quality=quality, optimize=True)
+                data = buf.getvalue()
+                if len(data) <= cls._ANTHROPIC_BASE64_LIMIT:
+                    return "image/jpeg", base64.b64encode(data).decode("ascii")
+                quality = max(40, quality - 15)
+                max_dim = max(1200, int(max_dim * 0.85))
+            # Last attempt's bytes — Anthropic may still reject, but the
+            # caller will see a clear error rather than us silently sending
+            # an over-cap payload.
+            return "image/jpeg", base64.b64encode(data).decode("ascii")
+        except ImportError:
+            # PIL missing — surface the size issue with a clear message.
+            raise RuntimeError(
+                f"Image is {len(raw)/1e6:.1f} MB, over Anthropic's 5 MB cap, "
+                "and PIL is not available to recompress."
+            )
 
     @staticmethod
     def _format_error(e: Exception) -> str:
