@@ -2061,112 +2061,145 @@ def run_twin_video_generate(
     video_model: str = DEFAULT_VIDEO_MODEL,
     provider_name: Optional[str] = None,
 ) -> Optional[Path]:
-    """Phase B — render a new starting frame (image gen with product ref),
-    then animate it into a Kling clip. Writes report.json with
-    type='twin_video' so the run shows up in History.
+    """Backward-compat wrapper: render the starting frame, then animate it.
+    Most callers should now go through `run_twin_video_render_frame` followed
+    by `run_twin_video_animate` so the user can validate the still before
+    paying for a Kling render.
+    """
+    out = run_twin_video_render_frame(
+        frame_path=frame_path,
+        scene_prompt=scene_prompt,
+        brand_name=brand_name,
+        aspect=aspect,
+        on_log=on_log, on_out_dir=on_out_dir,
+        should_cancel=should_cancel,
+        output_root=output_root,
+        image_model=image_model,
+        provider_name=provider_name,
+    )
+    if not out or out.get("status") != "ok":
+        return out.get("out_dir") if out else None
+    res = run_twin_video_animate(
+        out_dir=out["out_dir"],
+        image_url=out["image_url"],
+        action_prompt=action_prompt,
+        brand_name=brand_name,
+        product_urls=out["product_urls"],
+        duration=duration, aspect=aspect, sound=sound,
+        on_log=on_log, on_result=on_result,
+        should_cancel=should_cancel,
+        scene_prompt_used=out["scene_prompt_used"],
+        source_frame=Path(frame_path).expanduser().resolve(),
+        image_model=image_model, video_model=video_model,
+        provider_name=provider_name,
+    )
+    return res or out["out_dir"]
+
+
+def run_twin_video_render_frame(
+    frame_path: str,
+    scene_prompt: str,
+    brand_name: str,
+    aspect: str,
+    on_log: Callable[[str, str], None],
+    *,
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+    out_dir: Optional[Path] = None,
+    product_urls: Optional[list[str]] = None,
+) -> Optional[dict]:
+    """Phase B-1: render only the starting frame (no animation). Returns
+    {out_dir, image_url, image_path, product_urls, scene_prompt_used,
+    status}. The caller validates the image before invoking
+    `run_twin_video_animate` for the Kling step.
+
+    `out_dir` and `product_urls` can be passed in to avoid re-creating the
+    folder / re-uploading product refs on a re-render.
     """
     if image_model not in IMAGE_MODELS:
-        on_log("ERR", f"Unknown image model: {image_model!r}")
-        return None
-    if video_model not in VIDEO_MODELS:
-        on_log("ERR", f"Unknown video model: {video_model!r}")
-        return None
-    if not (scene_prompt or "").strip() or not (action_prompt or "").strip():
-        on_log("ERR", "Empty scene or action prompt.")
-        return None
+        on_log("ERR", f"Unknown image model: {image_model!r}"); return None
+    if not (scene_prompt or "").strip():
+        on_log("ERR", "Empty scene prompt."); return None
 
     provider = get_provider(provider_name) if provider_name else get_active_provider()
     provider.set_logger(on_log)
     if not provider.is_configured():
-        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
-        return None
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings."); return None
 
     brands = load_brands()
     brand = brands.get(brand_name)
     if not brand:
-        on_log("ERR", f"Brand '{brand_name}' not found.")
-        return None
+        on_log("ERR", f"Brand '{brand_name}' not found."); return None
     product_paths = [Path(p) for p in brand.get("product_images", []) if Path(p).exists()]
     if not product_paths:
         on_log("ERR", f"Brand '{brand_name}' has no product images on disk.")
         return None
 
     src = Path(frame_path).expanduser().resolve()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = Path(output_root).expanduser() if output_root else get_output_dir()
-    label = _safe_name(brand_name) or "brand"
-    out_dir = base / f"{ts}_twin_video_{label}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    on_out_dir(out_dir)
-    on_log("INFO", f"Output: {out_dir}")
+
+    # First-time call → create output dir, snapshot prompts + source frame.
+    # Re-render → reuse the existing dir, just overwrite generated_frame.png.
+    if out_dir is None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = Path(output_root).expanduser() if output_root else get_output_dir()
+        label = _safe_name(brand_name) or "brand"
+        out_dir = base / f"{ts}_twin_video_{label}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        on_out_dir(out_dir)
+        on_log("INFO", f"Output: {out_dir}")
+        if src.exists():
+            try:
+                shutil.copy2(src, out_dir / f"source_frame{src.suffix or '.png'}")
+            except Exception:
+                pass
+    (out_dir / "scene_prompt.txt").write_text(scene_prompt.strip() + "\n", encoding="utf-8")
+
     on_log(
         "INFO",
-        f"Provider: {provider.display_name} · Image: {IMAGE_MODEL_LABELS[image_model]} · "
-        f"Video: {VIDEO_MODEL_LABELS[video_model]} · {duration}s · {aspect}",
+        f"Provider: {provider.display_name} · Image: {IMAGE_MODEL_LABELS[image_model]} · {aspect}",
     )
 
-    # Persist the prompts the user reviewed, plus a copy of the source frame,
-    # so the run is reproducible and inspectable from the dir alone.
-    (out_dir / "scene_prompt.txt").write_text(scene_prompt.strip() + "\n", encoding="utf-8")
-    (out_dir / "action_prompt.txt").write_text(action_prompt.strip() + "\n", encoding="utf-8")
-    if src.exists():
-        try:
-            shutil.copy2(src, out_dir / f"source_frame{src.suffix or '.png'}")
-        except Exception:
-            pass
-
-    result_entry: dict = {
-        "index": 1, "category": "twin_video", "status": "pending",
-        "scene_prompt": scene_prompt, "action_prompt": action_prompt,
-    }
-
     try:
-        # 1) Upload product refs once — used for both image gen and Kling locking.
-        on_log("INFO", f"Uploading {len(product_paths)} product reference image(s)...")
-        product_urls: list[str] = []
-        for pp in product_paths[:4]:
-            if should_cancel():
-                return out_dir
-            try:
-                product_urls.append(provider.upload_image(pp))
-            except Exception as e:
-                on_log("WARN", f"Skipped product ref {pp.name}: {e}")
+        # Upload product refs the FIRST time only. Re-renders reuse them.
         if not product_urls:
-            on_log("ERR", "No product references uploaded — abort.")
-            return out_dir
+            on_log("INFO", f"Uploading {len(product_paths)} product reference image(s)...")
+            product_urls = []
+            for pp in product_paths[:4]:
+                if should_cancel():
+                    return {"out_dir": out_dir, "status": "cancelled", "product_urls": product_urls}
+                try:
+                    product_urls.append(provider.upload_image(pp))
+                except Exception as e:
+                    on_log("WARN", f"Skipped product ref {pp.name}: {e}")
+            if not product_urls:
+                on_log("ERR", "No product references uploaded — abort.")
+                return {"out_dir": out_dir, "status": "error",
+                        "error": "no product refs", "product_urls": []}
 
         if should_cancel():
-            return out_dir
+            return {"out_dir": out_dir, "status": "cancelled", "product_urls": product_urls}
 
-        # 2) Image generation: inject the user's product into the cloned scene.
-        # Pass the product image(s) as image-to-image references via call_image
-        # so the model preserves logo / label / color faithfully.
         on_log("INFO", "Generating starting frame with product injected...")
         local_scene = scene_prompt
         try:
-            try:
-                start_img_url = provider.call_image(
-                    model=image_model, prompt=local_scene,
-                    image_urls=product_urls,
-                    resolution="1080x1920" if aspect == "9:16" else "1024x1024",
-                    aspect_ratio=aspect, label="twin-vid-frame",
-                )
-            except CensorshipError:
-                on_log("WARN", "Frame blocked by content filter — softening prompt")
-                local_scene = _soften(provider, local_scene, "")
-                start_img_url = provider.call_image(
-                    model=image_model, prompt=local_scene,
-                    image_urls=product_urls,
-                    resolution="1080x1920" if aspect == "9:16" else "1024x1024",
-                    aspect_ratio=aspect, label="twin-vid-frame-retry",
-                )
-        except Exception as e:
-            on_log("ERR", f"Image generation failed: {e}")
-            result_entry["status"] = "error"; result_entry["error"] = str(e)
-            on_result(result_entry)
-            _write_twin_video_report(out_dir, ts, brand_name, video_model, image_model,
-                                     duration, aspect, sound, [result_entry], src)
-            return out_dir
+            start_img_url = provider.call_image(
+                model=image_model, prompt=local_scene,
+                image_urls=product_urls,
+                resolution="1080x1920" if aspect == "9:16" else "1024x1024",
+                aspect_ratio=aspect, label="twin-vid-frame",
+            )
+        except CensorshipError:
+            on_log("WARN", "Frame blocked by content filter — softening prompt")
+            local_scene = _soften(provider, local_scene, "")
+            start_img_url = provider.call_image(
+                model=image_model, prompt=local_scene,
+                image_urls=product_urls,
+                resolution="1080x1920" if aspect == "9:16" else "1024x1024",
+                aspect_ratio=aspect, label="twin-vid-frame-retry",
+            )
 
         frame_dest = out_dir / "generated_frame.png"
         try:
@@ -2175,16 +2208,66 @@ def run_twin_video_generate(
         except Exception as e:
             on_log("WARN", f"Could not save frame locally: {e}")
 
-        if should_cancel():
-            return out_dir
+        return {
+            "out_dir": out_dir,
+            "status": "ok",
+            "image_url": start_img_url,
+            "image_path": frame_dest if frame_dest.exists() else None,
+            "product_urls": product_urls,
+            "scene_prompt_used": local_scene,
+        }
+    except Exception as e:
+        on_log("ERR", f"Image generation failed: {e}")
+        return {"out_dir": out_dir, "status": "error", "error": str(e),
+                "product_urls": product_urls or []}
 
-        # 3) Animate via Kling 3.0 image-to-video. Pass product URLs again so
-        # call_video can use them as kling_elements for locking (with the
-        # locking-failure fallback we wired yesterday).
+
+def run_twin_video_animate(
+    out_dir: Path,
+    image_url: str,
+    action_prompt: str,
+    brand_name: str,
+    product_urls: list[str],
+    duration: int,
+    aspect: str,
+    sound: bool,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    *,
+    should_cancel: Callable[[], bool] = lambda: False,
+    scene_prompt_used: str = "",
+    source_frame: Optional[Path] = None,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    video_model: str = DEFAULT_VIDEO_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Phase B-2: animate a previously-rendered starting frame into a Kling
+    clip. Writes report.json with type='twin_video' on completion.
+    """
+    if video_model not in VIDEO_MODELS:
+        on_log("ERR", f"Unknown video model: {video_model!r}"); return None
+    if not (action_prompt or "").strip():
+        on_log("ERR", "Empty action prompt."); return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+
+    out_dir = Path(out_dir)
+    (out_dir / "action_prompt.txt").write_text(action_prompt.strip() + "\n", encoding="utf-8")
+    ts = out_dir.name.split("_")[0:2]  # "YYYYMMDD_HHMMSS"
+    ts = "_".join(ts) if len(ts) == 2 else datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    result_entry: dict = {
+        "index": 1, "category": "twin_video", "status": "pending",
+        "scene_prompt": scene_prompt_used, "action_prompt": action_prompt,
+        "image_url": image_url,
+    }
+
+    try:
         on_log("INFO", "Animating with Kling...")
         clip_url = provider.call_video(
             model=video_model, prompt=action_prompt,
-            image_url=start_img_url,
+            image_url=image_url,
             duration=int(duration), aspect_ratio=aspect, sound=bool(sound),
             product_reference_urls=product_urls, label="twin-video",
         )
@@ -2194,26 +2277,25 @@ def run_twin_video_generate(
 
         result_entry.update({
             "status": "ok",
-            "image_url": start_img_url,
             "video_url": clip_url,
             "file": clip_dest.name,
-            "scene_prompt": local_scene,
         })
         on_result(result_entry)
         _write_twin_video_report(
             out_dir, ts, brand_name, video_model, image_model,
-            duration, aspect, sound, [result_entry], src,
+            duration, aspect, sound, [result_entry],
+            source_frame or out_dir,
         )
         on_log("OK", "Twin video done.")
         return out_dir
-
     except Exception as e:
         on_log("ERR", str(e))
         result_entry["status"] = "error"; result_entry["error"] = str(e)
         on_result(result_entry)
         _write_twin_video_report(
             out_dir, ts, brand_name, video_model, image_model,
-            duration, aspect, sound, [result_entry], src,
+            duration, aspect, sound, [result_entry],
+            source_frame or out_dir,
         )
         return out_dir
 

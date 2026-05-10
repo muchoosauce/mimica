@@ -4311,18 +4311,73 @@ class TwinVideoAnalyzeWorker(QObject):
         self.finished.emit(out)
 
 
-class TwinVideoGenerateWorker(QObject):
+class TwinVideoFrameWorker(QObject):
+    """Render the starting frame only — no Kling animation. The page shows
+    the result and the user decides whether to animate or re-render."""
+    log = Signal(str, str)
+    out_dir_signal = Signal(str)
+    finished = Signal(dict)  # {out_dir, status, image_url, image_path,
+                             #  product_urls, scene_prompt_used, error?}
+
+    def __init__(self, frame_path: str, scene_prompt: str, brand_name: str,
+                 aspect: str, image_model: str,
+                 out_dir: Optional[str] = None,
+                 product_urls: Optional[list] = None):
+        super().__init__()
+        self._frame_path = frame_path
+        self._scene_prompt = scene_prompt
+        self._brand_name = brand_name
+        self._aspect = aspect
+        self._image_model = image_model
+        self._out_dir = out_dir
+        self._product_urls = product_urls
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_twin_video_render_frame(
+            frame_path=self._frame_path,
+            scene_prompt=self._scene_prompt,
+            brand_name=self._brand_name,
+            aspect=self._aspect,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            image_model=self._image_model,
+            out_dir=Path(self._out_dir) if self._out_dir else None,
+            product_urls=self._product_urls,
+        ) or {}
+        # JSON-friendly: stringify Path values for the page to consume.
+        if "out_dir" in out and out["out_dir"]:
+            out["out_dir"] = str(out["out_dir"])
+        if out.get("image_path"):
+            out["image_path"] = str(out["image_path"])
+        self.finished.emit(out)
+
+
+class TwinVideoAnimateWorker(QObject):
+    """Animate a previously-generated starting frame into a Kling clip."""
     log = Signal(str, str)
     result = Signal(dict)
-    out_dir_signal = Signal(str)
     finished = Signal(str)
 
-    def __init__(self, frame_path: str, scene_prompt: str, action_prompt: str,
-                 brand_name: str, duration: int, aspect: str, sound: bool,
-                 image_model: str, video_model: str):
+    def __init__(self, out_dir: str, image_url: str, action_prompt: str,
+                 brand_name: str, product_urls: list, duration: int,
+                 aspect: str, sound: bool, scene_prompt_used: str,
+                 source_frame: str, image_model: str, video_model: str):
         super().__init__()
-        self._args = (frame_path, scene_prompt, action_prompt, brand_name,
-                      duration, aspect, sound)
+        self._out_dir = out_dir
+        self._image_url = image_url
+        self._action_prompt = action_prompt
+        self._brand_name = brand_name
+        self._product_urls = product_urls
+        self._duration = duration
+        self._aspect = aspect
+        self._sound = sound
+        self._scene_prompt_used = scene_prompt_used
+        self._source_frame = source_frame
         self._image_model = image_model
         self._video_model = video_model
         self._cancel = False
@@ -4331,12 +4386,20 @@ class TwinVideoGenerateWorker(QObject):
         self._cancel = True
 
     def run(self):
-        out = core.run_twin_video_generate(
-            *self._args,
+        out = core.run_twin_video_animate(
+            out_dir=Path(self._out_dir),
+            image_url=self._image_url,
+            action_prompt=self._action_prompt,
+            brand_name=self._brand_name,
+            product_urls=self._product_urls,
+            duration=self._duration,
+            aspect=self._aspect,
+            sound=self._sound,
             on_log=lambda lvl, msg: self.log.emit(lvl, msg),
             on_result=lambda r: self.result.emit(r),
-            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
             should_cancel=lambda: self._cancel,
+            scene_prompt_used=self._scene_prompt_used,
+            source_frame=Path(self._source_frame) if self._source_frame else None,
             image_model=self._image_model,
             video_model=self._video_model,
         )
@@ -4973,10 +5036,17 @@ class TwinVideoPage(QWidget):
         super().__init__()
         self.setObjectName("Root")
         self._analyze_worker: TwinVideoAnalyzeWorker | None = None
-        self._gen_worker: TwinVideoGenerateWorker | None = None
+        self._frame_worker: TwinVideoFrameWorker | None = None
+        self._animate_worker: TwinVideoAnimateWorker | None = None
         self._thread: QThread | None = None
         self._frame_path: str | None = None
         self._out_dir: Path | None = None
+        # Cached between phases so re-rendering the frame doesn't re-upload
+        # product refs and animate doesn't re-pay for the image.
+        self._product_urls: list[str] = []
+        self._image_url: str | None = None
+        self._image_path: Path | None = None
+        self._scene_prompt_used: str = ""
         self._build()
         self.refresh_brands()
 
@@ -4987,7 +5057,7 @@ class TwinVideoPage(QWidget):
         self.stepper = QHBoxLayout()
         self.stepper.setSpacing(8); self.stepper.setContentsMargins(0, 0, 0, 0)
         self._step_pills: list[QLabel] = []
-        for name in ("1. Setup", "2. Review", "3. Result"):
+        for name in ("1. Setup", "2. Review", "3. Preview", "4. Result"):
             pill = QLabel(name)
             pill.setStyleSheet(
                 f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
@@ -5001,6 +5071,7 @@ class TwinVideoPage(QWidget):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_setup_panel())
         self.stack.addWidget(self._build_review_panel())
+        self.stack.addWidget(self._build_preview_panel())
         self.stack.addWidget(self._build_result_panel())
         root.addWidget(self.stack, 1)
         self._set_step(0)
@@ -5157,9 +5228,9 @@ class TwinVideoPage(QWidget):
         back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
         back.clicked.connect(lambda: self._set_step(0))
         hl.addWidget(back)
-        self.generate_btn = QPushButton("Generate clip")
+        self.generate_btn = QPushButton("Generate image →")
         self.generate_btn.setObjectName("PrimaryBtn"); self.generate_btn.setCursor(Qt.PointingHandCursor)
-        self.generate_btn.clicked.connect(self._start_generate)
+        self.generate_btn.clicked.connect(self._start_render_frame)
         hl.addWidget(self.generate_btn)
         col.addWidget(head)
 
@@ -5183,7 +5254,61 @@ class TwinVideoPage(QWidget):
         col.addLayout(body, 1)
         return wrap
 
-    # ── Step 3: Result ─────────────────────────────────────────────────────
+    # ── Step 3: Preview generated frame ────────────────────────────────────
+
+    def _build_preview_panel(self) -> QWidget:
+        wrap = QWidget()
+        col = QVBoxLayout(wrap); col.setContentsMargins(0, 0, 0, 0); col.setSpacing(14)
+
+        head = Card()
+        hl = QHBoxLayout(head); hl.setContentsMargins(20, 16, 20, 16); hl.setSpacing(12)
+        title = QLabel("Preview generated frame"); title.setObjectName("H2")
+        hl.addWidget(title); hl.addStretch()
+        self.preview_pill = StatusPill("Idle", t.TEXT_MUTED)
+        hl.addWidget(self.preview_pill)
+        back = QPushButton("← Back to prompts")
+        back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(1))
+        hl.addWidget(back)
+        self.rerender_btn = QPushButton("Re-render frame")
+        self.rerender_btn.setObjectName("GhostBtn"); self.rerender_btn.setCursor(Qt.PointingHandCursor)
+        self.rerender_btn.clicked.connect(self._start_render_frame)
+        hl.addWidget(self.rerender_btn)
+        self.animate_btn = QPushButton("Animate clip →")
+        self.animate_btn.setObjectName("PrimaryBtn"); self.animate_btn.setCursor(Qt.PointingHandCursor)
+        self.animate_btn.clicked.connect(self._start_animate)
+        self.animate_btn.setEnabled(False)
+        hl.addWidget(self.animate_btn)
+        col.addWidget(head)
+
+        body = QHBoxLayout(); body.setSpacing(14)
+
+        # Left: big preview of the generated frame.
+        thumb_card = Card()
+        thumb_lay = QVBoxLayout(thumb_card); thumb_lay.setContentsMargins(20, 18, 20, 18); thumb_lay.setSpacing(10)
+        thumb_lay.addWidget(QLabel("Generated frame", objectName="H3"))
+        self.preview_thumb = QLabel("waiting for image…")
+        self.preview_thumb.setAlignment(Qt.AlignCenter)
+        self.preview_thumb.setMinimumSize(360, 480)
+        self.preview_thumb.setStyleSheet(
+            f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; "
+            f"border: 1px solid {t.BORDER_MUTED}; border-radius: 12px;"
+        )
+        thumb_lay.addWidget(self.preview_thumb, 1)
+        body.addWidget(thumb_card, 3)
+
+        # Right: live activity log for this phase.
+        log_card = Card()
+        log_lay = QVBoxLayout(log_card); log_lay.setContentsMargins(20, 18, 20, 18); log_lay.setSpacing(10)
+        log_lay.addWidget(QLabel("Activity", objectName="H2"))
+        self.preview_log = QPlainTextEdit(); self.preview_log.setReadOnly(True)
+        log_lay.addWidget(self.preview_log, 1)
+        body.addWidget(log_card, 2)
+
+        col.addLayout(body, 1)
+        return wrap
+
+    # ── Step 4: Result ─────────────────────────────────────────────────────
 
     def _build_result_panel(self) -> QWidget:
         wrap = QWidget()
@@ -5206,7 +5331,7 @@ class TwinVideoPage(QWidget):
         hl.addWidget(self.open_folder_btn)
         new_btn = QPushButton("New run")
         new_btn.setObjectName("GhostBtn"); new_btn.setCursor(Qt.PointingHandCursor)
-        new_btn.clicked.connect(lambda: self._set_step(0))
+        new_btn.clicked.connect(self._reset_for_new_run)
         hl.addWidget(new_btn)
         col.addWidget(head)
 
@@ -5279,7 +5404,9 @@ class TwinVideoPage(QWidget):
         self.action_edit.setPlainText(action)
         self._set_step(1)
 
-    def _start_generate(self):
+    # ── Phase B-1: render starting frame (no Kling yet) ───────────────────
+
+    def _start_render_frame(self):
         scene = self.scene_edit.toPlainText().strip()
         action = self.action_edit.toPlainText().strip()
         if not scene or not action:
@@ -5287,8 +5414,90 @@ class TwinVideoPage(QWidget):
         if not self._frame_path:
             QMessageBox.warning(self, "No frame", "Source frame missing."); return
 
+        self.preview_log.clear()
+        self.preview_thumb.clear(); self.preview_thumb.setText("rendering…")
+        self.animate_btn.setEnabled(False)
+        self.generate_btn.setEnabled(False); self.generate_btn.setText("Rendering…")
+        self.rerender_btn.setEnabled(False); self.rerender_btn.setText("Rendering…")
+        self.preview_pill.setText("Rendering")
+        self.preview_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+        self._set_step(2)
+
+        self._thread = QThread()
+        self._frame_worker = TwinVideoFrameWorker(
+            frame_path=self._frame_path,
+            scene_prompt=scene,
+            brand_name=self.brand_combo.currentText(),
+            aspect="9:16",
+            image_model=self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+            out_dir=str(self._out_dir) if self._out_dir else None,
+            product_urls=list(self._product_urls) if self._product_urls else None,
+        )
+        self._frame_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._frame_worker.run)
+        self._frame_worker.log.connect(
+            lambda lvl, msg: self._append_log(self.preview_log, lvl, msg)
+        )
+        self._frame_worker.out_dir_signal.connect(lambda p: setattr(self, "_out_dir", Path(p)))
+        self._frame_worker.finished.connect(self._on_frame_done)
+        self._thread.start()
+
+    def _on_frame_done(self, out: dict):
+        self._thread.quit(); self._thread.wait()
+        self.generate_btn.setEnabled(True); self.generate_btn.setText("Generate image →")
+        self.rerender_btn.setEnabled(True); self.rerender_btn.setText("Re-render frame")
+        status = (out or {}).get("status", "error")
+        if status != "ok":
+            self.preview_pill.setText("Failed")
+            self.preview_pill.setStyleSheet(
+                f"background: {t.RED}22; color: {t.RED}; padding: 4px 10px; "
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+            )
+            self.preview_thumb.setText(f"image generation failed\n{out.get('error', '')[:120]}")
+            return
+        if out.get("out_dir"):
+            self._out_dir = Path(out["out_dir"])
+        self._product_urls = list(out.get("product_urls") or [])
+        self._image_url = out.get("image_url")
+        self._image_path = Path(out["image_path"]) if out.get("image_path") else None
+        self._scene_prompt_used = out.get("scene_prompt_used") or self.scene_edit.toPlainText()
+
+        # Display the local PNG in the preview thumb. Scale to fit the label
+        # while preserving aspect ratio; keep transformation smooth.
+        if self._image_path and self._image_path.exists():
+            from PySide6.QtGui import QPixmap
+            pm = QPixmap(str(self._image_path))
+            if not pm.isNull():
+                scaled = pm.scaled(
+                    self.preview_thumb.width(), self.preview_thumb.height(),
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                )
+                self.preview_thumb.setPixmap(scaled)
+            else:
+                self.preview_thumb.setText("image saved but could not load")
+        else:
+            self.preview_thumb.setText("image generated but not saved locally")
+
+        self.preview_pill.setText("Ready")
+        self.preview_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+        self.animate_btn.setEnabled(bool(self._image_url))
+
+    # ── Phase B-2: animate the validated frame ────────────────────────────
+
+    def _start_animate(self):
+        if not self._image_url or not self._out_dir:
+            QMessageBox.warning(self, "No frame", "Render an image first."); return
+        action = self.action_edit.toPlainText().strip()
+        if not action:
+            QMessageBox.warning(self, "Empty action", "Action prompt is required."); return
+
         self.result_log.clear()
-        self._out_dir = None
         self.open_folder_btn.setEnabled(False)
         self.cancel_btn.show(); self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
         self.result_pill.setText("Running")
@@ -5296,38 +5505,39 @@ class TwinVideoPage(QWidget):
             f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
             f"border-radius: 999px; font-size: 11px; font-weight: 600;"
         )
-        self._set_step(2)
+        self._set_step(3)
 
         self._thread = QThread()
-        self._gen_worker = TwinVideoGenerateWorker(
-            frame_path=self._frame_path,
-            scene_prompt=scene,
+        self._animate_worker = TwinVideoAnimateWorker(
+            out_dir=str(self._out_dir),
+            image_url=self._image_url,
             action_prompt=action,
             brand_name=self.brand_combo.currentText(),
+            product_urls=list(self._product_urls),
             duration=self.duration_slider.value(),
             aspect="9:16",
             sound=self.audio_toggle.isChecked(),
+            scene_prompt_used=self._scene_prompt_used,
+            source_frame=self._frame_path or "",
             image_model=self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
             video_model=self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
         )
-        self._gen_worker.moveToThread(self._thread)
-        self._thread.started.connect(self._gen_worker.run)
-        self._gen_worker.log.connect(
+        self._animate_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._animate_worker.run)
+        self._animate_worker.log.connect(
             lambda lvl, msg: self._append_log(self.result_log, lvl, msg)
         )
-        self._gen_worker.out_dir_signal.connect(self._on_gen_dir)
-        self._gen_worker.finished.connect(self._on_gen_done)
+        self._animate_worker.finished.connect(self._on_animate_done)
         self._thread.start()
 
     def _cancel_generate(self):
-        if self._gen_worker:
-            self._gen_worker.cancel()
+        if self._animate_worker:
+            self._animate_worker.cancel()
+        if self._frame_worker:
+            self._frame_worker.cancel()
         self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
 
-    def _on_gen_dir(self, p: str):
-        self._out_dir = Path(p)
-
-    def _on_gen_done(self, _out: str):
+    def _on_animate_done(self, _out: str):
         self._thread.quit(); self._thread.wait()
         self.cancel_btn.hide()
         if self._out_dir and (self._out_dir / "clip.mp4").exists():
@@ -5347,6 +5557,20 @@ class TwinVideoPage(QWidget):
     def _open_out_folder(self):
         if self._out_dir and self._out_dir.exists():
             open_path(self._out_dir)
+
+    def _reset_for_new_run(self):
+        # Wipe per-run caches so the next render creates a fresh output dir
+        # and re-uploads product refs from the freshly-picked brand.
+        self._out_dir = None
+        self._product_urls = []
+        self._image_url = None
+        self._image_path = None
+        self._scene_prompt_used = ""
+        self.preview_thumb.clear(); self.preview_thumb.setText("waiting for image…")
+        self.preview_log.clear()
+        self.result_log.clear()
+        self.animate_btn.setEnabled(False)
+        self._set_step(0)
 
 
 class TwinHubPage(QWidget):
