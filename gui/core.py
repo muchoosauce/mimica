@@ -2263,6 +2263,7 @@ def run_twin_video_animate(
     source_frame: Optional[Path] = None,
     image_model: str = DEFAULT_IMAGE_MODEL,
     video_model: str = DEFAULT_VIDEO_MODEL,
+    video_resolution: str = "",
     provider_name: Optional[str] = None,
 ) -> Optional[Path]:
     """Phase B-2: animate a previously-rendered starting frame into a Kling
@@ -2294,6 +2295,7 @@ def run_twin_video_animate(
             image_url=image_url,
             duration=int(duration), aspect_ratio=aspect, sound=bool(sound),
             product_reference_urls=product_urls, label="twin-video",
+            resolution=video_resolution,
         )
         clip_dest = out_dir / "clip.mp4"
         provider.download(clip_url, clip_dest)

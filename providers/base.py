@@ -91,6 +91,7 @@ class Provider(ABC):
         sound: bool = False,
         product_reference_urls: list[str] = (),
         label: str = "video",
+        resolution: str = "",
     ) -> str:
         """Animate one image into a video clip.
 
@@ -98,6 +99,10 @@ class Provider(ABC):
         given URLs as element references to keep the product (logo, labels,
         text) visually stable across the clip. Providers that don't support
         element references should log a warning and ignore the parameter.
+
+        `resolution`, when non-empty, requests a specific output resolution
+        (e.g. "720p", "1080p"). When empty, providers use their per-model
+        default.
         """
         raise NotImplementedError(
             f"{self.display_name} does not implement video generation yet."

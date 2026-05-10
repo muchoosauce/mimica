@@ -410,6 +410,7 @@ class MuApiProvider(Provider):
         sound: bool = False,
         product_reference_urls: list[str] = (),
         label: str = "video",
+        resolution: str = "",
     ) -> str:
         primary = _VIDEO_SLUGS.get(model)
         if not primary:
@@ -428,6 +429,11 @@ class MuApiProvider(Provider):
             "aspect_ratio": aspect_ratio,
             "sound": bool(sound),
         }
+        # Pass through an explicit resolution only when the caller asked for
+        # one — keeps the existing default behavior on every other workflow.
+        if resolution:
+            payload["resolution"] = resolution
+            self._log("INFO", f"[{label}] resolution: {resolution}")
         self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
 
         # Product reference locking via Kling's `kling_elements`. Only Kling 3

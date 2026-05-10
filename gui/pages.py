@@ -4403,7 +4403,7 @@ class TwinVideoAnimateWorker(QObject):
                  brand_name: str, product_urls: list, duration: int,
                  aspect: str, sound: bool, scene_prompt_used: str,
                  source_frame: str, image_model: str, video_model: str,
-                 image_path: str = ""):
+                 image_path: str = "", video_resolution: str = ""):
         super().__init__()
         self._out_dir = out_dir
         self._image_url = image_url
@@ -4418,6 +4418,7 @@ class TwinVideoAnimateWorker(QObject):
         self._source_frame = source_frame
         self._image_model = image_model
         self._video_model = video_model
+        self._video_resolution = video_resolution
         self._cancel = False
 
     def cancel(self):
@@ -4485,6 +4486,7 @@ class TwinVideoAnimateWorker(QObject):
             source_frame=Path(self._source_frame) if self._source_frame else None,
             image_model=self._image_model,
             video_model=self._video_model,
+            video_resolution=self._video_resolution,
         )
         self.finished.emit(str(out) if out else "")
 
@@ -5288,14 +5290,23 @@ class TwinVideoPage(QWidget):
         params_row.addLayout(col_aud, 1)
         form.addLayout(params_row)
 
-        # 5. Models + resolution row
+        # 5. Models + resolutions row — Nano Banana Pro is the right default
+        # for Twin Video because the product gets injected via image-to-image
+        # ref (Pro nails small label text and packaging color far better than
+        # Banana 2 or GPT Image 2). Keep both image + video resolution
+        # selectors so the user can crank quality independently.
         models_row = QHBoxLayout(); models_row.setSpacing(14)
         col_im = QVBoxLayout(); col_im.setSpacing(6)
         col_im.addWidget(_field_label("Image model"))
         self.image_model = QComboBox()
         for slug, label in core.IMAGE_MODEL_CHOICES:
             self.image_model.addItem(label, userData=slug)
-        self.image_model.setCurrentIndex(0)
+        # Default to Nano Banana Pro (preserves logo/label text best on the
+        # injected product). If the slug isn't there we silently fall back
+        # to whatever index 0 is, no crash.
+        for i in range(self.image_model.count()):
+            if self.image_model.itemData(i) == "nano_banana_pro":
+                self.image_model.setCurrentIndex(i); break
         col_im.addWidget(self.image_model)
         col_vm = QVBoxLayout(); col_vm.setSpacing(6)
         col_vm.addWidget(_field_label("Video model"))
@@ -5305,12 +5316,22 @@ class TwinVideoPage(QWidget):
         self.video_model.setCurrentIndex(0)
         col_vm.addWidget(self.video_model)
         col_res = QVBoxLayout(); col_res.setSpacing(6)
-        col_res.addWidget(_field_label("Resolution"))
+        col_res.addWidget(_field_label("Image resolution"))
         self.resolution = QComboBox()
         self.resolution.addItems(core.RESOLUTIONS)
         self.resolution.setCurrentText("1k")
         col_res.addWidget(self.resolution)
-        models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1); models_row.addLayout(col_res, 1)
+        col_vres = QVBoxLayout(); col_vres.setSpacing(6)
+        col_vres.addWidget(_field_label("Video resolution"))
+        self.video_resolution = QComboBox()
+        # "Auto" stays out of the payload so providers use their per-model
+        # default. Explicit choices try to override it; if a model rejects
+        # the value the API surfaces a 422 the user can react to.
+        self.video_resolution.addItems(["Auto", "720p", "1080p"])
+        self.video_resolution.setCurrentText("Auto")
+        col_vres.addWidget(self.video_resolution)
+        models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1)
+        models_row.addLayout(col_res, 1); models_row.addLayout(col_vres, 1)
         form.addLayout(models_row)
 
         form.addStretch()
@@ -5769,6 +5790,10 @@ class TwinVideoPage(QWidget):
         self._set_step(3)
 
         self._thread = QThread()
+        # "Auto" → empty string → providers use their per-model default.
+        vres = self.video_resolution.currentText().strip()
+        if vres.lower() == "auto":
+            vres = ""
         self._animate_worker = TwinVideoAnimateWorker(
             out_dir=str(self._out_dir),
             image_url=self._image_url or "",
@@ -5783,6 +5808,7 @@ class TwinVideoPage(QWidget):
             source_frame=self._frame_path or "",
             image_model=self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
             video_model=self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
+            video_resolution=vres,
         )
         self._animate_worker.moveToThread(self._thread)
         self._thread.started.connect(self._animate_worker.run)

@@ -370,6 +370,7 @@ class KieProvider(Provider):
         sound: bool = False,
         product_reference_urls: list[str] = (),
         label: str = "video",
+        resolution: str = "",
     ) -> str:
         slug = _VIDEO_SLUGS.get(model)
         if not slug:
@@ -385,6 +386,9 @@ class KieProvider(Provider):
                 "mode": mode,
                 "multi_shots": False,
             }
+            if resolution:
+                input_payload["resolution"] = resolution
+                self._log("INFO", f"[{label}] resolution: {resolution}")
             # Only send `sound` when explicitly enabled — leave the upstream
             # default (silent) in place otherwise.
             if sound:
@@ -421,7 +425,7 @@ class KieProvider(Provider):
                 "first_frame_url": image_url,
                 "duration": int(duration),
                 "aspect_ratio": aspect_ratio,
-                "resolution": "720p",
+                "resolution": resolution or "720p",
                 "generate_audio": bool(sound),
             }
             self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
