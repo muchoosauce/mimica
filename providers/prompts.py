@@ -1579,28 +1579,25 @@ def analyze_image_for_twin(
 # the pipeline can route them: `scene` drives the start-frame image generation,
 # `action` drives the Kling video animation.
 
-TWIN_VIDEO_SYSTEM_PROMPT = """You are a UGC video direction expert. The user gives you ONE frame from an existing UGC ad and a description of THEIR new product. Your job: imagine a fresh 5-10 second UGC hook clip with the SAME person, SAME outfit, SAME location, SAME mood — but with the user's new product replacing whatever the original product was.
+TWIN_VIDEO_SYSTEM_PROMPT = """You are an expert at writing image-edit instructions for NanoBanana 2 (image-to-image edit). The user gives you ONE frame from an existing UGC ad and a description of their NEW product. Your job: write a tight EDIT instruction that tells NanoBanana to swap ONLY the original product in the person's hand for the user's new product, while preserving EVERYTHING else from the source frame pixel-by-pixel — the person's face, hair, expression, hoodie, jewellery, hand pose, the room, the lamp, the wall color, the lighting, the framing, the camera angle, the depth of field. The output must look like the SAME captured photo with only the held product replaced.
 
 ═══════════════════════════════════════
-WHAT TO CAPTURE FROM THE REFERENCE FRAME
+WHAT TO READ FROM THE FRAME (silent step)
 ═══════════════════════════════════════
 
-Silently read:
-- SUBJECT: a single creator (gender, approximate age range, ethnicity descriptor, hair, build) — describe generically, never name a real person
-- WARDROBE: top, bottom (if visible), accessories, fabric textures
-- LOCATION: bedroom / kitchen / bathroom / outdoor street / car / studio — specific decor cues (subway tile, oak counter, beige curtains, etc.)
-- LIGHTING: time of day, direction, color temperature, hardness
-- CAMERA: phone front / back, distance (selfie / arm / mid), angle
-- MOOD: candid / intimate / energetic / relaxed
-- AESTHETIC: raw iPhone capture / polished studio / film grain / portrait mode — describe the exact rendering style
+Identify:
+- The original product visible in the hand (rough shape, color, label color, container type) — only enough to write a precise "replace this thing" instruction
+- Which hand it is in (left / right / both) and at what level (chest / eye / waist)
+- The hand pose around it (fingers wrapping, thumb position) — the new product must sit in the same grip
+- Any reflections / shadows of the original product on adjacent surfaces — the edit must update them to match the new product
 
-Mentally STRIP every overlay (caption, sticker, logo on the original product, watermark, text). The clone must produce a clean, overlay-free clip.
+Do NOT describe the room, the person, the lighting in detail — NanoBanana will SEE the source image and copy that automatically. Your job is only to direct the swap.
 
 ═══════════════════════════════════════
 WHAT THE USER'S PRODUCT IS
 ═══════════════════════════════════════
 
-The user message contains a PRODUCT block with the new product's description (packaging, label color, format, key visual cues). This product replaces whatever was in the source frame's hands. Always refer to it as `@product` in the action prompt — Kling resolves that token to the locked product reference.
+The user message contains a PRODUCT block with the new product's packaging description (container shape, label colors, format, key visual cues). The new product image is ALSO supplied to NanoBanana as a second reference image — call it `@product` so the model knows which image carries the target.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT — STRICT
@@ -1608,22 +1605,21 @@ OUTPUT FORMAT — STRICT
 
 Output exactly two labeled blocks, in this order, nothing else:
 
-SCENE:
-<one flowing paragraph, 80-160 words, describing the FIRST FRAME of the new clip — same person/outfit/location/lighting as the reference, holding @product naturally at chest or eye level, label readable, body composed but not posed. This text is fed to a text-to-image model (NanoBanana 2) with the product image as reference, so describe the scene with rich sensory detail but keep the product description matching the user's description.>
+EDIT:
+<2 to 4 short sentences, max 80 words total. Open with: `Replace the [short description of the original product, e.g. white round container with pink label] held in the [left/right] hand with @product, matching the same hand grip and arm position.` Then state explicitly what to KEEP unchanged: the person (face, hair, expression, clothing), the room and decor, the lighting and color temperature, the camera framing and angle, the bokeh, the reflections on nearby surfaces (updated to mirror the new product). End with: `Do not regenerate the person or the room — copy them pixel-for-pixel from the source frame.` This text is sent to NanoBanana 2 along with the source frame as image 1 and the product as image 2.>
 
 ACTION:
-<one flowing paragraph, 50-120 words, describing the 5-10s motion for Kling 3.0. Lead with `^`. Describe a NATURAL UGC moment: the person looks at the product, brings it slightly closer to the camera, gives a small genuine half-smile or mouths the start of a sentence as if about to speak about it. NO scripted lines, NO words spoken on screen — Kling can't lipsync anyway. Keep the product orientation absolutely fixed (no rotation, no flip), label staying readable. End with the token `@product` so Kling locks the product reference.>
+<one flowing paragraph, 50-120 words, describing the 5-10s motion for Kling 3.0 starting from the edited frame. Lead with `^`. Describe a NATURAL UGC moment: subtle blink, small genuine half-smile, the person bringing the product slightly closer to the camera as if about to speak about it, mouth opening slightly to start a sentence. NO scripted lines, NO words spoken on screen — Kling can't lipsync anyway. Keep the product orientation absolutely fixed (no rotation, no flip), label staying readable. End with the token `@product` so Kling locks the product reference.>
 
 ═══════════════════════════════════════
 HARD RULES
 ═══════════════════════════════════════
 
-1. Person, outfit, location, lighting, camera aesthetic = COPIED from reference (keep the vibe).
-2. Product = ALWAYS the user's new product (from PRODUCT block), referenced as `@product` in ACTION.
-3. Generic descriptors only — never name real people, real brands other than via `@product`.
-4. No spoken words, no captions, no on-screen text.
-5. No camera tricks (zoom out, drone, dolly) — UGC means held-by-hand stable framing.
-6. Output ONLY the two labeled blocks. No preamble, no postamble, no markdown."""
+1. The EDIT instruction must NEVER describe the person, the room, the lighting in detail — only the swap. Describing them risks NanoBanana regenerating them and losing the source.
+2. Use `@product` to refer to the new product (image 2 input).
+3. Generic descriptors only when you do mention something — never name real people or copyrighted IP.
+4. No captions, no on-screen text, no spoken words.
+5. Output ONLY the two labeled blocks. No preamble, no postamble, no markdown."""
 
 
 def analyze_for_twin_video(
@@ -1643,9 +1639,9 @@ def analyze_for_twin_video(
     Returns: {"scene": <str>, "action": <str>}.
     """
     user_lines = [
-        "Reference UGC frame: [attached]",
+        "Reference UGC frame: [attached as image 1]",
         "",
-        "PRODUCT (the user's new product to inject in place of the original):",
+        "PRODUCT (the user's new product, supplied as image 2 to NanoBanana):",
         product_description.strip() or "(no product description supplied)",
     ]
     h = (hint or "").strip()
@@ -1654,7 +1650,7 @@ def analyze_for_twin_video(
         user_lines.append(f"HINT: {h}")
     user_lines.append("")
     user_lines.append(
-        "Output the two labeled blocks SCENE: and ACTION: per the system rules."
+        "Output the two labeled blocks EDIT: and ACTION: per the system rules."
     )
     text = provider.call_llm(
         prompt="\n".join(user_lines),
@@ -1663,22 +1659,28 @@ def analyze_for_twin_video(
         label="LLM-twin-video",
     )
     raw = (text or "").strip()
-    # Forgiving parser: split on the labels regardless of casing / surrounding
-    # whitespace, fall back to the whole text in either field if one is missing.
+    # Forgiving parser. Accept both EDIT: (new edit-mode) and SCENE: (legacy
+    # rewrite-mode) as the first label so older runs don't blow up if the LLM
+    # falls back to the previous wording. Stored under key "scene" to keep
+    # downstream consumers (page UI, render_frame call site) untouched.
     import re
-    m_scene = re.search(r"SCENE\s*:\s*(.*?)(?=\n\s*ACTION\s*:|$)", raw, re.IGNORECASE | re.DOTALL)
+    m_edit = re.search(
+        r"(?:EDIT|SCENE)\s*:\s*(.*?)(?=\n\s*ACTION\s*:|$)",
+        raw, re.IGNORECASE | re.DOTALL,
+    )
     m_action = re.search(r"ACTION\s*:\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
-    scene = (m_scene.group(1) if m_scene else raw).strip()
+    scene = (m_edit.group(1) if m_edit else raw).strip()
     action = (m_action.group(1) if m_action else "").strip()
     if not action:
-        # Last-ditch: use the scene as the action seed, prefix with ^.
+        # Last-ditch: prefix the edit instruction with ^ so Kling still gets
+        # a usable action prompt even on degraded LLM output.
         action = "^ " + scene
     if not action.lstrip().startswith("^"):
         action = "^ " + action
     if "@product" not in action:
         action = action.rstrip() + " @product"
     if not scene:
-        raise RuntimeError("Twin video analysis returned empty SCENE block.")
+        raise RuntimeError("Twin video analysis returned empty EDIT block.")
     return {"scene": scene, "action": action}
 
 

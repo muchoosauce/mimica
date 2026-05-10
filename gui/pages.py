@@ -4322,7 +4322,8 @@ class TwinVideoFrameWorker(QObject):
     def __init__(self, frame_path: str, scene_prompt: str, brand_name: str,
                  aspect: str, image_model: str, resolution: str = "1k",
                  out_dir: Optional[str] = None,
-                 product_urls: Optional[list] = None):
+                 product_urls: Optional[list] = None,
+                 source_frame_url: Optional[str] = None):
         super().__init__()
         self._frame_path = frame_path
         self._scene_prompt = scene_prompt
@@ -4332,6 +4333,7 @@ class TwinVideoFrameWorker(QObject):
         self._resolution = resolution
         self._out_dir = out_dir
         self._product_urls = product_urls
+        self._source_frame_url = source_frame_url
         self._cancel = False
 
     def cancel(self):
@@ -4350,6 +4352,7 @@ class TwinVideoFrameWorker(QObject):
             resolution=self._resolution,
             out_dir=Path(self._out_dir) if self._out_dir else None,
             product_urls=self._product_urls,
+            source_frame_url=self._source_frame_url,
         ) or {}
         # JSON-friendly: stringify Path values for the page to consume.
         if "out_dir" in out and out["out_dir"]:
@@ -5044,8 +5047,9 @@ class TwinVideoPage(QWidget):
         self._frame_path: str | None = None
         self._out_dir: Path | None = None
         # Cached between phases so re-rendering the frame doesn't re-upload
-        # product refs and animate doesn't re-pay for the image.
+        # the source / product refs and animate doesn't re-pay for the image.
         self._product_urls: list[str] = []
+        self._source_frame_url: str | None = None
         self._image_url: str | None = None
         self._image_path: Path | None = None
         self._scene_prompt_used: str = ""
@@ -5111,9 +5115,9 @@ class TwinVideoPage(QWidget):
         ref_l = QLabel("SOURCE FRAME"); ref_l.setObjectName("Muted")
         card_lay.addWidget(ref_l)
         sub = QLabel(
-            "Drop one frame extracted from your old UGC ad. The person, outfit, "
-            "location and mood are cloned; only the product is replaced by the "
-            "selected brand's product."
+            "Drop one frame from your old UGC ad. The person, room, lighting and "
+            "framing are kept exactly as in the source — only the product held in "
+            "the hand is swapped for the selected brand's product."
         )
         sub.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
         sub.setWordWrap(True)
@@ -5246,9 +5250,12 @@ class TwinVideoPage(QWidget):
 
         scene_card = Card()
         sc_lay = QVBoxLayout(scene_card); sc_lay.setContentsMargins(20, 18, 20, 18); sc_lay.setSpacing(8)
-        sc_lay.addWidget(QLabel("SCENE  ·  drives the new starting frame", objectName="Muted"))
+        sc_lay.addWidget(QLabel("EDIT  ·  swap instruction sent to NanoBanana", objectName="Muted"))
         self.scene_edit = QPlainTextEdit()
-        self.scene_edit.setPlaceholderText("Scene description…")
+        self.scene_edit.setPlaceholderText(
+            "Replace the [original product] in the [hand] with @product, "
+            "keep the person / room / lighting unchanged…"
+        )
         sc_lay.addWidget(self.scene_edit, 1)
         body.addWidget(scene_card, 1)
 
@@ -5367,6 +5374,8 @@ class TwinVideoPage(QWidget):
 
     def _on_frame_picked(self, p: str):
         self._frame_path = p or None
+        # New frame → previous upload URL is now stale.
+        self._source_frame_url = None
         self.analyze_btn.setEnabled(bool(self._frame_path))
 
     def _append_log(self, target: QPlainTextEdit, level: str, msg: str):
@@ -5444,6 +5453,7 @@ class TwinVideoPage(QWidget):
             resolution=self.resolution.currentText(),
             out_dir=str(self._out_dir) if self._out_dir else None,
             product_urls=list(self._product_urls) if self._product_urls else None,
+            source_frame_url=self._source_frame_url,
         )
         self._frame_worker.moveToThread(self._thread)
         self._thread.started.connect(self._frame_worker.run)
@@ -5470,6 +5480,7 @@ class TwinVideoPage(QWidget):
         if out.get("out_dir"):
             self._out_dir = Path(out["out_dir"])
         self._product_urls = list(out.get("product_urls") or [])
+        self._source_frame_url = out.get("source_frame_url") or self._source_frame_url
         self._image_url = out.get("image_url")
         self._image_path = Path(out["image_path"]) if out.get("image_path") else None
         self._scene_prompt_used = out.get("scene_prompt_used") or self.scene_edit.toPlainText()
@@ -5569,9 +5580,10 @@ class TwinVideoPage(QWidget):
 
     def _reset_for_new_run(self):
         # Wipe per-run caches so the next render creates a fresh output dir
-        # and re-uploads product refs from the freshly-picked brand.
+        # and re-uploads source / product refs from the freshly-picked brand.
         self._out_dir = None
         self._product_urls = []
+        self._source_frame_url = None
         self._image_url = None
         self._image_path = None
         self._scene_prompt_used = ""

@@ -2111,14 +2111,15 @@ def run_twin_video_render_frame(
     provider_name: Optional[str] = None,
     out_dir: Optional[Path] = None,
     product_urls: Optional[list[str]] = None,
+    source_frame_url: Optional[str] = None,
 ) -> Optional[dict]:
-    """Phase B-1: render only the starting frame (no animation). Returns
-    {out_dir, image_url, image_path, product_urls, scene_prompt_used,
-    status}. The caller validates the image before invoking
-    `run_twin_video_animate` for the Kling step.
+    """Phase B-1: edit the source frame to swap the held product for the
+    user's brand product. Returns {out_dir, image_url, image_path,
+    product_urls, source_frame_url, scene_prompt_used, status}.
 
-    `out_dir` and `product_urls` can be passed in to avoid re-creating the
-    folder / re-uploading product refs on a re-render.
+    The source frame is uploaded once and reused on re-renders; same for
+    product refs. `out_dir`, `product_urls`, and `source_frame_url` can be
+    passed in to avoid re-uploading on iteration.
     """
     if image_model not in IMAGE_MODELS:
         on_log("ERR", f"Unknown image model: {image_model!r}"); return None
@@ -2164,13 +2165,25 @@ def run_twin_video_render_frame(
     )
 
     try:
-        # Upload product refs the FIRST time only. Re-renders reuse them.
+        # Upload the source frame the FIRST time only. NanoBanana 2 edit
+        # treats image 1 as the canvas to preserve, image 2+ as references —
+        # so the source has to be passed first and the product after.
+        if not source_frame_url:
+            if not src.exists():
+                on_log("ERR", f"Source frame missing on disk: {src}")
+                return {"out_dir": out_dir, "status": "error",
+                        "error": "source frame missing", "product_urls": product_urls or []}
+            on_log("INFO", f"Uploading source frame: {src.name}")
+            source_frame_url = provider.upload_image(src)
+
         if not product_urls:
             on_log("INFO", f"Uploading {len(product_paths)} product reference image(s)...")
             product_urls = []
             for pp in product_paths[:4]:
                 if should_cancel():
-                    return {"out_dir": out_dir, "status": "cancelled", "product_urls": product_urls}
+                    return {"out_dir": out_dir, "status": "cancelled",
+                            "product_urls": product_urls,
+                            "source_frame_url": source_frame_url}
                 try:
                     product_urls.append(provider.upload_image(pp))
                 except Exception as e:
@@ -2178,34 +2191,42 @@ def run_twin_video_render_frame(
             if not product_urls:
                 on_log("ERR", "No product references uploaded — abort.")
                 return {"out_dir": out_dir, "status": "error",
-                        "error": "no product refs", "product_urls": []}
+                        "error": "no product refs", "product_urls": [],
+                        "source_frame_url": source_frame_url}
 
         if should_cancel():
-            return {"out_dir": out_dir, "status": "cancelled", "product_urls": product_urls}
+            return {"out_dir": out_dir, "status": "cancelled",
+                    "product_urls": product_urls,
+                    "source_frame_url": source_frame_url}
 
-        on_log("INFO", "Generating starting frame with product injected...")
+        # NanoBanana 2 edit semantics: image 1 = the canvas to preserve, the
+        # rest = refs to compose into that canvas. So source first, then the
+        # product so it can be swapped in via the @product token in the prompt.
+        edit_image_urls = [source_frame_url, *product_urls]
+
+        on_log("INFO", "Editing source frame: swapping the held product...")
         local_scene = scene_prompt
         try:
             start_img_url = provider.call_image(
                 model=image_model, prompt=local_scene,
-                image_urls=product_urls,
+                image_urls=edit_image_urls,
                 resolution=resolution,
-                aspect_ratio=aspect, label="twin-vid-frame",
+                aspect_ratio=aspect, label="twin-vid-edit",
             )
         except CensorshipError:
-            on_log("WARN", "Frame blocked by content filter — softening prompt")
+            on_log("WARN", "Edit blocked by content filter — softening prompt")
             local_scene = _soften(provider, local_scene, "")
             start_img_url = provider.call_image(
                 model=image_model, prompt=local_scene,
-                image_urls=product_urls,
+                image_urls=edit_image_urls,
                 resolution=resolution,
-                aspect_ratio=aspect, label="twin-vid-frame-retry",
+                aspect_ratio=aspect, label="twin-vid-edit-retry",
             )
 
         frame_dest = out_dir / "generated_frame.png"
         try:
             provider.download(start_img_url, frame_dest)
-            on_log("OK", f"Starting frame ready: {frame_dest.name}")
+            on_log("OK", f"Edited frame ready: {frame_dest.name}")
         except Exception as e:
             on_log("WARN", f"Could not save frame locally: {e}")
 
@@ -2215,12 +2236,14 @@ def run_twin_video_render_frame(
             "image_url": start_img_url,
             "image_path": frame_dest if frame_dest.exists() else None,
             "product_urls": product_urls,
+            "source_frame_url": source_frame_url,
             "scene_prompt_used": local_scene,
         }
     except Exception as e:
-        on_log("ERR", f"Image generation failed: {e}")
+        on_log("ERR", f"Image edit failed: {e}")
         return {"out_dir": out_dir, "status": "error", "error": str(e),
-                "product_urls": product_urls or []}
+                "product_urls": product_urls or [],
+                "source_frame_url": source_frame_url}
 
 
 def run_twin_video_animate(
