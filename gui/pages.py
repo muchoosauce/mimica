@@ -5117,7 +5117,7 @@ class TwinVideoPage(QWidget):
         sub.setWordWrap(True)
         card_lay.addWidget(sub)
         self.drop = DropZone()
-        self.drop.path_changed.connect(self._on_frame_picked)
+        self.drop.file_dropped.connect(self._on_frame_picked)
         card_lay.addWidget(self.drop)
 
         brand_l = QLabel("BRAND  ·  source of the new product"); brand_l.setObjectName("Muted")
