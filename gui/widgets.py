@@ -789,3 +789,60 @@ class GradientText(QLabel):
         painter.setPen(Qt.NoPen)
         painter.fillPath(path, QBrush(gradient))
         painter.end()
+
+
+class GradientLogo(QLabel):
+    """Paints a PNG logo's silhouette filled with a horizontal linear gradient.
+
+    Counterpart to GradientText, but for a designed wordmark image instead of
+    a font-rendered string. The PNG's alpha channel is used as a mask: opaque
+    pixels become the gradient, transparent pixels stay transparent.
+
+    Implementation: render the gradient into an offscreen pixmap, then use
+    CompositionMode_DestinationIn with the logo pixmap to keep only the
+    pixels where the logo is opaque. Cheaper than per-pixel masking and
+    preserves anti-aliased edges.
+    """
+    def __init__(self, asset_path: Path, *, height: int = 28,
+                 color_start: str = t.ACCENT_SOFT,
+                 color_end: str = t.ACCENT_PINK):
+        super().__init__()
+        self._c1 = QColor(color_start)
+        self._c2 = QColor(color_end)
+        src = QPixmap(str(asset_path))
+        if src.isNull():
+            # Fall back to an empty 1×1 pixmap so paintEvent doesn't crash;
+            # caller's layout will collapse the widget naturally.
+            src = QPixmap(1, 1); src.fill(Qt.transparent)
+        target_w = max(1, int(src.width() * (height / max(1, src.height()))))
+        self._logo = src.scaled(
+            target_w, height,
+            Qt.KeepAspectRatio, Qt.SmoothTransformation,
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+        self.setFixedSize(self._logo.size())
+
+    def paintEvent(self, event):  # noqa: N802
+        if self._logo.isNull():
+            return
+        # Compose offscreen so the destination-in trick stays isolated from
+        # whatever Qt has already drawn into the widget surface.
+        canvas = QPixmap(self.size())
+        canvas.fill(Qt.transparent)
+        cp = QPainter(canvas)
+        cp.setRenderHint(QPainter.Antialiasing, True)
+        cp.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        gradient = QLinearGradient(0, 0, self.width(), 0)
+        gradient.setColorAt(0.0, self._c1)
+        gradient.setColorAt(1.0, self._c2)
+        cp.fillRect(canvas.rect(), QBrush(gradient))
+
+        cp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        cp.drawPixmap(0, 0, self._logo)
+        cp.end()
+
+        p = QPainter(self)
+        p.drawPixmap(0, 0, canvas)
+        p.end()

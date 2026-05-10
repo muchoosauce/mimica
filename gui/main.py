@@ -14,7 +14,11 @@ from .pages import (
     FunnelAdsPage, GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinPage
 )
 from .swap_page import SwapPage
-from .widgets import GradientText, icon_label, svg_icon, ICONS
+from pathlib import Path as _PathForAssets
+
+from .widgets import GradientLogo, GradientText, icon_label, svg_icon, ICONS
+
+_ASSETS_DIR = _PathForAssets(__file__).resolve().parent / "assets"
 
 
 class SidebarItem(QPushButton):
@@ -79,14 +83,13 @@ class Sidebar(QWidget):
         logo_row.setSpacing(0)
         logo_row.setContentsMargins(0, 0, 0, 0)
 
-        wordmark = GradientText(
-            "Mimica",
-            family="Caveat",
-            pixel_size=28,
+        # Custom-designed mimica wordmark (rounded geometric lowercase) painted
+        # with the same violet → pink gradient as the previous Caveat fallback.
+        wordmark = GradientLogo(
+            _ASSETS_DIR / "mimica-logo.png",
+            height=30,
             color_start=t.ACCENT_SOFT,
             color_end=t.ACCENT_PINK,
-            weight=QFont.Medium,
-            italic=True,
         )
         wordmark.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         logo_row.addWidget(wordmark, alignment=Qt.AlignLeft)
