@@ -5197,6 +5197,10 @@ class TwinVideoPage(QWidget):
         brand_l = QLabel("BRAND  ·  source of the new product"); brand_l.setObjectName("Muted")
         card_lay.addWidget(brand_l)
         self.brand_combo = QComboBox()
+        # Switching brand mid-flow must drop the cached product URLs and the
+        # already-rendered frame — otherwise the next render reuses the OLD
+        # brand's uploads and generates the wrong product in hand.
+        self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
         card_lay.addWidget(self.brand_combo)
 
         hint_l = QLabel("HINT  ·  optional"); hint_l.setObjectName("Muted")
@@ -5450,6 +5454,24 @@ class TwinVideoPage(QWidget):
         # New frame → previous upload URL is now stale.
         self._source_frame_url = None
         self.analyze_btn.setEnabled(bool(self._frame_path))
+
+    def _on_brand_changed(self, _idx: int):
+        # Brand switch invalidates anything that was uploaded / rendered for
+        # the previous brand: product refs, the output dir name, the
+        # generated frame. The source frame URL stays — it's per-frame, not
+        # per-brand.
+        self._product_urls = []
+        self._out_dir = None
+        self._image_url = None
+        self._image_path = None
+        self._scene_prompt_used = ""
+        if hasattr(self, "preview_thumb"):
+            self.preview_thumb.clear()
+            self.preview_thumb.setText("brand changed — re-render the frame")
+        if hasattr(self, "animate_btn"):
+            self.animate_btn.setEnabled(False)
+        if hasattr(self, "preview_open_btn"):
+            self.preview_open_btn.setEnabled(False)
 
     def _append_log(self, target: QPlainTextEdit, level: str, msg: str):
         ts = datetime.now().strftime("%H:%M:%S")
