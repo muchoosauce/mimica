@@ -2814,6 +2814,7 @@ def create_animation_project(
     product_image: Optional[str] = None,
     style_refs: Optional[list[str]] = None,
     default_duration: int = ANIMATION_DEFAULT_DURATION,
+    style: str = "realistic",
 ) -> Path:
     """Create a fresh project on disk with status='brief'. Copies the product
     and style-ref images into the project folder so the run is self-contained
@@ -2865,6 +2866,7 @@ def create_animation_project(
         "brief_text": brief_text,
         "product": saved_product,
         "style_refs": saved_refs,
+        "style": style or "realistic",
         "scenario": {},
         "characters": {},
         "shots": {},
@@ -3065,6 +3067,16 @@ def run_animation_shot_image(
     # to 8, GPT Image 2 up to 16).
     refs: list[Path] = []
     is_anchor_shot = (shot_id == 1)
+    # Style ref is only attached to the anchor — subsequent shots inherit
+    # the look through `anchor` itself, which already carries the styled
+    # subject and setting. This keeps Kling's input clean for non-anchor
+    # renders and avoids fighting between style ref and the anchor.
+    style_key = (state.get("style") or "").strip()
+    if is_anchor_shot and style_key and style_key != "realistic":
+        from providers.prompts import resolve_style_ref
+        ref_path = resolve_style_ref(style_key)
+        if ref_path and Path(ref_path).exists():
+            refs.append(Path(ref_path))
     if use_anchor and not is_anchor_shot:
         anchor = shots.get("1") or {}
         anchor_path = project_dir / anchor.get("image_file", "") if anchor.get("image_file") else None
@@ -3094,6 +3106,14 @@ def run_animation_shot_image(
         has_anchor=(use_anchor and not is_anchor_shot and len([r for r in refs]) > 0
                     and (not is_anchor_shot)),
     )
+    # Style guard rail — prepended to every shot so the LLM's refined prompt
+    # can't drift toward realistic defaults even if the anchor weakens its
+    # influence on later shots.
+    if style_key and style_key != "realistic":
+        from providers.prompts import ANIMATION_STYLES
+        style_prefix = (ANIMATION_STYLES.get(style_key) or {}).get("prompt", "")
+        if style_prefix:
+            refined_prompt = f"{style_prefix} {refined_prompt}".strip()
     shot["image_prompt"] = refined_prompt
     shot["image_status"] = "generating"
     save_animation_state(project_dir, state)

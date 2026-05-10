@@ -9,6 +9,236 @@ if TYPE_CHECKING:
     from .base import Provider
 
 
+# ─── Animation style presets ──────────────────────────────────────────────
+#
+# A style is injected at the anchor (shot 1) image generation by passing
+# `style_ref` as the FIRST image_url to NanoBanana and prefixing `prompt`
+# to the LLM instruction. Subsequent shots inherit the style automatically
+# through the anchor — they only need the `prompt` prefix as reinforcement.
+#
+# `style_ref` is a relative path under gui/assets/ resolved at use time so
+# the same dict works from CLI, frozen .app bundle, and source-mode runs.
+
+ANIMATION_STYLES: dict[str, dict] = {
+    "realistic": {
+        "label": "Realistic",
+        "prompt": "",
+        "style_ref": "",
+    },
+    "pixar": {
+        "label": "Pixar",
+        "prompt": (
+            "Pixar-style 3D animated render: subtly stylized human "
+            "proportions with slightly enlarged eyes, smooth subsurface-"
+            "scattered skin with soft specular highlights, hyperreal but "
+            "stylized clothing fabric, warm cinematic lighting with rich "
+            "color grading, painterly background blur, expressive emotive "
+            "face — 3D render quality, not photoreal."
+        ),
+        "style_ref": "styles/pixar.jpg",
+    },
+    "claymation": {
+        "label": "Claymation",
+        "prompt": (
+            "Stop-motion claymation still: hand-sculpted clay figure with "
+            "visible fingerprint indents and tool marks, glossy plasticine "
+            "skin with slight imperfections, hair and fabric sculpted from "
+            "clay in stylized shapes, slightly oversized features, diorama-"
+            "scale tabletop set, soft directional studio lighting suggesting "
+            "the stop-motion rig, shallow depth of field at miniature scale."
+        ),
+        "style_ref": "styles/claymation.jpg",
+    },
+    "felt_stop_motion": {
+        "label": "Felt stop motion",
+        "prompt": (
+            "Felt stop-motion still: every surface is hand-cut felted wool "
+            "in solid pastel colors, visible stitched seams and fuzzy fiber "
+            "texture, slightly squashed proportions like a children's-book "
+            "puppet, the entire set is a fabric diorama on a tabletop, soft "
+            "warm studio lights, gentle macro depth of field, no glossy or "
+            "plastic surfaces — everything is matte felted fabric."
+        ),
+        "style_ref": "styles/felt_stop_motion.jpg",
+    },
+    "plush_toy": {
+        "label": "Plush toy",
+        "prompt": (
+            "Plush-toy diorama still: the character is a stuffed plush "
+            "doll with soft fuzzy fabric body, embroidered facial features "
+            "in thread, button eyes, slightly chunky cute proportions, "
+            "visible seams and fabric grain, the room and props rendered "
+            "as a child's bedroom playset, warm bedroom lighting, macro "
+            "tabletop scale, photoreal fabric textures."
+        ),
+        "style_ref": "styles/plush_toy.jpg",
+    },
+    "marionette": {
+        "label": "Marionette",
+        "prompt": (
+            "String-marionette puppet still: wooden carved figure with "
+            "visible joints, painted wooden face, fabric clothes draped on "
+            "an articulated wooden body, fine strings rising from the head "
+            "and limbs to an out-of-frame control bar, sat or posed in a "
+            "miniature stage-like set, theatrical warm spotlight, tabletop "
+            "diorama scale, painted wood grain visible."
+        ),
+        "style_ref": "styles/marionette.jpg",
+    },
+    "animatronic": {
+        "label": "Animatronic",
+        "prompt": (
+            "Animatronic figure still: highly detailed silicone-skinned "
+            "humanoid mannequin with visible micro-seams, slightly waxy "
+            "complexion suggesting a Disney-park or museum animatronic, "
+            "glass eyes with realistic reflections, real fabric clothing, "
+            "scene lit like a themed attraction with warm tungsten key "
+            "light, photoreal but uncanny — the figure reads as a "
+            "lifelike but inanimate animatronic rather than a real human."
+        ),
+        "style_ref": "styles/animatronic.jpg",
+    },
+    "plastic_doll": {
+        "label": "Plastic doll",
+        "prompt": (
+            "Fashion-doll still: hyper-glossy injection-molded plastic "
+            "figure with smooth featureless joints, painted-on facial "
+            "features, exaggerated proportions, plastic-rooted hair with "
+            "visible plug pattern, real miniature clothes on a doll body, "
+            "diorama-scale dollhouse set, soft studio key light, plastic "
+            "specular highlights, tabletop macro scale."
+        ),
+        "style_ref": "styles/plastic_doll.jpg",
+    },
+    "action_figure": {
+        "label": "Action Figure",
+        "prompt": (
+            "Premium action-figure still: matte painted PVC plastic "
+            "figure with visible articulation joints at the shoulders, "
+            "elbows, hips and knees, sculpted hair and clothing, detailed "
+            "facial paint app, mannequin-like body posed in a miniature "
+            "vignette, dramatic key + rim lighting like a collector toy "
+            "photograph, macro lens, shallow depth of field."
+        ),
+        "style_ref": "styles/action_figure.jpg",
+    },
+    "wooden_doll": {
+        "label": "Wooden doll",
+        "prompt": (
+            "Carved wooden doll still: figure carved from a single block "
+            "of light maple or pine, visible wood grain on every surface, "
+            "painted facial features in matte acrylic, simple peg-style "
+            "limbs, smooth sanded curves, props and furniture also made of "
+            "stained wood, soft window light, craft-fair tabletop diorama "
+            "scale, no plastic or metal anywhere."
+        ),
+        "style_ref": "styles/wooden_doll.jpg",
+    },
+    "paper_cutout": {
+        "label": "Paper cutout",
+        "prompt": (
+            "Paper-cutout collage still: every element is a flat hand-cut "
+            "piece of textured cardstock layered in shallow z-depth, visible "
+            "paper grain and cut edges with tiny shadows underneath, limited "
+            "color palette of solid pastel sheets, no photoreal shading — "
+            "everything reads as construction-paper craft, soft top-down "
+            "lighting, slight macro depth of field at tabletop scale."
+        ),
+        "style_ref": "styles/paper_cutout.jpg",
+    },
+    "cardboard": {
+        "label": "Cardboard",
+        "prompt": (
+            "Cardboard-craft still: the entire scene including the "
+            "character is constructed from corrugated cardboard with "
+            "visible fluted edges, brown and tan tones, hand-drawn marker "
+            "details for facial features, hot-glue seams visible at "
+            "joints, taped joints, slightly imperfect cuts — a school-"
+            "project diorama aesthetic, soft daylight, tabletop scale."
+        ),
+        "style_ref": "styles/cardboard.jpg",
+    },
+    "lego": {
+        "label": "Lego",
+        "prompt": (
+            "Official Lego minifigure scene: the character is a Lego "
+            "minifig with a yellow cylindrical head, painted facial "
+            "features, ABS plastic textured body and limbs with the "
+            "iconic stud-and-tube connectors, every prop and surface "
+            "built from authentic Lego bricks at minifig scale, plastic "
+            "micro-roughness on every brick, set lit like a tabletop "
+            "Lego photograph, macro lens with shallow depth of field."
+        ),
+        "style_ref": "styles/lego.jpg",
+    },
+    "miniature": {
+        "label": "Miniature model",
+        "prompt": (
+            "Tilt-shift miniature model still: a hyperrealistic 1:24 "
+            "scale model railway / architectural diorama, real materials "
+            "(wood, plaster, fabric) at miniature scale, photoreal but "
+            "the tilt-shift compression and extreme shallow depth of "
+            "field reveals the model nature, warm key light + cool fill, "
+            "tabletop macro photography aesthetic."
+        ),
+        "style_ref": "styles/miniature.jpg",
+    },
+    "diorama": {
+        "label": "Diorama",
+        "prompt": (
+            "Hand-built diorama inside a wooden shadow-box: the scene is "
+            "framed by visible wooden walls and a glass front, hand-"
+            "painted backdrop, mixed-material miniature props (real wood, "
+            "fabric, paper, polymer clay), warm interior LED lighting "
+            "from inside the box, macro lens shooting into the box, tabletop "
+            "craft aesthetic — the viewer is clearly looking at a contained "
+            "model scene, not a real environment."
+        ),
+        "style_ref": "styles/diorama.jpg",
+    },
+    "porcelain_doll": {
+        "label": "Porcelain doll",
+        "prompt": (
+            "Antique porcelain-doll still: pale glossy porcelain face with "
+            "painted blush and lips, glass eyes with realistic catchlights, "
+            "rooted mohair wig, period costume in real fabric, slightly "
+            "fragile vintage feel, soft warm window light, macro lens, "
+            "shallow depth of field — the figure reads as a hand-crafted "
+            "Victorian-era doll on a display table."
+        ),
+        "style_ref": "styles/porcelain_doll.jpg",
+    },
+    "balloon": {
+        "label": "Balloon",
+        "prompt": (
+            "Twisted-balloon-art figure still: the entire character is "
+            "sculpted from inflated party balloons twisted and tied "
+            "together — visible balloon segments, glossy latex shine, "
+            "vibrant solid colors, slightly squeaky-tight rubber surfaces, "
+            "matching balloon props around the figure, soft bright party "
+            "lighting, tabletop close-up photography, no other materials "
+            "visible in the scene."
+        ),
+        "style_ref": "styles/balloon.jpg",
+    },
+}
+
+
+def resolve_style_ref(style_key: str) -> str:
+    """Return an absolute path to the style ref image for `style_key`, or
+    empty string if the style has no ref (e.g. "realistic")."""
+    style = ANIMATION_STYLES.get(style_key or "")
+    if not style:
+        return ""
+    rel = style.get("style_ref") or ""
+    if not rel:
+        return ""
+    from pathlib import Path
+    here = Path(__file__).resolve().parent.parent
+    candidate = here / "gui" / "assets" / rel
+    return str(candidate) if candidate.exists() else ""
+
+
 SYSTEM_PROMPT = """You are an expert NanoBanana 2 prompt engineer for static ad production. When the user provides a reference ad image and specifies a number of iterations (N), you generate exactly N NanoBanana 2 prompts that produce N totally different ads — different layouts, different compositions, different product placements, different backgrounds — but all sharing the same graphic universe, tone, and visual identity as the reference.
 
 Rules:

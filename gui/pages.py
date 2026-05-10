@@ -6299,6 +6299,26 @@ class AnimationPage(QWidget):
         example_lbl.setWordWrap(True)
         fl.addWidget(example_lbl)
 
+        # Style picker — 4×N grid of clickable vignettes. The anchor (shot 1)
+        # render injects the chosen preset's ref image + style descriptor; all
+        # later shots inherit the aesthetic through the anchor.
+        sl = QLabel("STYLE"); sl.setObjectName("Muted")
+        fl.addWidget(sl)
+        self.style_key = "realistic"
+        self.style_tiles: dict[str, QFrame] = {}
+        style_grid = QGridLayout()
+        style_grid.setSpacing(8); style_grid.setContentsMargins(0, 0, 0, 0)
+        from providers.prompts import ANIMATION_STYLES, resolve_style_ref
+        items = list(ANIMATION_STYLES.items())
+        cols = 4
+        for i, (key, st) in enumerate(items):
+            r, c = divmod(i, cols)
+            tile = self._make_style_tile(key, st, resolve_style_ref(key))
+            style_grid.addWidget(tile, r, c)
+            self.style_tiles[key] = tile
+        fl.addLayout(style_grid)
+        self._refresh_style_tiles()
+
         pl = QLabel("PRODUCT  ·  optional"); pl.setObjectName("Muted")
         fl.addWidget(pl)
         prow = QHBoxLayout(); prow.setSpacing(8)
@@ -6931,6 +6951,11 @@ class AnimationPage(QWidget):
         self.style_refs_label.setText(
             f"{len(refs)} image{'s' if len(refs) > 1 else ''} loaded" if refs else "(none picked)"
         )
+        # Restore the picked style preset, falling back to "realistic" for
+        # legacy projects that pre-date the style picker.
+        self.style_key = self._state.get("style") or "realistic"
+        if hasattr(self, "style_tiles"):
+            self._refresh_style_tiles()
 
     def _populate_all(self):
         self._populate_scenario()
@@ -6939,6 +6964,70 @@ class AnimationPage(QWidget):
         self._populate_anchor()
         self._populate_shots()
         self._populate_export()
+
+    # ── Style picker helpers ─────────────────────────────────────────────
+
+    def _make_style_tile(self, key: str, st: dict, ref_path: str) -> QFrame:
+        """Build one clickable vignette in the style grid. Selection state
+        is repainted by _refresh_style_tiles()."""
+        tile = QFrame()
+        tile.setObjectName("StyleTile")
+        tile.setCursor(Qt.PointingHandCursor)
+        tile.setFixedSize(110, 132)
+        lay = QVBoxLayout(tile)
+        lay.setContentsMargins(6, 6, 6, 4); lay.setSpacing(4)
+        thumb = QLabel()
+        thumb.setFixedSize(96, 92)
+        thumb.setAlignment(Qt.AlignCenter)
+        if ref_path and Path(ref_path).exists():
+            from PySide6.QtGui import QPixmap
+            pm = QPixmap(ref_path).scaled(
+                96, 92, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation,
+            )
+            thumb.setPixmap(pm)
+            thumb.setStyleSheet("border-radius: 8px;")
+        else:
+            # "Realistic" / no-ref case — show a dimmed placeholder so the
+            # tile reads as "no stylization" rather than "missing image".
+            thumb.setText("—")
+            thumb.setStyleSheet(
+                f"background: {t.BG_INPUT}; color: {t.TEXT_MUTED}; "
+                f"border-radius: 8px; font-size: 18px;"
+            )
+        lay.addWidget(thumb, alignment=Qt.AlignCenter)
+        lbl = QLabel(st.get("label", key))
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet(f"color: {t.TEXT}; font-size: 10px; font-weight: 600;")
+        lay.addWidget(lbl)
+        tile.mousePressEvent = lambda _ev, k=key: self._on_style_picked(k)
+        return tile
+
+    def _on_style_picked(self, key: str):
+        self.style_key = key or "realistic"
+        self._refresh_style_tiles()
+
+    def _refresh_style_tiles(self):
+        for k, tile in self.style_tiles.items():
+            selected = (k == self.style_key)
+            if selected:
+                tile.setStyleSheet(
+                    "QFrame#StyleTile {"
+                    f" background: {t.BG_ELEVATED};"
+                    f" border: 2px solid {t.ACCENT};"
+                    f" border-radius: 12px;"
+                    " }"
+                )
+            else:
+                tile.setStyleSheet(
+                    "QFrame#StyleTile {"
+                    f" background: {t.BG_INPUT};"
+                    f" border: 1px solid {t.BORDER_MUTED};"
+                    f" border-radius: 12px;"
+                    " }"
+                    "QFrame#StyleTile:hover {"
+                    f" border: 1px solid {t.ACCENT_SOFT};"
+                    " }"
+                )
 
     # ── Worker dispatch ─────────────────────────────────────────────────────
 
@@ -7034,6 +7123,7 @@ class AnimationPage(QWidget):
                 product_image=self.product_image_path.text() or None,
                 style_refs=self.style_refs_paths,
                 default_duration=int(self.duration.currentData() or core.ANIMATION_DEFAULT_DURATION),
+                style=self.style_key,
             )
         except Exception as e:
             QMessageBox.critical(self, "Project init failed", str(e)); return
