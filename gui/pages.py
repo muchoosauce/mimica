@@ -7319,8 +7319,17 @@ class AnimationPage(QWidget):
             QMessageBox.information(self, "Nothing to do", "All shots have an image.")
             return
         def op(on_log):
-            for sid in sorted(targets):
-                core.run_animation_shot_image(self._project_dir, sid, on_log, use_anchor=True)
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            # 3 workers ~ matches the B-Roll cap; provider rate limits are
+            # the bottleneck above that anyway.
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futs = [pool.submit(core.run_animation_shot_image,
+                                    self._project_dir, sid, on_log, use_anchor=True)
+                        for sid in sorted(targets)]
+                for f in as_completed(futs):
+                    try: f.result()
+                    except Exception as e:
+                        on_log("ERR", f"shot image render failed: {e}")
         self._run_op(op)
 
     def _on_generate_all_videos(self):
@@ -7333,7 +7342,14 @@ class AnimationPage(QWidget):
             QMessageBox.information(self, "Nothing to do", "No approved images awaiting video.")
             return
         def op(on_log):
-            for sid in sorted(targets):
-                core.run_animation_shot_video(self._project_dir, sid, on_log)
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futs = [pool.submit(core.run_animation_shot_video,
+                                    self._project_dir, sid, on_log)
+                        for sid in sorted(targets)]
+                for f in as_completed(futs):
+                    try: f.result()
+                    except Exception as e:
+                        on_log("ERR", f"shot video render failed: {e}")
             core.finalize_animation_project(self._project_dir)
         self._run_op(op)

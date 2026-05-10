@@ -4,10 +4,16 @@ import os
 import re
 import shutil
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
+
+# Serializes Animation state.json mutations so parallel shot generators
+# don't clobber each other's writes. Held only across the brief
+# load → mutate → save cycle, not during the long-running Kling calls.
+_animation_state_lock = threading.Lock()
 
 from dotenv import load_dotenv, set_key
 
@@ -2761,6 +2767,22 @@ def save_animation_state(project_dir: Path, state: dict) -> None:
     )
 
 
+def _atomic_update_shot(project_dir: Path, shot_id: int, updates: dict) -> dict:
+    """Atomically merge `updates` into state.shots[<shot_id>] and persist.
+    Used by parallel shot workers so simultaneous saves can't lose each
+    other's status / file deltas through a stale read."""
+    with _animation_state_lock:
+        state = load_animation_state(project_dir) or {}
+        shots = state.setdefault("shots", {})
+        shot = shots.setdefault(str(shot_id), {})
+        # Drop None values to avoid wiping fields on partial updates.
+        for k, v in updates.items():
+            if v is not None:
+                shot[k] = v
+        save_animation_state(project_dir, state)
+        return state
+
+
 def list_animation_projects(root: Optional[Path] = None) -> list[dict]:
     """List all animation projects sorted by most recent. Each entry has
     `dir`, `state` (the loaded dict), and `mtime`."""
@@ -3131,9 +3153,12 @@ def run_animation_shot_image(
         style_prefix = (ANIMATION_STYLES.get(style_key) or {}).get("prompt", "")
         if style_prefix:
             refined_prompt = f"{style_prefix} {refined_prompt}".strip()
+    _atomic_update_shot(project_dir, shot_id, {
+        "image_prompt": refined_prompt,
+        "image_status": "generating",
+    })
     shot["image_prompt"] = refined_prompt
     shot["image_status"] = "generating"
-    save_animation_state(project_dir, state)
 
     try:
         # Upload refs.
@@ -3166,15 +3191,18 @@ def run_animation_shot_image(
 
         dest = project_dir / "shots" / f"shot_{shot_id:03d}.png"
         provider.download(img_url, dest)
-        shot["image_file"] = str(dest.relative_to(project_dir))
-        shot["image_status"] = "review"
         on_log("OK", f"[{label}] saved {dest.name}")
+        return _atomic_update_shot(project_dir, shot_id, {
+            "image_file": str(dest.relative_to(project_dir)),
+            "image_status": "review",
+            "image_error": "",
+        })
     except Exception as e:
-        shot["image_status"] = "failed"
-        shot["image_error"] = str(e)
         on_log("ERR", f"[{label}] {e}")
-    save_animation_state(project_dir, state)
-    return state
+        return _atomic_update_shot(project_dir, shot_id, {
+            "image_status": "failed",
+            "image_error": str(e),
+        })
 
 
 def approve_animation_shot_image(project_dir: Path, shot_id: int) -> dict:
@@ -3231,9 +3259,12 @@ def run_animation_shot_video(
         aspect_ratio=aspect,
         shows_product=bool(shot.get("shows_product")),
     )
+    _atomic_update_shot(project_dir, shot_id, {
+        "video_prompt": refined_prompt,
+        "video_status": "generating",
+    })
     shot["video_prompt"] = refined_prompt
     shot["video_status"] = "generating"
-    save_animation_state(project_dir, state)
 
     try:
         on_log("INFO", f"[{label}] uploading frame...")
@@ -3256,15 +3287,18 @@ def run_animation_shot_video(
         )
         dest = project_dir / "shots" / f"shot_{shot_id:03d}.mp4"
         provider.download(video_url, dest)
-        shot["video_file"] = str(dest.relative_to(project_dir))
-        shot["video_status"] = "approved"
         on_log("OK", f"[{label}] saved {dest.name}")
+        return _atomic_update_shot(project_dir, shot_id, {
+            "video_file": str(dest.relative_to(project_dir)),
+            "video_status": "approved",
+            "video_error": "",
+        })
     except Exception as e:
-        shot["video_status"] = "failed"
-        shot["video_error"] = str(e)
         on_log("ERR", f"[{label}] {e}")
-    save_animation_state(project_dir, state)
-    return state
+        return _atomic_update_shot(project_dir, shot_id, {
+            "video_status": "failed",
+            "video_error": str(e),
+        })
 
 
 def finalize_animation_project(project_dir: Path) -> dict:
