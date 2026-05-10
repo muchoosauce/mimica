@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton,
-    QScrollArea, QSizePolicy, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QTextEdit, QVBoxLayout, QWidget
+    QScrollArea, QSizePolicy, QSlider, QSpinBox, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
 )
 
 from . import core
@@ -1004,10 +1004,13 @@ class HistoryPage(QWidget):
 
 class RunDetailPage(QWidget):
     back = Signal()
+    resume_broll = Signal(dict)  # Emit when user wants to resume a B-roll image
+                                 # run at the approval / video-generation step.
 
     def __init__(self):
         super().__init__()
         self.setObjectName("Root")
+        self._current_run: dict | None = None
         self._build()
 
     def _build(self):
@@ -1023,6 +1026,15 @@ class RunDetailPage(QWidget):
         head.addWidget(back_btn); head.addSpacing(10)
         self.title = QLabel(""); self.title.setObjectName("H1")
         head.addWidget(self.title); head.addStretch()
+        # Visible only on B-roll image runs that haven't generated videos yet —
+        # lets the user pick up where they left off (approve + animate) instead
+        # of orphaning the run.
+        self.continue_btn = QPushButton("Continue to videos →")
+        self.continue_btn.setObjectName("PrimaryBtn")
+        self.continue_btn.setCursor(Qt.PointingHandCursor)
+        self.continue_btn.clicked.connect(self._emit_resume)
+        self.continue_btn.hide()
+        head.addWidget(self.continue_btn)
         self.open_btn = QPushButton("Open folder"); self.open_btn.setObjectName("GhostBtn")
         self.open_btn.setCursor(Qt.PointingHandCursor)
         head.addWidget(self.open_btn)
@@ -1041,6 +1053,7 @@ class RunDetailPage(QWidget):
         root.addWidget(scroll, 1)
 
     def set_run(self, r: dict):
+        self._current_run = r
         self.title.setText(Path(r.get("reference", "Run")).name)
         dt = core.parse_run_dt(r["timestamp"])
         p = r.get("params", {})
@@ -1055,6 +1068,19 @@ class RunDetailPage(QWidget):
             self.open_btn.clicked.disconnect()
         except Exception: pass
         self.open_btn.clicked.connect(lambda _=None, path=r["dir"]: open_path(path))
+
+        # Show the Continue-to-videos shortcut iff this is a B-roll image run
+        # whose images haven't been animated yet (no .mp4 files in the dir).
+        is_broll_images = r.get("type") == "broll_images"
+        has_videos = any(str(img).lower().endswith(".mp4") for img in r.get("images", []))
+        if is_broll_images and not has_videos and ok > 0:
+            self.continue_btn.show()
+        else:
+            self.continue_btn.hide()
+
+    def _emit_resume(self):
+        if self._current_run:
+            self.resume_broll.emit(self._current_run)
 
         while self.grid.count():
             item = self.grid.takeAt(0)
@@ -3048,16 +3074,6 @@ class BRollPage(QWidget):
         models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1)
         form.addLayout(models_row)
 
-        # Sound toggle — Kling 3.0 charges extra (~1.5×) when audio is on,
-        # so default is OFF. User can flip per run if they want native audio.
-        sound_row = QHBoxLayout(); sound_row.setContentsMargins(0, 0, 0, 0); sound_row.setSpacing(8)
-        self.sound_chk = QCheckBox("Generate native audio (Kling sound — costs more credits)")
-        self.sound_chk.setChecked(False)
-        self.sound_chk.setStyleSheet(f"QCheckBox {{ color: {t.TEXT_DIM}; font-size: 12px; }}")
-        sound_row.addWidget(self.sound_chk)
-        sound_row.addStretch()
-        form.addLayout(sound_row)
-
         out_l = QLabel("OUTPUT FOLDER"); out_l.setObjectName("Muted")
         form.addWidget(out_l)
         self.out_row = OutputFolderRow()
@@ -3162,6 +3178,53 @@ class BRollPage(QWidget):
         self.animate_btn.clicked.connect(self._start_videos)
         hl.addWidget(self.animate_btn)
         col.addWidget(head_card)
+
+        # Per-clip settings — duration + native-audio toggle. Placed right above
+        # the approval grid so the user can tweak both before clicking Animate.
+        settings_card = Card()
+        sl = QHBoxLayout(settings_card); sl.setContentsMargins(20, 14, 20, 14); sl.setSpacing(20)
+
+        dur_col = QVBoxLayout(); dur_col.setSpacing(4)
+        dur_top = QHBoxLayout(); dur_top.setContentsMargins(0, 0, 0, 0); dur_top.setSpacing(8)
+        dur_top.addWidget(_field_label("Duration"))
+        dur_top.addStretch()
+        self.duration_value_lbl = QLabel("5s")
+        self.duration_value_lbl.setStyleSheet(
+            f"background: {t.BG_INPUT}; color: {t.TEXT}; padding: 2px 10px; "
+            f"border-radius: 8px; font-size: 12px; font-weight: 600;"
+        )
+        dur_top.addWidget(self.duration_value_lbl)
+        dur_col.addLayout(dur_top)
+        self.duration_slider = QSlider(Qt.Horizontal)
+        self.duration_slider.setRange(5, 10)
+        self.duration_slider.setSingleStep(1)
+        self.duration_slider.setPageStep(1)
+        self.duration_slider.setTickPosition(QSlider.NoTicks)
+        self.duration_slider.setValue(5)
+        self.duration_slider.valueChanged.connect(self._on_duration_changed)
+        dur_col.addWidget(self.duration_slider)
+        sl.addLayout(dur_col, 3)
+
+        aud_col = QVBoxLayout(); aud_col.setSpacing(4)
+        aud_col.addWidget(_field_label("Native audio (Kling — costs more)"))
+        self.audio_toggle = QPushButton("Audio OFF")
+        self.audio_toggle.setCheckable(True)
+        self.audio_toggle.setChecked(False)
+        self.audio_toggle.setCursor(Qt.PointingHandCursor)
+        self.audio_toggle.setMinimumWidth(120)
+        self.audio_toggle.setStyleSheet(
+            f"QPushButton {{ background: {t.BG_INPUT}; color: {t.TEXT_DIM}; "
+            f"border: 1px solid {t.BORDER}; border-radius: 14px; padding: 6px 14px; "
+            f"font-size: 12px; font-weight: 600; }}"
+            f"QPushButton:checked {{ background: {t.ACCENT}; color: white; "
+            f"border: 1px solid {t.ACCENT}; }}"
+            f"QPushButton:hover {{ border-color: {t.ACCENT}; }}"
+        )
+        self.audio_toggle.toggled.connect(self._on_audio_toggled)
+        aud_col.addWidget(self.audio_toggle)
+        sl.addLayout(aud_col, 1)
+
+        col.addWidget(settings_card)
 
         grid_card = Card()
         gl = QVBoxLayout(grid_card); gl.setContentsMargins(20, 18, 20, 18); gl.setSpacing(10)
@@ -3337,6 +3400,40 @@ class BRollPage(QWidget):
             self._image_worker.cancel()
         self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
 
+    def load_run(self, run: dict) -> bool:
+        """Re-hydrate the page at the approval step from a previously generated
+        B-roll image run on disk. Returns True if the run was loaded.
+
+        Used when the user reopens a run from History whose images were
+        generated but never animated — they pick up exactly where they left off.
+        """
+        run_dir = Path(run.get("dir") or "")
+        if not run_dir.exists():
+            QMessageBox.warning(self, "Run unavailable",
+                                f"Folder not found:\n{run_dir}")
+            return False
+        results = list(run.get("results") or [])
+        ok_results = [r for r in results if r.get("status") == "ok"]
+        if not ok_results:
+            QMessageBox.information(self, "Nothing to approve",
+                                    "This run has no successful images to animate.")
+            return False
+
+        self._images_dir = run_dir
+        self._image_results = results
+        self._videos_dir = None
+        self._video_count = 0
+        self._clear_video_grid()
+        self.video_log.clear()
+        self.video_pill.setText("Idle")
+        self.video_pill.setStyleSheet(
+            f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 4px 10px; "
+            f"border-radius: 10px; font-size: 11px; font-weight: 600;"
+        )
+        self._populate_approval_grid()
+        self._set_step(1)
+        return True
+
     def _on_image_log(self, level: str, msg: str):
         self._append_log(self.log, level, msg)
 
@@ -3399,14 +3496,26 @@ class BRollPage(QWidget):
     def _on_approval_toggled(self, _idx: int, _approved: bool):
         self._refresh_approval_count()
 
+    def _on_duration_changed(self, value: int):
+        self.duration_value_lbl.setText(f"{value}s")
+        self._refresh_approval_count()
+
+    def _on_audio_toggled(self, checked: bool):
+        self.audio_toggle.setText("Audio ON" if checked else "Audio OFF")
+        self._refresh_approval_count()
+
     def _refresh_approval_count(self):
         approved = sum(1 for tile in self._approval_thumbs.values() if tile.is_approved())
         total = len(self._approval_thumbs)
         provider = core.get_active_provider_name()
         video_model = self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL
-        price = core.cost_per_video(provider, video_model, 5)
+        duration = self.duration_slider.value() if hasattr(self, "duration_slider") else 5
+        # Native audio on Kling roughly 1.5×s the clip cost — see pricing page.
+        sound_mult = 1.5 if (hasattr(self, "audio_toggle") and self.audio_toggle.isChecked()) else 1.0
+        price = core.cost_per_video(provider, video_model, duration) * sound_mult
         self.approve_count_lbl.setText(
-            f"{approved}/{total} approved  ·  estimated ${approved * price:.2f} for phase 2 (5s clips)"
+            f"{approved}/{total} approved  ·  estimated ${approved * price:.2f} "
+            f"for phase 2 ({duration}s clips)"
         )
         self.animate_btn.setEnabled(approved > 0)
 
@@ -3441,11 +3550,11 @@ class BRollPage(QWidget):
         self._video_worker = BRollVideoWorker(
             str(self._images_dir),
             sorted(approved),
-            5,
+            self.duration_slider.value(),
             self.asp.currentText(),
             min(4, self.workers.value()),
             self.video_model.currentData() or core.DEFAULT_VIDEO_MODEL,
-            self.sound_chk.isChecked(),
+            self.audio_toggle.isChecked(),
         )
         self._video_worker.moveToThread(self._thread)
         self._thread.started.connect(self._video_worker.run)

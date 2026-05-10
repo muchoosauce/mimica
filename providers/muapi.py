@@ -433,27 +433,55 @@ class MuApiProvider(Provider):
         # Product reference locking via Kling's `kling_elements`. Only Kling 3
         # supports this. Seedance has its own multi-image reference path which
         # we don't wire yet (TODO when MuAPI documents it).
+        #
+        # Empirically (May 2026), Kling 3.0 Standard rejects `kling_elements`
+        # with "Unknown error" mid-render whenever the source frame's element
+        # is small (e.g. selfie holding a bottle) and the refs are isolated
+        # studio shots — the matcher can't track the element and the job dies.
+        # We need at least 2 distinct refs and we fall back to no-locking on
+        # any mid-render failure further down (see retry block below).
         refs = list(product_reference_urls or [])
         used_locking = False
         if refs and is_kling:
-            if len(refs) == 1:
-                refs = refs * 2
-            elif len(refs) > 4:
+            if len(refs) > 4:
                 refs = refs[:4]
-            payload["kling_elements"] = [{
-                "name": "product",
-                "description": (
-                    "the product with all its visible packaging, logo, "
-                    "label text and printed characters preserved exactly"
-                ),
-                "element_input_urls": refs,
-            }]
-            if "@product" not in payload["prompt"]:
-                payload["prompt"] = payload["prompt"].rstrip() + " @product"
-            used_locking = True
-            self._log("INFO", f"[{label}] product reference locking: on ({len(refs)} ref{'s' if len(refs) > 1 else ''})")
+            if len(refs) < 2:
+                # Kling demands 2-4 element refs; with only 1 unique ref the
+                # matcher fails predictably. Skip locking instead of duplicating
+                # the same URL twice (which still fails per repro tests).
+                self._log(
+                    "WARN",
+                    f"[{label}] product reference locking: skipped (only {len(refs)} ref, "
+                    "need 2 distinct refs for Kling element tracking)",
+                )
+            else:
+                payload["kling_elements"] = [{
+                    "name": "product",
+                    "description": (
+                        "the product with all its visible packaging, logo, "
+                        "label text and printed characters preserved exactly"
+                    ),
+                    "element_input_urls": refs,
+                }]
+                if "@product" not in payload["prompt"]:
+                    payload["prompt"] = payload["prompt"].rstrip() + " @product"
+                used_locking = True
+                self._log(
+                    "INFO",
+                    f"[{label}] product reference locking: on ({len(refs)} refs)",
+                )
         elif refs and is_seedance:
             self._log("INFO", f"[{label}] product reference: ignored (Seedance lock not yet wired)")
+
+        # Visibility: log the prompt + payload shape before submit so failures
+        # can be debugged without re-running.
+        self._log(
+            "INFO",
+            f"[{label}] payload: model={primary} duration={int(duration)}s "
+            f"aspect={aspect_ratio} sound={'on' if sound else 'off'} "
+            f"locking={'on' if used_locking else 'off'}",
+        )
+        self._log("INFO", f"[{label}] prompt: {payload['prompt'][:240]}…")
 
         out = None
         last_err: Optional[Exception] = None
@@ -466,12 +494,23 @@ class MuApiProvider(Provider):
                 break
             except ProviderError as e:
                 msg = str(e)
-                # 1) If the model rejected kling_elements, retry once stripped
-                #    on the same slug.
-                if used_locking and ("422" in msg or "kling_elements" in msg or "extra" in msg.lower()):
+                # 1) If kling_elements caused the failure — either rejected at
+                #    submit (422) or crashed mid-render with the opaque
+                #    "Unknown error" / "Poll failed" we keep seeing on Kling 3 —
+                #    retry once stripped on the same slug. Better to ship a
+                #    clip without locking than to fail the whole job.
+                locking_failure = used_locking and (
+                    "422" in msg
+                    or "kling_elements" in msg
+                    or "extra" in msg.lower()
+                    or "unknown error" in msg.lower()
+                    or "poll failed" in msg.lower()
+                    or "prediction failed" in msg.lower()
+                )
+                if locking_failure:
                     self._log(
                         "WARN",
-                        f"[{attempt_label}] MuAPI rejected kling_elements ({msg[:120]}); "
+                        f"[{attempt_label}] Kling rejected element locking ({msg[:160]}); "
                         "retrying without product reference locking",
                     )
                     payload.pop("kling_elements", None)

@@ -295,6 +295,7 @@ class MainWindow(QMainWindow):
         self.dashboard.open_run.connect(self._open_run)
         self.history.open_run.connect(self._open_run)
         self.detail.back.connect(lambda: self._on_nav("history"))
+        self.detail.resume_broll.connect(self._resume_broll)
         self.adapt.open_brands.connect(lambda: self._on_nav("brands"))
         self.broll.open_brands.connect(lambda: self._on_nav("brands"))
         self.funnel.open_brands.connect(lambda: self._on_nav("brands"))
@@ -353,3 +354,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.detail)
         self.sidebar.set_active("history")
         self.topbar.set_crumb(f"History · {run['timestamp']}")
+
+    def _resume_broll(self, run: dict):
+        if self.broll.load_run(run):
+            self._on_nav("broll")
