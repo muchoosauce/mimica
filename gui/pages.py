@@ -4320,7 +4320,7 @@ class TwinVideoFrameWorker(QObject):
                              #  product_urls, scene_prompt_used, error?}
 
     def __init__(self, frame_path: str, scene_prompt: str, brand_name: str,
-                 aspect: str, image_model: str,
+                 aspect: str, image_model: str, resolution: str = "1k",
                  out_dir: Optional[str] = None,
                  product_urls: Optional[list] = None):
         super().__init__()
@@ -4329,6 +4329,7 @@ class TwinVideoFrameWorker(QObject):
         self._brand_name = brand_name
         self._aspect = aspect
         self._image_model = image_model
+        self._resolution = resolution
         self._out_dir = out_dir
         self._product_urls = product_urls
         self._cancel = False
@@ -4346,6 +4347,7 @@ class TwinVideoFrameWorker(QObject):
             on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
             should_cancel=lambda: self._cancel,
             image_model=self._image_model,
+            resolution=self._resolution,
             out_dir=Path(self._out_dir) if self._out_dir else None,
             product_urls=self._product_urls,
         ) or {}
@@ -5191,7 +5193,13 @@ class TwinVideoPage(QWidget):
             self.video_model.addItem(label, userData=slug)
         self.video_model.setCurrentIndex(0)
         col_vm.addWidget(self.video_model)
-        models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1)
+        col_res = QVBoxLayout(); col_res.setSpacing(6)
+        col_res.addWidget(_field_label("Resolution"))
+        self.resolution = QComboBox()
+        self.resolution.addItems(core.RESOLUTIONS)
+        self.resolution.setCurrentText("1k")
+        col_res.addWidget(self.resolution)
+        models_row.addLayout(col_im, 1); models_row.addLayout(col_vm, 1); models_row.addLayout(col_res, 1)
         card_lay.addLayout(models_row)
 
         card_lay.addStretch()
@@ -5433,6 +5441,7 @@ class TwinVideoPage(QWidget):
             brand_name=self.brand_combo.currentText(),
             aspect="9:16",
             image_model=self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL,
+            resolution=self.resolution.currentText(),
             out_dir=str(self._out_dir) if self._out_dir else None,
             product_urls=list(self._product_urls) if self._product_urls else None,
         )

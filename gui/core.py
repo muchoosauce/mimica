@@ -2107,6 +2107,7 @@ def run_twin_video_render_frame(
     should_cancel: Callable[[], bool] = lambda: False,
     output_root: Optional[str] = None,
     image_model: str = DEFAULT_IMAGE_MODEL,
+    resolution: str = "1k",
     provider_name: Optional[str] = None,
     out_dir: Optional[Path] = None,
     product_urls: Optional[list[str]] = None,
@@ -2188,7 +2189,7 @@ def run_twin_video_render_frame(
             start_img_url = provider.call_image(
                 model=image_model, prompt=local_scene,
                 image_urls=product_urls,
-                resolution="1k",
+                resolution=resolution,
                 aspect_ratio=aspect, label="twin-vid-frame",
             )
         except CensorshipError:
@@ -2197,7 +2198,7 @@ def run_twin_video_render_frame(
             start_img_url = provider.call_image(
                 model=image_model, prompt=local_scene,
                 image_urls=product_urls,
-                resolution="1k",
+                resolution=resolution,
                 aspect_ratio=aspect, label="twin-vid-frame-retry",
             )
 
