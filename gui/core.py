@@ -2188,7 +2188,7 @@ def run_twin_video_render_frame(
             start_img_url = provider.call_image(
                 model=image_model, prompt=local_scene,
                 image_urls=product_urls,
-                resolution="1080x1920" if aspect == "9:16" else "1024x1024",
+                resolution="1k",
                 aspect_ratio=aspect, label="twin-vid-frame",
             )
         except CensorshipError:
@@ -2197,7 +2197,7 @@ def run_twin_video_render_frame(
             start_img_url = provider.call_image(
                 model=image_model, prompt=local_scene,
                 image_urls=product_urls,
-                resolution="1080x1920" if aspect == "9:16" else "1024x1024",
+                resolution="1k",
                 aspect_ratio=aspect, label="twin-vid-frame-retry",
             )
 
