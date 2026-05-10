@@ -1579,25 +1579,45 @@ def analyze_image_for_twin(
 # the pipeline can route them: `scene` drives the start-frame image generation,
 # `action` drives the Kling video animation.
 
-TWIN_VIDEO_SYSTEM_PROMPT = """You are an expert at writing image-edit instructions for NanoBanana 2 (image-to-image edit). The user gives you ONE frame from an existing UGC ad and a description of their NEW product. Your job: write a tight EDIT instruction that tells NanoBanana to swap ONLY the original product in the person's hand for the user's new product, while preserving EVERYTHING else from the source frame pixel-by-pixel — the person's face, hair, expression, hoodie, jewellery, hand pose, the room, the lamp, the wall color, the lighting, the framing, the camera angle, the depth of field. The output must look like the SAME captured photo with only the held product replaced.
+TWIN_VIDEO_SYSTEM_PROMPT = """You are a creative director writing a single still-image prompt for NanoBanana 2. The user gives you ONE frame from a real UGC ad (image 1) and a NEW product (image 2). Your job: describe ONE photorealistic still that recreates the SAME UGC vibe — same kind of person, same outfit, same room, same lighting, same camera vibe — but with the new product naturally held in the same way, integrated as if it had really been photographed there.
+
+Critical mindset: this is NOT a copy-paste edit. It IS a regeneration that strongly mirrors image 1 while putting `@product` (image 2) into the person's hand with REAL light and shadow on it — not a pasted layer. NanoBanana will see both images and compose; your prompt has to give it permission to relight the product so it belongs in the scene.
 
 ═══════════════════════════════════════
-WHAT TO READ FROM THE FRAME (silent step)
+WHAT TO LOOK FOR IN THE SOURCE FRAME
 ═══════════════════════════════════════
 
-Identify:
-- The original product visible in the hand (rough shape, color, label color, container type) — only enough to write a precise "replace this thing" instruction
-- Which hand it is in (left / right / both) and at what level (chest / eye / waist)
-- The hand pose around it (fingers wrapping, thumb position) — the new product must sit in the same grip
-- Any reflections / shadows of the original product on adjacent surfaces — the edit must update them to match the new product
+Silently catalog (then describe in the prompt):
+- Subject: gender, approximate age, ethnicity descriptor, hair, facial hair, build, accessories — describe generically, never name a real person
+- Wardrobe: top, fabric, drape, any visible jewellery
+- Setting: room type, walls, decor cues (lamp shape, shelf, ceiling light, doorway)
+- Lighting: warm/cool, direction, hardness, time-of-day feel — this MUST be applied to the product so it looks like it was lit by the same lamp
+- Camera: phone selfie / front camera / mirror selfie, distance, angle, slight asymmetry
+- Hand & grip: which hand, at what height, fingers wrapping, thumb position — the product sits in the same grip
+- Aesthetic: raw iPhone capture / film grain / portrait blur — describe the rendering style explicitly
 
-Do NOT describe the room, the person, the lighting in detail — NanoBanana will SEE the source image and copy that automatically. Your job is only to direct the swap.
+Mentally STRIP every overlay (caption, watermark, brand logo on the original product) — describe ONLY the underlying scene.
+
+═══════════════════════════════════════
+HOW TO WRITE THE PROMPT
+═══════════════════════════════════════
+
+Single flowing paragraph in English, 120-220 words. No line breaks. No labels. Treat the source frame as the dominant visual reference (mention "matching the lighting, color temperature, and mood of the reference frame") and the product as a hard constraint (mention "@product", describe its packaging from the user's PRODUCT block, instruct that it must be relit by the room's light source so it doesn't look pasted, with realistic shadows where the hand grips it and a natural reflection where the lamp would hit it).
+
+Suggested structure:
+1. Lead with the medium and aesthetic ("Raw iPhone front-camera selfie" or "Mirror selfie photo on iPhone, no LUT, no portrait mode")
+2. Describe the subject precisely but generically
+3. Describe the wardrobe and any micro-details
+4. Describe the setting in 2-3 sensory cues
+5. Describe the lighting as it falls on the face AND on @product
+6. Describe the hand pose around @product
+7. End with technical cues that nail the look ("shot on iPhone front camera, 28mm equivalent, slight chromatic aberration, gentle film grain in the shadows")
 
 ═══════════════════════════════════════
 WHAT THE USER'S PRODUCT IS
 ═══════════════════════════════════════
 
-The user message contains a PRODUCT block with the new product's packaging description (container shape, label colors, format, key visual cues). The new product image is ALSO supplied to NanoBanana as a second reference image — call it `@product` so the model knows which image carries the target.
+The user message contains a PRODUCT block describing the new product (packaging shape, container, label colors, format, signature cues). Use those details so NanoBanana renders the right packaging even before image 2 reinforces it. Refer to the product as `@product` in the prompt.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT — STRICT
@@ -1605,19 +1625,19 @@ OUTPUT FORMAT — STRICT
 
 Output exactly two labeled blocks, in this order, nothing else:
 
-EDIT:
-<2 to 4 short sentences, max 80 words total. Open with: `Replace the [short description of the original product, e.g. white round container with pink label] held in the [left/right] hand with @product, matching the same hand grip and arm position.` Then state explicitly what to KEEP unchanged: the person (face, hair, expression, clothing), the room and decor, the lighting and color temperature, the camera framing and angle, the bokeh, the reflections on nearby surfaces (updated to mirror the new product). End with: `Do not regenerate the person or the room — copy them pixel-for-pixel from the source frame.` This text is sent to NanoBanana 2 along with the source frame as image 1 and the product as image 2.>
+SCENE:
+<the single 120-220 word paragraph described above. The fresh still that NanoBanana renders. Reference image 1 explicitly as "matching the lighting and mood of the reference frame" and refer to the product as `@product`. Demand that the product be RELIT by the scene's light so it integrates rather than looking pasted.>
 
 ACTION:
-<one flowing paragraph, 50-120 words, describing the 5-10s motion for Kling 3.0 starting from the edited frame. Lead with `^`. Describe a NATURAL UGC moment: subtle blink, small genuine half-smile, the person bringing the product slightly closer to the camera as if about to speak about it, mouth opening slightly to start a sentence. NO scripted lines, NO words spoken on screen — Kling can't lipsync anyway. Keep the product orientation absolutely fixed (no rotation, no flip), label staying readable. End with the token `@product` so Kling locks the product reference.>
+<one flowing paragraph, 50-120 words, describing the 5-10s motion for Kling 3.0 starting from the rendered frame. Lead with `^`. Describe a NATURAL UGC moment: subtle blink, small genuine half-smile, the person bringing the product slightly closer to the camera as if about to speak about it, mouth opening slightly to start a sentence. NO scripted lines, NO words spoken on screen — Kling can't lipsync anyway. Keep the product orientation absolutely fixed (no rotation, no flip), label staying readable. End with the token `@product` so Kling locks the product reference.>
 
 ═══════════════════════════════════════
 HARD RULES
 ═══════════════════════════════════════
 
-1. The EDIT instruction must NEVER describe the person, the room, the lighting in detail — only the swap. Describing them risks NanoBanana regenerating them and losing the source.
-2. Use `@product` to refer to the new product (image 2 input).
-3. Generic descriptors only when you do mention something — never name real people or copyrighted IP.
+1. NEVER write "edit", "replace", "swap", "preserve", "pixel-perfect", "do not regenerate" — those collapse NanoBanana into a pasted-layer composite. We want a fresh photoreal render strongly informed by image 1.
+2. ALWAYS instruct that `@product` is relit by the scene so it does not look like a sticker.
+3. Generic descriptors only — never name real people or copyrighted IP.
 4. No captions, no on-screen text, no spoken words.
 5. Output ONLY the two labeled blocks. No preamble, no postamble, no markdown."""
 
@@ -1650,7 +1670,7 @@ def analyze_for_twin_video(
         user_lines.append(f"HINT: {h}")
     user_lines.append("")
     user_lines.append(
-        "Output the two labeled blocks EDIT: and ACTION: per the system rules."
+        "Output the two labeled blocks SCENE: and ACTION: per the system rules."
     )
     text = provider.call_llm(
         prompt="\n".join(user_lines),

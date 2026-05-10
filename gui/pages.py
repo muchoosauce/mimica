@@ -5183,9 +5183,10 @@ class TwinVideoPage(QWidget):
         ref_l = QLabel("SOURCE FRAME"); ref_l.setObjectName("Muted")
         card_lay.addWidget(ref_l)
         sub = QLabel(
-            "Drop one frame from your old UGC ad. The person, room, lighting and "
-            "framing are kept exactly as in the source — only the product held in "
-            "the hand is swapped for the selected brand's product."
+            "Drop one frame from your old UGC ad. We use it as the visual reference "
+            "for the person, the room, the lighting and the camera vibe — and "
+            "regenerate a photorealistic still where the selected brand's product "
+            "is naturally held in the hand, properly relit by the scene."
         )
         sub.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
         sub.setWordWrap(True)
@@ -5322,11 +5323,11 @@ class TwinVideoPage(QWidget):
 
         scene_card = Card()
         sc_lay = QVBoxLayout(scene_card); sc_lay.setContentsMargins(20, 18, 20, 18); sc_lay.setSpacing(8)
-        sc_lay.addWidget(QLabel("EDIT  ·  swap instruction sent to NanoBanana", objectName="Muted"))
+        sc_lay.addWidget(QLabel("SCENE  ·  fresh still description fed to NanoBanana", objectName="Muted"))
         self.scene_edit = QPlainTextEdit()
         self.scene_edit.setPlaceholderText(
-            "Replace the [original product] in the [hand] with @product, "
-            "keep the person / room / lighting unchanged…"
+            "Photorealistic still of the same kind of person, in the same room, "
+            "holding @product naturally with realistic shadows and matching light…"
         )
         sc_lay.addWidget(self.scene_edit, 1)
         body.addWidget(scene_card, 1)
