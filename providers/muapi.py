@@ -473,6 +473,13 @@ class MuApiProvider(Provider):
         elif refs and is_seedance:
             self._log("INFO", f"[{label}] product reference: ignored (Seedance lock not yet wired)")
 
+        # Strip orphaned @product tokens whenever locking didn't end up on —
+        # Kling fails with an opaque "Unknown error" if the prompt references
+        # an element that has no kling_elements entry to resolve it.
+        if not used_locking and "@product" in payload["prompt"]:
+            cleaned = payload["prompt"].replace(" @product", "").replace("@product", "").rstrip()
+            payload["prompt"] = cleaned
+
         # Visibility: log the prompt + payload shape before submit so failures
         # can be debugged without re-running.
         self._log(
