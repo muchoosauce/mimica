@@ -6132,7 +6132,7 @@ class AnimationPage(QWidget):
         head = QVBoxLayout(); head.setSpacing(2)
         h1 = QLabel("Animation"); h1.setObjectName("H1")
         sub = QLabel(
-            "Multi-shot video ad. Brief → scenario → characters → anchor → shots → export."
+            "Multi-shot video ad. Brief → scenario → anchor → shots → export."
         )
         sub.setObjectName("Dim")
         head.addWidget(h1); head.addWidget(sub)
@@ -6140,7 +6140,7 @@ class AnimationPage(QWidget):
 
         self._step_pills: list[QLabel] = []
         stepper = QHBoxLayout(); stepper.setSpacing(8); stepper.setContentsMargins(0, 0, 0, 0)
-        for name in ("1. Brief", "2. Scenario", "3. Characters", "4. Anchor", "5. Shots", "6. Export"):
+        for name in ("1. Brief", "2. Scenario", "3. Anchor", "4. Shots", "5. Export"):
             pill = QLabel(name)
             pill.setStyleSheet(
                 f"background: {t.BG_INPUT}; color: {t.TEXT_DIM}; padding: 6px 14px; "
@@ -6163,9 +6163,12 @@ class AnimationPage(QWidget):
         llay.addWidget(self.log)
 
         self.stack = QStackedWidget()
+        # Characters step dropped in 2026-05: for dropshipping the main
+        # character lives in the anchor frame and gets re-used as a ref by
+        # subsequent shots. _build_characters_panel kept on the class for
+        # back-compat / re-introduction but no longer wired into the stack.
         self.stack.addWidget(self._build_brief_panel())
         self.stack.addWidget(self._build_scenario_panel())
-        self.stack.addWidget(self._build_characters_panel())
         self.stack.addWidget(self._build_anchor_panel())
         self.stack.addWidget(self._build_shots_panel())
         self.stack.addWidget(self._build_export_panel())
@@ -6178,7 +6181,7 @@ class AnimationPage(QWidget):
         self._set_step(0)
 
     def _set_step(self, idx: int):
-        idx = max(0, min(5, idx))
+        idx = max(0, min(4, idx))
         self.stack.setCurrentIndex(idx)
         for i, pill in enumerate(self._step_pills):
             if i == idx:
@@ -6259,10 +6262,13 @@ class AnimationPage(QWidget):
         self.aspect = QComboBox(); self.aspect.addItems(core.ANIMATION_ASPECTS)
         col_a.addWidget(self.aspect)
         col_d = QVBoxLayout(); col_d.setSpacing(6)
-        col_d.addWidget(_field_label("Default duration (s)"))
-        self.duration = QSpinBox()
-        self.duration.setRange(core.ANIMATION_DURATION_MIN, core.ANIMATION_DURATION_MAX)
-        self.duration.setValue(core.ANIMATION_DEFAULT_DURATION)
+        col_d.addWidget(_field_label("Shot duration"))
+        self.duration = QComboBox()
+        # Kling 3.0 only does 5s or 10s — surface those two and skip the
+        # in-between values that get silently rounded by the API anyway.
+        for s in core.ANIMATION_DURATION_CHOICES:
+            self.duration.addItem(f"{s}s", userData=s)
+        self.duration.setCurrentText(f"{core.ANIMATION_DEFAULT_DURATION}s")
         col_d.addWidget(self.duration)
         params.addLayout(col_im, 1); params.addLayout(col_vm, 1); params.addLayout(col_a, 1); params.addLayout(col_d, 1)
         fl.addLayout(params)
@@ -6405,14 +6411,13 @@ class AnimationPage(QWidget):
                 lambda sid=sid, e=desc_edit: self._on_shot_field_changed(sid, "description", e.text())
             )
             top.addWidget(desc_edit, 1)
-            dur_edit = QSpinBox()
-            dur_edit.setRange(core.ANIMATION_DURATION_MIN, core.ANIMATION_DURATION_MAX)
-            dur_edit.setValue(int(s.get("duration", 4)))
-            dur_edit.valueChanged.connect(
-                lambda v, sid=sid: self._on_shot_field_changed(sid, "duration", v)
-            )
-            top.addWidget(dur_edit)
-            top.addWidget(QLabel("s"))
+            # Per-shot duration override removed — every shot inherits the
+            # global Brief.shot_duration. Surface the inherited value as a
+            # read-only label so the user knows what each shot will render.
+            inherited = int(s.get("duration") or self._state.get("default_duration") or core.ANIMATION_DEFAULT_DURATION)
+            dur_lbl = QLabel(f"{inherited}s")
+            dur_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+            top.addWidget(dur_lbl)
             chars = ", ".join(s.get("characters") or []) or "—"
             chars_lbl = QLabel(chars)
             chars_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
@@ -6558,8 +6563,8 @@ class AnimationPage(QWidget):
         hl = QHBoxLayout(head); hl.setContentsMargins(20, 14, 20, 14); hl.setSpacing(10)
         self.anchor_title = QLabel("Anchor frame · shot 1"); self.anchor_title.setObjectName("H2")
         hl.addWidget(self.anchor_title); hl.addStretch()
-        back = QPushButton("← Characters"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
-        back.clicked.connect(lambda: self._set_step(2))
+        back = QPushButton("← Scenario"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self._set_step(1))
         hl.addWidget(back)
         col.addWidget(head)
 
@@ -6636,7 +6641,7 @@ class AnimationPage(QWidget):
         self.shots_title = QLabel("Shots"); self.shots_title.setObjectName("H2")
         hl.addWidget(self.shots_title); hl.addStretch()
         back = QPushButton("← Anchor"); back.setObjectName("GhostBtn"); back.setCursor(Qt.PointingHandCursor)
-        back.clicked.connect(lambda: self._set_step(3))
+        back.clicked.connect(lambda: self._set_step(2))
         hl.addWidget(back)
         gen_imgs = QPushButton("Generate missing images"); gen_imgs.setObjectName("GhostBtn"); gen_imgs.setCursor(Qt.PointingHandCursor)
         gen_imgs.clicked.connect(self._on_generate_missing_images)
@@ -6645,7 +6650,7 @@ class AnimationPage(QWidget):
         gen_vids.clicked.connect(self._on_generate_all_videos)
         hl.addWidget(gen_vids)
         cont = QPushButton("Continue →"); cont.setObjectName("PrimaryBtn"); cont.setCursor(Qt.PointingHandCursor)
-        cont.clicked.connect(lambda: (self._set_step(5), self._populate_export()))
+        cont.clicked.connect(lambda: (self._set_step(4), self._populate_export()))
         hl.addWidget(cont)
         col.addWidget(head)
 
@@ -6866,9 +6871,12 @@ class AnimationPage(QWidget):
         self._state = core.load_animation_state(self._project_dir)
         self._sync_form_from_state()
         self._populate_all()
+        # Characters step dropped from the UI; legacy projects with status
+        # "characters" land on the new step 2 (Anchor) — that's where they
+        # would have ended up next anyway.
         status_to_step = {
             "brief": 0, "scenario": 1, "characters": 2,
-            "anchor": 3, "shots": 4, "done": 5,
+            "anchor": 2, "shots": 3, "done": 4,
         }
         self._set_step(status_to_step.get(self._state.get("status", "brief"), 0))
 
@@ -6892,7 +6900,13 @@ class AnimationPage(QWidget):
         i = self.aspect.findText(self._state.get("aspect_ratio", "9:16"))
         if i >= 0:
             self.aspect.setCurrentIndex(i)
-        self.duration.setValue(int(self._state.get("default_duration", 4)))
+        # default_duration was a free spinbox (3-10) in older state files —
+        # snap to the closest of the new {5, 10} choices on load.
+        legacy_dur = int(self._state.get("default_duration", core.ANIMATION_DEFAULT_DURATION))
+        snapped = 10 if legacy_dur >= 8 else 5
+        for i in range(self.duration.count()):
+            if self.duration.itemData(i) == snapped:
+                self.duration.setCurrentIndex(i); break
         self.brief.setPlainText(self._state.get("brief_text", ""))
         prod = self._state.get("product") or {}
         self.product_name.setText(prod.get("name", ""))
@@ -6905,7 +6919,8 @@ class AnimationPage(QWidget):
 
     def _populate_all(self):
         self._populate_scenario()
-        self._populate_characters()
+        # _populate_characters() kept on the class but no longer called —
+        # the Characters panel was retired from the stack.
         self._populate_anchor()
         self._populate_shots()
         self._populate_export()
@@ -7003,7 +7018,7 @@ class AnimationPage(QWidget):
                 product_name=self.product_name.text(),
                 product_image=self.product_image_path.text() or None,
                 style_refs=self.style_refs_paths,
-                default_duration=self.duration.value(),
+                default_duration=int(self.duration.currentData() or core.ANIMATION_DEFAULT_DURATION),
             )
         except Exception as e:
             QMessageBox.critical(self, "Project init failed", str(e)); return
@@ -7019,12 +7034,11 @@ class AnimationPage(QWidget):
     def _on_scenario_continue(self):
         if not self._state:
             return
-        if not (self._state.get("characters") or {}):
-            self._set_step(3)
-            self._populate_anchor()
-            return
+        # Characters step retired — always go straight to Anchor (now step 2).
+        # The anchor frame carries the main character and serves as the
+        # reference for every subsequent shot.
         self._set_step(2)
-        self._populate_characters()
+        self._populate_anchor()
 
     # ── Character actions ─────────────────────────────────────────────────
 
@@ -7059,16 +7073,10 @@ class AnimationPage(QWidget):
     def _on_characters_continue(self):
         if not self._state:
             return
-        chars = (self._state.get("characters") or {})
-        unapproved = [c for c in chars.values() if c.get("status") != "approved"]
-        if unapproved:
-            res = QMessageBox.question(
-                self, "Some characters not approved",
-                f"{len(unapproved)} character(s) are not yet approved. Continue anyway?",
-            )
-            if res != QMessageBox.Yes:
-                return
-        self._set_step(3)
+        # Legacy handler — Characters step is retired from the UI but the
+        # function stays on the class so any back-compat callers keep
+        # routing to the right step (now Anchor at index 2).
+        self._set_step(2)
         self._populate_anchor()
 
     # ── Anchor actions ────────────────────────────────────────────────────
@@ -7087,7 +7095,7 @@ class AnimationPage(QWidget):
             core.approve_animation_shot_image(self._project_dir, 1)
             self._state = core.load_animation_state(self._project_dir)
             self._populate_anchor()
-            self._set_step(4)
+            self._set_step(3)
             self._populate_shots()
         except Exception as e:
             QMessageBox.warning(self, "Approve failed", str(e))

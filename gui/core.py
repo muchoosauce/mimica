@@ -2718,9 +2718,14 @@ def run_swap_generate(
 # }
 
 
-ANIMATION_DEFAULT_DURATION = 4
-ANIMATION_DURATION_MIN = 3
+ANIMATION_DEFAULT_DURATION = 5
+ANIMATION_DURATION_MIN = 5
 ANIMATION_DURATION_MAX = 10
+# Kling 3.0 endpoints only render at 5s or 10s — anything in-between gets
+# auto-rounded or 422'd by MuAPI. Surface a finite set in the UI rather
+# than a freeform spinbox so users can't pick durations Kling silently
+# coerces away.
+ANIMATION_DURATION_CHOICES = [5, 10]
 ANIMATION_ASPECTS = ["9:16", "1:1", "16:9", "4:5"]
 
 
@@ -2783,11 +2788,18 @@ def latest_unfinished_animation() -> Optional[dict]:
 
 
 def _round_duration(value) -> int:
+    """Snap any incoming duration to the nearest Kling-supported choice
+    (currently {5, 10}). Anything < 8 → 5, anything ≥ 8 → 10.
+    Older state.json files (with values 3, 4, 6, 7) are coerced on load
+    so Kling never receives a duration it would silently round itself.
+    """
     try:
         d = int(round(float(value)))
     except Exception:
         d = ANIMATION_DEFAULT_DURATION
-    return max(ANIMATION_DURATION_MIN, min(ANIMATION_DURATION_MAX, d))
+    if d < 8:
+        return 5
+    return 10
 
 
 def create_animation_project(
