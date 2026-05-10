@@ -3145,14 +3145,28 @@ def run_animation_shot_image(
         has_anchor=(use_anchor and not is_anchor_shot and len([r for r in refs]) > 0
                     and (not is_anchor_shot)),
     )
-    # Style guard rail — prepended to every shot so the LLM's refined prompt
-    # can't drift toward realistic defaults even if the anchor weakens its
-    # influence on later shots.
+    # Style guard rail — wrap the refined prompt in an explicit
+    # style-transfer instruction so NanoBanana doesn't copy the SUBJECT of
+    # the style reference (the model would otherwise pull the old-lady-in-
+    # pink-robe character through every shot just because she's in the ref).
     if style_key and style_key != "realistic":
         from providers.prompts import ANIMATION_STYLES
-        style_prefix = (ANIMATION_STYLES.get(style_key) or {}).get("prompt", "")
-        if style_prefix:
-            refined_prompt = f"{style_prefix} {refined_prompt}".strip()
+        style_prefix = (
+            (ANIMATION_STYLES.get(style_key) or {}).get("prompt", "")
+            if style_key != "custom" else ""
+        )
+        # The first image_urls slot is the style reference (anchor only) or
+        # the anchor itself (later shots inherit through it). Either way the
+        # leak protection wording is the same: technique only, never subject.
+        leak_guard = (
+            "STYLE TRANSFER: the first reference image attached carries the "
+            "rendering technique to apply (medium, materials, lighting "
+            "treatment, color rendering). Do NOT copy its subject, "
+            "character, pose, clothing, props, or setting — those come "
+            "ONLY from the SCENE description below."
+        )
+        descriptor = f" Aesthetic: {style_prefix}" if style_prefix else ""
+        refined_prompt = f"{leak_guard}{descriptor} SCENE: {refined_prompt}".strip()
     _atomic_update_shot(project_dir, shot_id, {
         "image_prompt": refined_prompt,
         "image_status": "generating",
