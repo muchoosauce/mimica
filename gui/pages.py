@@ -6321,10 +6321,18 @@ class IterationPage(QWidget):
         cfg = QPushButton("Configure"); cfg.setObjectName("OnCardBtn")
         cfg.setCursor(Qt.PointingHandCursor)
         cfg.clicked.connect(lambda _=False, i=idx: self._open_config(i))
-        rm = QPushButton("✕"); rm.setObjectName("GhostBtn")
-        rm.setFixedWidth(36); rm.setCursor(Qt.PointingHandCursor)
+        open_btn = QPushButton("Open"); open_btn.setObjectName("GhostBtn")
+        open_btn.setCursor(Qt.PointingHandCursor)
+        open_btn.setFixedWidth(56)
+        open_btn.setEnabled(False)
+        open_btn.setToolTip("Open the output folder (available after Run)")
+        open_btn.clicked.connect(lambda _=False, i=idx: self._open_item_folder(i))
+        rm = QPushButton("Remove"); rm.setObjectName("GhostBtn")
+        rm.setCursor(Qt.PointingHandCursor)
+        rm.setFixedWidth(76)
+        rm.setToolTip("Remove this image from the queue")
         rm.clicked.connect(lambda _=False, i=idx: self._remove_item(i))
-        row.addWidget(cfg, 1); row.addWidget(rm)
+        row.addWidget(cfg, 1); row.addWidget(open_btn); row.addWidget(rm)
         cl.addLayout(row)
         # Results strip placeholder (populated after Run)
         results_strip = QHBoxLayout(); results_strip.setSpacing(4); results_strip.setContentsMargins(0, 6, 0, 0)
@@ -6336,6 +6344,7 @@ class IterationPage(QWidget):
             "card_widget": card,
             "summary_label": summary,
             "config_btn": cfg,
+            "open_btn": open_btn,
             "remove_btn": rm,
             "axis": default_axis,
             "count": 5,
@@ -6363,6 +6372,13 @@ class IterationPage(QWidget):
             self._items.pop(idx)
             self._relayout_grid()
             self._refresh_queue_state()
+
+    def _open_item_folder(self, idx: int):
+        if not (0 <= idx < len(self._items)):
+            return
+        out_dir = self._items[idx].get("out_dir")
+        if out_dir and Path(out_dir).exists():
+            open_path(Path(out_dir))
 
     def _clear_queue(self):
         for it in self._items:
@@ -6567,9 +6583,12 @@ class IterationPage(QWidget):
         self._threads.clear(); self._workers.clear(); self._completed = 0
 
         for idx, item in enumerate(self._items):
-            # Disable the config & remove buttons during the run.
+            # Disable the config / remove / open buttons during the run —
+            # they'll be re-enabled in _on_item_finished once results are
+            # in (and open_btn only if out_dir exists).
             item["config_btn"].setEnabled(False)
             item["remove_btn"].setEnabled(False)
+            item["open_btn"].setEnabled(False)
             # Clear any previous results strip.
             while item["results_strip"].count():
                 w = item["results_strip"].takeAt(0).widget()
@@ -6624,6 +6643,8 @@ class IterationPage(QWidget):
             item["out_dir"] = out_dir
             item["config_btn"].setEnabled(True)
             item["remove_btn"].setEnabled(True)
+            # Open button becomes useful only once the out_dir exists with content.
+            item["open_btn"].setEnabled(bool(out_dir and Path(out_dir).exists()))
             axis_label = ITERATION_AXES.get(item["axis"], {}).get("label", item["axis"])
             item["summary_label"].setText(f"✓ {axis_label} × {count_ok} done")
         # Tear down the thread.
