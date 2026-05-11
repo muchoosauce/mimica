@@ -6395,7 +6395,11 @@ class IterationPage(QWidget):
             )
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
-            worker.log.connect(lambda lvl, msg: self._append_log(lvl, msg))
+            # Bind directly to the bound method so Qt picks QueuedConnection
+            # (cross-thread). A lambda has no QObject parent, which lets Qt
+            # fall back to a DirectConnection — appendPlainText would then
+            # run on the worker thread and SIGSEGV inside the layout engine.
+            worker.log.connect(self._append_log)
             worker.result.connect(self._on_variant_result)
             worker.finished.connect(self._on_item_finished)
             self._threads.append(thread); self._workers.append(worker)
