@@ -1968,6 +1968,61 @@ def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:
 
 _AXIS_PROMPT_HEADER = """You are an expert ad iterator analyzing one static ad image. Output STRICT JSON only — no preamble, no markdown, no commentary."""
 
+CONCEPT_CATALOG = [
+    {"slug": "bullet_points", "label": "Bullet points", "hint": "vertical or horizontal list of 3-5 short bullets with icons or arrows, headline on top, CTA at the bottom"},
+    {"slug": "problem_solution", "label": "Problème / Solution", "hint": "two-zone layout — top half shows the problem clearly, bottom half shows the solution with the product"},
+    {"slug": "before_after", "label": "Avant / Après", "hint": "split in two halves — left = avant (problem state), right = après (result), with clear labels"},
+    {"slug": "split_benefit", "label": "Split + bénéfice", "hint": "split layout — left side product hero, right side big-headline benefit highlight"},
+    {"slug": "split_offer", "label": "Split + offre", "hint": "split layout — left side product hero, right side offer block with deal and CTA"},
+    {"slug": "us_vs_them", "label": "Us VS Them", "hint": "comparative two-column layout — left column 'them' (competitor flaws in red), right column 'us' (advantages in green)"},
+    {"slug": "us_vs_them_them", "label": "Us VS Them VS Them", "hint": "three-column comparative — us (winner) vs two competitors, our column highlighted"},
+    {"slug": "social_proof", "label": "Social proof", "hint": "centered review/avis card with 5 stars, customer name, short review text + product packshot"},
+    {"slug": "offer_forward", "label": "Offre en avant", "hint": "offer-led — biggest element is the price/deal/percentage, product secondary"},
+    {"slug": "hand_writing", "label": "Hand writing", "hint": "designed as a handwritten note style on paper/post-it/notebook texture"},
+    {"slug": "long_text", "label": "Textuel long", "hint": "text-heavy editorial — long paragraph as the dominant element, product image small"},
+    {"slug": "native_ugc", "label": "Native FB/IG/TT", "hint": "designed as a native social-media post (Facebook/Instagram/TikTok screenshot style)"},
+    {"slug": "headline_only", "label": "Headline only", "hint": "minimal — giant typographic headline filling 60% of the frame, product small"},
+    {"slug": "statistics", "label": "Statistiques", "hint": "data-led — big numbers / percentages / charts as the dominant element"},
+    {"slug": "product_only", "label": "Produit simple", "hint": "minimalist product packshot — product centered on solid backdrop, no text"},
+]
+
+AWARENESS_CATALOG = [
+    {"slug": "unaware", "label": "Unaware", "hint": "audience doesn't know they have a problem — lead with curiosity hook, no product mention upfront, build awareness of the underlying issue"},
+    {"slug": "problem_aware", "label": "Problem-aware", "hint": "audience knows the problem — agitate the pain, then introduce the solution"},
+    {"slug": "solution_aware", "label": "Solution-aware", "hint": "audience knows solutions exist — differentiate yours from alternatives, lead with 'why ours' angle"},
+    {"slug": "product_aware", "label": "Product-aware", "hint": "audience knows your product — drive desire with social proof, benefits, testimonials"},
+    {"slug": "most_aware", "label": "Most-aware (BoFu)", "hint": "audience ready to buy — lead with offer, urgency, scarcity, guarantee"},
+]
+
+STYLE_CATALOG = [
+    {"slug": "photoreal_ugc", "label": "Photoreal UGC", "hint": "raw iPhone UGC capture, no LUT, no grading, slight grain, candid framing"},
+    {"slug": "studio_polished", "label": "Studio polished", "hint": "polished commercial studio photography, soft key light, glossy surfaces, magazine-grade"},
+    {"slug": "editorial", "label": "Editorial", "hint": "editorial magazine spread, premium serif typography hierarchy, generous negative space"},
+    {"slug": "flat_design", "label": "Flat design", "hint": "flat 2D design, no gradients, solid colors, geometric shapes, bold sans"},
+    {"slug": "3d_pixar", "label": "3D Pixar", "hint": "Pixar-style 3D render, smooth subsurface scattering, painterly bokeh, warm cinematic grade"},
+    {"slug": "claymation", "label": "Claymation", "hint": "stop-motion claymation, hand-sculpted clay surfaces with fingerprint marks, glossy plasticine"},
+    {"slug": "illustrated", "label": "Illustrated", "hint": "hand-drawn illustration, watercolor or ink texture, organic shapes"},
+    {"slug": "brutalist", "label": "Brutalist", "hint": "brutalist design, harsh typography, oversized text, raw geometric blocks, no decoration"},
+    {"slug": "collage", "label": "Collage", "hint": "paper cutout collage, layered torn paper, hand-cut edges, textured cardstock"},
+    {"slug": "minimalist", "label": "Minimalist", "hint": "minimalist clean design, tons of white space, single accent color, ultra-restrained"},
+]
+
+OFFER_CATALOG = [
+    {"slug": "bundle_2", "label": "Bundle x2", "hint": "bundle of 2 with discount — show original price crossed out, bundle price highlighted"},
+    {"slug": "bundle_3", "label": "Bundle x3", "hint": "bundle of 3 with bigger discount, biggest visual element is the savings"},
+    {"slug": "bundle_premium", "label": "Premium bundle", "hint": "premium bundle (4+ units) with bonuses (free guide, freebies, free shipping) prominently shown"},
+    {"slug": "bogo", "label": "1 + 1 free", "hint": "buy one get one free (BOGO) framing — 1+1 mechanic as the main hook"},
+    {"slug": "percentage_off", "label": "% off", "hint": "percentage discount (-30%, -50%) huge and centered, original price secondary"},
+    {"slug": "price_anchor", "label": "Price anchor", "hint": "price anchoring — original price visibly crossed out, new price highlighted in the brand accent"},
+    {"slug": "free_shipping", "label": "Free shipping", "hint": "free shipping (livraison offerte) as the main hook, secondary product visual"},
+    {"slug": "money_back", "label": "Money-back", "hint": "money-back guarantee badge prominent (90 days satisfait-ou-remboursé), reassurance-led"},
+    {"slug": "limited_time", "label": "Limited time", "hint": "limited-time urgency (offer expires X) front and center, countdown vibe"},
+    {"slug": "volume_discount", "label": "Volume discount", "hint": "volume tier mechanic — 1 unit = €X, 2 units = €Y/unit, 3+ units = €Z/unit shown as a table"},
+    {"slug": "gift_with_purchase", "label": "Gift with purchase", "hint": "free gift with purchase (offert dès X€, bonus offert) shown as the main hook"},
+    {"slug": "subscription_save", "label": "Subscription save", "hint": "subscription discount (save X% with auto-renew) framed as the smart option"},
+]
+
+
 ITERATION_AXES: dict[str, dict] = {
     "headline": {
         "label": "Headline",
@@ -2047,6 +2102,7 @@ OUTPUT:
     "concept": {
         "label": "Concept",
         "describe": "the structural concept of the ad",
+        "catalog": CONCEPT_CATALOG,
         "analyzer": _AXIS_PROMPT_HEADER + """
 
 Identify the current CONCEPT (visual structure) from this list:
@@ -2074,6 +2130,7 @@ OUTPUT:
     "awareness": {
         "label": "Awareness",
         "describe": "the funnel-stage / awareness level targeted",
+        "catalog": AWARENESS_CATALOG,
         "analyzer": _AXIS_PROMPT_HEADER + """
 
 Identify the current AWARENESS level of the targeted audience based on the copy + visuals:
@@ -2098,6 +2155,7 @@ OUTPUT:
     "offer": {
         "label": "Offre",
         "describe": "the deal / pricing / bundle shown",
+        "catalog": OFFER_CATALOG,
         "analyzer": _AXIS_PROMPT_HEADER + """
 
 Identify the current OFFER block in the ad (if any) — bundle, discount %, price point, free shipping, money-back, BOGO, volume deal, etc.
@@ -2121,6 +2179,7 @@ OUTPUT:
     "style": {
         "label": "Style",
         "describe": "the overall visual aesthetic",
+        "catalog": STYLE_CATALOG,
         "analyzer": _AXIS_PROMPT_HEADER + """
 
 Identify the current visual STYLE / aesthetic of the ad: photoreal UGC, polished studio, illustrated, 3D render, flat design, brutalist, editorial magazine, hand-drawn, claymation, etc.

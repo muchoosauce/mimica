@@ -6105,7 +6105,8 @@ class IterationItemWorker(QObject):
     finished = Signal(int, str, int)  # (item_index, out_dir_path, count_ok)
 
     def __init__(self, item_index: int, image_path: str, axis: str,
-                 n_variants: int, image_model: str, resolution: str):
+                 n_variants: int, image_model: str, resolution: str,
+                 targets: Optional[list] = None):
         super().__init__()
         self._idx = item_index
         self._image_path = image_path
@@ -6113,6 +6114,7 @@ class IterationItemWorker(QObject):
         self._n = n_variants
         self._image_model = image_model
         self._resolution = resolution
+        self._targets = targets
         self._cancel = False
         self._count_ok = 0
         self._out_dir = ""
@@ -6143,6 +6145,7 @@ class IterationItemWorker(QObject):
                 should_cancel=lambda: self._cancel,
                 image_model=self._image_model,
                 resolution=self._resolution,
+                targets=self._targets,
             )
         except Exception as e:
             self._emit_log("ERR", str(e))
@@ -6336,6 +6339,7 @@ class IterationPage(QWidget):
             "remove_btn": rm,
             "axis": default_axis,
             "count": 5,
+            "targets": None,  # filled when user picks catalog chips
             "results_strip": results_strip,
             "results_holder": results_holder,
             "out_dir": None,
@@ -6380,48 +6384,166 @@ class IterationPage(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("Configure iteration")
         dlg.setStyleSheet(f"QDialog {{ background: {t.BG_ELEVATED}; }}")
+        dlg.setMinimumWidth(520)
         l = QVBoxLayout(dlg); l.setContentsMargins(16, 16, 16, 16); l.setSpacing(10)
         l.addWidget(QLabel(f"<b>{Path(item['path']).name}</b>", styleSheet=f"color: {t.TEXT}; font-size: 13px;"))
 
         l.addWidget(QLabel("Iteration axis", objectName="Muted"))
         axis_combo = QComboBox()
-        # Populate combo with (label, key) pairs from the registry. Insertion
-        # order matches the registry — Headline first, etc.
         for key, meta in ITERATION_AXES.items():
             axis_combo.addItem(meta["label"], userData=key)
-        # Select current axis
         for i in range(axis_combo.count()):
             if axis_combo.itemData(i) == item["axis"]:
                 axis_combo.setCurrentIndex(i); break
-        axis_combo.setMinimumWidth(200)
+        axis_combo.setMinimumWidth(220)
         l.addWidget(axis_combo)
 
-        # Per-axis hint (shows what the axis actually does).
         hint = QLabel()
         hint.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px; padding: 4px 0;")
         hint.setWordWrap(True)
-        def _refresh_hint():
-            k = axis_combo.currentData() or "headline"
-            meta = ITERATION_AXES.get(k, {})
-            hint.setText(f"Will iterate {meta.get('describe', k)} across N variants — every other element stays untouched.")
-        axis_combo.currentIndexChanged.connect(lambda _i: _refresh_hint())
-        _refresh_hint()
         l.addWidget(hint)
 
-        l.addWidget(QLabel("Number of variations", objectName="Muted"))
-        spin = QSpinBox(); spin.setRange(1, 12); spin.setValue(int(item["count"]))
-        l.addWidget(spin)
+        # ── Two interchangeable bodies ────────────────────────────────
+        # Catalog mode: chips multi-select. Used when the axis exposes
+        # a finite list of sub-options (Concept, Awareness, Style, Offer).
+        # Open mode: count spinbox. Used when variants are LLM-generated
+        # text (Headline, CTA, Actor, Décor, Palette, Layout).
+
+        catalog_card = QFrame()
+        catalog_lay = QVBoxLayout(catalog_card); catalog_lay.setContentsMargins(0, 0, 0, 0); catalog_lay.setSpacing(8)
+        catalog_actions = QHBoxLayout(); catalog_actions.setSpacing(8)
+        catalog_lay.addLayout(catalog_actions)
+        # Chips live in a flow grid (QGridLayout with wrap-by-row).
+        chips_grid = QGridLayout(); chips_grid.setSpacing(6); chips_grid.setContentsMargins(0, 0, 0, 0)
+        catalog_lay.addLayout(chips_grid)
+        catalog_summary = QLabel("0 picked → 0 variants")
+        catalog_summary.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+        catalog_lay.addWidget(catalog_summary)
+        l.addWidget(catalog_card)
+
+        count_card = QFrame()
+        count_lay = QVBoxLayout(count_card); count_lay.setContentsMargins(0, 0, 0, 0); count_lay.setSpacing(6)
+        count_lay.addWidget(QLabel("Number of variations", objectName="Muted"))
+        spin = QSpinBox(); spin.setRange(1, 12); spin.setValue(int(item.get("count") or 5))
+        count_lay.addWidget(spin)
+        l.addWidget(count_card)
+
+        # Mutable state shared with the closures below.
+        state = {"picked": set(), "chips": {}, "catalog_items": []}
+        if item.get("targets"):
+            state["picked"] = {t["slug"] for t in item["targets"]}
+
+        def _chip_style(active: bool) -> str:
+            if active:
+                return (
+                    f"QPushButton {{ background: {t.ACCENT}; color: white;"
+                    f" border: 1px solid {t.ACCENT}; border-radius: 999px;"
+                    f" padding: 6px 14px; font-size: 11px; font-weight: 600; }}"
+                )
+            return (
+                f"QPushButton {{ background: {t.BG_INPUT}; color: {t.TEXT_DIM};"
+                f" border: 1px solid {t.BORDER}; border-radius: 999px;"
+                f" padding: 6px 14px; font-size: 11px; font-weight: 600; }}"
+                f"QPushButton:hover {{ border: 1px solid {t.ACCENT}; color: {t.ACCENT_SOFT}; }}"
+            )
+
+        def _on_chip(slug: str):
+            if slug in state["picked"]:
+                state["picked"].discard(slug)
+            else:
+                state["picked"].add(slug)
+            state["chips"][slug].setStyleSheet(_chip_style(slug in state["picked"]))
+            n = len(state["picked"])
+            catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+
+        def _rebuild_chips():
+            # Clear grid.
+            while chips_grid.count():
+                w = chips_grid.takeAt(0).widget()
+                if w: w.setParent(None)
+            state["chips"].clear()
+            catalog = state.get("catalog_items") or []
+            cols = 3
+            for i, entry in enumerate(catalog):
+                slug = entry["slug"]; label = entry["label"]
+                btn = QPushButton(label); btn.setCursor(Qt.PointingHandCursor)
+                btn.setStyleSheet(_chip_style(slug in state["picked"]))
+                btn.clicked.connect(lambda _=False, s=slug: _on_chip(s))
+                r, c = divmod(i, cols)
+                chips_grid.addWidget(btn, r, c)
+                state["chips"][slug] = btn
+            n = len(state["picked"])
+            catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+
+        def _select_all():
+            state["picked"] = {e["slug"] for e in state.get("catalog_items") or []}
+            for slug, btn in state["chips"].items():
+                btn.setStyleSheet(_chip_style(True))
+            n = len(state["picked"])
+            catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+
+        def _clear_all():
+            state["picked"] = set()
+            for btn in state["chips"].values():
+                btn.setStyleSheet(_chip_style(False))
+            catalog_summary.setText("0 picked → 0 variants")
+
+        sel_all_btn = QPushButton("Select all"); sel_all_btn.setObjectName("GhostBtn")
+        sel_all_btn.setCursor(Qt.PointingHandCursor); sel_all_btn.clicked.connect(_select_all)
+        clear_btn = QPushButton("Clear"); clear_btn.setObjectName("GhostBtn")
+        clear_btn.setCursor(Qt.PointingHandCursor); clear_btn.clicked.connect(_clear_all)
+        catalog_actions.addWidget(sel_all_btn); catalog_actions.addWidget(clear_btn)
+        catalog_actions.addStretch()
+
+        def _refresh_for_axis():
+            k = axis_combo.currentData() or "headline"
+            meta = ITERATION_AXES.get(k, {})
+            catalog = meta.get("catalog")
+            if catalog:
+                hint.setText(
+                    f"Iterating the {meta.get('describe', k)} — pick the specific "
+                    f"sub-options you want. Each picked chip = one variant."
+                )
+                count_card.hide()
+                catalog_card.show()
+                # If the user just switched axis, reset the picked set unless
+                # we're showing the originally-saved axis (preserve selection).
+                if k != item["axis"]:
+                    state["picked"] = set()
+                state["catalog_items"] = catalog
+                _rebuild_chips()
+            else:
+                hint.setText(
+                    f"Iterating the {meta.get('describe', k)} — open-text "
+                    f"generation, the LLM produces N variants in the same style."
+                )
+                catalog_card.hide()
+                count_card.show()
+
+        axis_combo.currentIndexChanged.connect(lambda _i: _refresh_for_axis())
+        _refresh_for_axis()
+
         l.addSpacing(8)
         btns = QHBoxLayout(); btns.addStretch()
         ok = QPushButton("Save"); ok.setObjectName("PrimaryBtn")
         ok.clicked.connect(dlg.accept)
         btns.addWidget(ok)
         l.addLayout(btns)
+
         if dlg.exec() == QDialog.Accepted:
-            item["axis"] = axis_combo.currentData() or "headline"
-            item["count"] = int(spin.value())
-            axis_label = ITERATION_AXES[item["axis"]]["label"]
-            item["summary_label"].setText(f"▸ {axis_label} × {item['count']}")
+            new_axis = axis_combo.currentData() or "headline"
+            item["axis"] = new_axis
+            meta = ITERATION_AXES[new_axis]
+            if meta.get("catalog") and state["picked"]:
+                catalog = meta["catalog"]
+                picked_targets = [e for e in catalog if e["slug"] in state["picked"]]
+                item["targets"] = picked_targets
+                item["count"] = len(picked_targets)
+            else:
+                item["targets"] = None
+                item["count"] = int(spin.value())
+            label = ITERATION_AXES[new_axis]["label"]
+            item["summary_label"].setText(f"▸ {label} × {item['count']}")
             self._refresh_queue_state()
 
     # ── Run / results ───────────────────────────────────────────────────
@@ -6459,6 +6581,7 @@ class IterationPage(QWidget):
                 n_variants=item["count"],
                 image_model=(self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL),
                 resolution=self.resolution.currentText() or "1k",
+                targets=item.get("targets"),
             )
             worker.moveToThread(thread)
             thread.started.connect(worker.run)

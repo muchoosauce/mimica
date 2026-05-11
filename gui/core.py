@@ -2357,15 +2357,26 @@ def run_iterate(
     image_model: str = DEFAULT_IMAGE_MODEL,
     resolution: str = "1k",
     provider_name: Optional[str] = None,
+    targets: Optional[list[dict]] = None,
 ) -> Optional[Path]:
     """Run a single-axis iteration on one source image. Dispatches by
-    `axis` to the right analyzer + edit prompt from
-    providers.prompts.ITERATION_AXES. Emits one on_result per variant."""
+    `axis` to the right analyzer + edit prompt from ITERATION_AXES.
+
+    `targets`, when provided, is an explicit list of catalog entries
+    [{"slug", "label", "hint"}, ...]. The Vision-LLM analyzer is bypassed
+    and these entries become the variants directly — used by the catalog-
+    axis UI where the user multi-selects which sub-options to iterate.
+    When None, falls back to the LLM analyzer for open-axis behavior.
+    """
     from providers.prompts import ITERATION_AXES
     if axis not in ITERATION_AXES:
         on_log("ERR", f"Unknown axis: {axis!r}"); return None
     axis_meta = ITERATION_AXES[axis]
-    n = max(1, int(n_variants or 1))
+    # When the user picks targets explicitly, N is derived from that list.
+    if targets:
+        n = len(targets)
+    else:
+        n = max(1, int(n_variants or 1))
 
     provider = get_provider(provider_name) if provider_name else get_active_provider()
     provider.set_logger(on_log)
@@ -2395,20 +2406,32 @@ def run_iterate(
     if should_cancel():
         return out_dir
 
-    # 2) Axis-specific Vision LLM analyzer produces N variant strings.
-    try:
-        on_log("INFO", f"Analyzing {axis_meta['describe']} + generating {n} variants...")
-        analysis = _iterate_analyze(provider, src_url, axis, n)
-    except Exception as e:
-        on_log("ERR", f"{axis} analysis failed: {e}"); return out_dir
-    variants = analysis.get("variants") or []
-    detected = analysis.get("detected", "")
-    style_summary = analysis.get("style_summary", "")
-    on_log(
-        "OK",
-        f"Detected: \"{str(detected)[:80]}\" · {style_summary[:80]} · "
-        f"{len(variants)} variants ready",
-    )
+    # 2) Build the list of variant strings.
+    # If explicit catalog targets were picked → use them directly (no LLM).
+    # Otherwise → call the axis's Vision-LLM analyzer (open-axis path).
+    if targets:
+        variants = [f"{t.get('label', '')} — {t.get('hint', '')}" for t in targets]
+        detected = "(explicit catalog targets)"
+        style_summary = ", ".join(t.get("slug", "") for t in targets)
+        analysis = {
+            "detected": detected, "style_summary": style_summary,
+            "variants": variants, "explicit_targets": targets,
+        }
+        on_log("OK", f"Using {len(variants)} explicit target(s) from catalog.")
+    else:
+        try:
+            on_log("INFO", f"Analyzing {axis_meta['describe']} + generating {n} variants...")
+            analysis = _iterate_analyze(provider, src_url, axis, n)
+        except Exception as e:
+            on_log("ERR", f"{axis} analysis failed: {e}"); return out_dir
+        variants = analysis.get("variants") or []
+        detected = analysis.get("detected", "")
+        style_summary = analysis.get("style_summary", "")
+        on_log(
+            "OK",
+            f"Detected: \"{str(detected)[:80]}\" · {style_summary[:80]} · "
+            f"{len(variants)} variants ready",
+        )
     try:
         (out_dir / "analysis.json").write_text(
             json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
