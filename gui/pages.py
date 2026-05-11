@@ -6181,17 +6181,47 @@ class IterationPage(QWidget):
         head.addWidget(h1); head.addWidget(sub)
         root.addLayout(head)
 
-        # Top row: drop zone + global controls
+        # Top row: compact drop zone + model/resolution controls + actions.
+        # The full-card drop zone ate too much vertical space — shrink to a
+        # single-line bar so the queue grid below gets the real estate.
         controls_card = Card()
-        cc = QVBoxLayout(controls_card); cc.setContentsMargins(20, 16, 20, 16); cc.setSpacing(12)
+        cc = QVBoxLayout(controls_card); cc.setContentsMargins(20, 14, 20, 14); cc.setSpacing(10)
         self.drop = FolderDropZone()
+        self.drop.icon.hide()
+        self.drop.setMinimumHeight(0)
+        self.drop.setFixedHeight(60)
+        # Tighter copy for the compact bar.
+        self.drop.title.setText("Drop images or a folder")
+        self.drop.title.setStyleSheet(f"color: {t.TEXT}; font-size: 12px; font-weight: 600;")
+        self.drop.sub.setText("or click to browse")
+        self.drop.sub.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 10px;")
         self.drop.paths_changed.connect(self._on_paths_dropped)
         cc.addWidget(self.drop)
+
         bottom_row = QHBoxLayout(); bottom_row.setSpacing(10)
+        # Image model picker — defaults to Nano Banana Pro (preserves the
+        # original ad's small text / logo details best on the edit).
+        bottom_row.addWidget(_field_label("Image model"))
+        self.image_model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.image_model.addItem(label, userData=slug)
+        for i in range(self.image_model.count()):
+            if self.image_model.itemData(i) == "nano_banana_pro":
+                self.image_model.setCurrentIndex(i); break
+        self.image_model.setMinimumWidth(160)
+        bottom_row.addWidget(self.image_model)
+        bottom_row.addSpacing(8)
+        bottom_row.addWidget(_field_label("Resolution"))
+        self.resolution = QComboBox()
+        self.resolution.addItems(core.RESOLUTIONS)
+        self.resolution.setCurrentText("1k")
+        self.resolution.setMinimumWidth(80)
+        bottom_row.addWidget(self.resolution)
+        bottom_row.addStretch()
         self.queue_count_lbl = QLabel("0 images queued")
         self.queue_count_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
         bottom_row.addWidget(self.queue_count_lbl)
-        bottom_row.addStretch()
+        bottom_row.addSpacing(8)
         clear_btn = QPushButton("Clear queue"); clear_btn.setObjectName("GhostBtn")
         clear_btn.setCursor(Qt.PointingHandCursor)
         clear_btn.clicked.connect(self._clear_queue)
@@ -6390,8 +6420,9 @@ class IterationPage(QWidget):
             thread = QThread()
             worker = IterationItemWorker(
                 item_index=idx, image_path=item["path"],
-                n_variants=item["count"], image_model=core.DEFAULT_IMAGE_MODEL,
-                resolution="1k",
+                n_variants=item["count"],
+                image_model=(self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL),
+                resolution=self.resolution.currentText() or "1k",
             )
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
