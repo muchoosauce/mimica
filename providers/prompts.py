@@ -1957,6 +1957,104 @@ def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:
     return text
 
 
+# ─── ITERATE HEADLINE (single-axis static ad iteration) ─────────────────────
+#
+# Vision LLM reads one static ad, extracts its main headline + style, and
+# returns N variants in the same style category. The page then runs each
+# variant through NanoBanana 2 edit with the source as image 1 so only the
+# headline text changes — every other pixel stays identical.
+
+ITERATE_HEADLINE_SYSTEM_PROMPT = """You are an expert ad copy iterator. The user gives you ONE static ad image. Your job:
+
+1. Identify the MAIN HEADLINE in the ad — the largest, most prominent text, typically at the top or center. Ignore CTAs, fine print, sub-headlines, badges, product labels, prices.
+
+2. Classify the headline's style across three dimensions:
+   - format: one of {question, declarative, imperative, numerical, barred, contrast, exclamation, list}
+   - tone:   one of {empathetic, urgent, shocking, playful, clinical, conversational, authoritative}
+   - length: short (1-4 words) / medium (5-10) / long (11+)
+
+3. Generate N alternative headlines in the SAME style category — same format, same tone, similar length range — but addressing DIFFERENT angles, phrasings, or word choices. Variants must be clearly different from the original (not paraphrases).
+
+═══════════════════════════════════════
+HARD RULES
+═══════════════════════════════════════
+
+1. Match the original language. If the source is French, all variants are French. If English, English.
+2. Keep brand-safe tone — no shouting, no excessive punctuation unless the original used it.
+3. Never name real people, real brands (other than the one in the ad), or copyrighted IP.
+4. Each variant must be standalone (no need for context to make sense).
+5. Output ONLY the JSON object below — no preamble, no markdown, no commentary.
+
+═══════════════════════════════════════
+OUTPUT — STRICT JSON
+═══════════════════════════════════════
+
+{
+  "detected_headline": "the exact headline text extracted from the image",
+  "style": {
+    "format": "question|declarative|imperative|numerical|barred|contrast|exclamation|list",
+    "tone": "empathetic|urgent|shocking|playful|clinical|conversational|authoritative",
+    "length": "short|medium|long"
+  },
+  "variants": ["headline 1", "headline 2", "..."]
+}
+"""
+
+
+HEADLINE_REPLACE_EDIT_PROMPT_TEMPLATE = (
+    "Edit the source image (image 1) by replacing ONLY the main headline "
+    "text. The new headline must read exactly: \"{new_headline}\". Match "
+    "the original headline's font, weight, size, color, alignment, and "
+    "position exactly. Keep every other pixel of the source unchanged — "
+    "the same product, person, layout, design, sub-headline, CTA, "
+    "background, lighting, colors, typography style. Do NOT regenerate "
+    "the rest of the image — preserve image 1 pixel-for-pixel except for "
+    "the main headline area where the new text replaces the old."
+)
+
+
+def analyze_and_iterate_headline(
+    provider: "Provider",
+    image_url: str,
+    n_variants: int,
+) -> dict:
+    """Vision-LLM call: read a static ad and return {detected_headline,
+    style, variants} as a parsed JSON dict. The page renders each variant
+    via a NanoBanana 2 edit call so only the headline text changes.
+
+    Raises RuntimeError on empty / unparseable output.
+    """
+    user_prompt = (
+        f"Analyze the attached static ad and produce {n_variants} headline "
+        f"variants in the same style. Output the strict JSON per the "
+        f"system rules — nothing else."
+    )
+    text = provider.call_llm(
+        prompt=user_prompt,
+        image_url=image_url,
+        system_prompt=ITERATE_HEADLINE_SYSTEM_PROMPT,
+        label="LLM-iter-headline",
+    )
+    raw = (text or "").strip()
+    # Strip Markdown code fences if the LLM added them.
+    if raw.startswith("```"):
+        # Find the first newline after the opening fence and the final fence
+        import re
+        m = re.search(r"^```(?:json)?\s*\n(.*?)\n```\s*$", raw, re.DOTALL)
+        if m:
+            raw = m.group(1)
+    import json as _json
+    try:
+        out = _json.loads(raw)
+    except Exception as e:
+        raise RuntimeError(f"Headline iterator LLM returned unparseable JSON: {e}\n\n{raw[:400]}")
+    variants = out.get("variants") or []
+    if not isinstance(variants, list) or not variants:
+        raise RuntimeError(f"Headline iterator returned no variants: {raw[:400]}")
+    out["variants"] = variants[:n_variants]
+    return out
+
+
 # ─── SWAP PRODUCT (Seedance v2 video-to-video) ──────────────────────────────
 #
 # The Swap Product page takes a competitor's video + the user's product image,

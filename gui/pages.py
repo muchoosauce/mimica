@@ -6085,6 +6085,367 @@ class TwinHubPage(QWidget):
         return ok
 
 
+# ─── Iteration (static ad iteration · MVP V1 = headline axis) ────────────────
+#
+# Batch UX: the user drops N source statics. Each lands as a card in a grid
+# with its own per-image config (axis + variant count). Run queue executes
+# all configured cards in parallel; results show as strips under each card.
+#
+# V1 is single-axis (Headline) — pick a count per card, the worker runs the
+# Vision-LLM-driven headline iterator (analyze + variants) and edits each
+# variant via NanoBanana 2. Other axes (Concept, Actor, Décor, etc.) will
+# slot into the same card UI via an axis dropdown in V2.
+
+
+class IterationItemWorker(QObject):
+    """Run one source image's iteration through the pipeline. Emits log +
+    per-variant result + a final dict {out_dir, count_ok}."""
+    log = Signal(str, str)
+    result = Signal(int, dict)  # (item_index, variant_result_dict)
+    finished = Signal(int, str, int)  # (item_index, out_dir_path, count_ok)
+
+    def __init__(self, item_index: int, image_path: str, n_variants: int,
+                 image_model: str, resolution: str):
+        super().__init__()
+        self._idx = item_index
+        self._image_path = image_path
+        self._n = n_variants
+        self._image_model = image_model
+        self._resolution = resolution
+        self._cancel = False
+        self._count_ok = 0
+        self._out_dir = ""
+
+    def cancel(self):
+        self._cancel = True
+
+    def _on_result(self, r: dict):
+        if r.get("status") == "ok":
+            self._count_ok += 1
+        self.result.emit(self._idx, r)
+
+    def _on_out_dir(self, p):
+        self._out_dir = str(p)
+
+    def run(self):
+        try:
+            core.run_iterate_headline(
+                self._image_path,
+                self._n,
+                on_log=lambda lvl, msg: self.log.emit(lvl, f"[item {self._idx + 1}] {msg}"),
+                on_result=self._on_result,
+                on_out_dir=self._on_out_dir,
+                should_cancel=lambda: self._cancel,
+                image_model=self._image_model,
+                resolution=self._resolution,
+            )
+        except Exception as e:
+            self.log.emit("ERR", f"[item {self._idx + 1}] {e}")
+        self.finished.emit(self._idx, self._out_dir, self._count_ok)
+
+
+class IterationPage(QWidget):
+    """Batch-iterate static ads on a single axis at a time. V1 = Headline.
+
+    UX: a grid of QueueCards (one per source image), a Run button that fans
+    them out via the workers, and a Results pass that swaps each card's
+    summary band for a strip of generated variants.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        # Each item: {"path": str, "thumb_widget": QLabel,
+        #             "card_widget": QFrame, "axis": "headline",
+        #             "count": int, "config_btn": QPushButton,
+        #             "summary_label": QLabel,
+        #             "results_strip": QHBoxLayout|None}
+        self._items: list[dict] = []
+        self._threads: list[QThread] = []
+        self._workers: list[IterationItemWorker] = []
+        self._completed = 0
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Iteration"); h1.setObjectName("H1")
+        sub = QLabel(
+            "Drop multiple static ads, pick a number of variants per image, "
+            "and the headline iterator generates same-style alternatives "
+            "across the whole batch in parallel."
+        )
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        # Top row: drop zone + global controls
+        controls_card = Card()
+        cc = QVBoxLayout(controls_card); cc.setContentsMargins(20, 16, 20, 16); cc.setSpacing(12)
+        self.drop = FolderDropZone()
+        self.drop.paths_changed.connect(self._on_paths_dropped)
+        cc.addWidget(self.drop)
+        bottom_row = QHBoxLayout(); bottom_row.setSpacing(10)
+        self.queue_count_lbl = QLabel("0 images queued")
+        self.queue_count_lbl.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        bottom_row.addWidget(self.queue_count_lbl)
+        bottom_row.addStretch()
+        clear_btn = QPushButton("Clear queue"); clear_btn.setObjectName("GhostBtn")
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.clicked.connect(self._clear_queue)
+        bottom_row.addWidget(clear_btn)
+        self.run_btn = QPushButton("Run queue"); self.run_btn.setObjectName("PrimaryBtn")
+        self.run_btn.setCursor(Qt.PointingHandCursor)
+        self.run_btn.clicked.connect(self._run_queue)
+        self.run_btn.setEnabled(False)
+        bottom_row.addWidget(self.run_btn)
+        cc.addLayout(bottom_row)
+        root.addWidget(controls_card)
+
+        # Queue grid
+        grid_card = Card()
+        gc = QVBoxLayout(grid_card); gc.setContentsMargins(20, 18, 20, 18); gc.setSpacing(10)
+        gc.addWidget(QLabel("Queue", objectName="H2"))
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.grid_container = QWidget()
+        self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_layout.setSpacing(14); self.grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll.setWidget(self.grid_container)
+        gc.addWidget(scroll, 1)
+        root.addWidget(grid_card, 1)
+
+        # Activity log
+        log_card = Card()
+        lc = QVBoxLayout(log_card); lc.setContentsMargins(20, 14, 20, 14); lc.setSpacing(8)
+        head_log = QHBoxLayout()
+        head_log.addWidget(QLabel("Activity", objectName="H2"))
+        head_log.addStretch()
+        self.status_pill = StatusPill("Idle", t.TEXT_MUTED)
+        head_log.addWidget(self.status_pill)
+        lc.addLayout(head_log)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setFixedHeight(120)
+        lc.addWidget(self.log)
+        root.addWidget(log_card)
+
+    # ── Queue management ───────────────────────────────────────────────
+
+    def _on_paths_dropped(self, paths: list):
+        # Add only new image paths (skip dupes & non-images).
+        existing = {it["path"] for it in self._items}
+        added = 0
+        for p in paths:
+            s = str(p)
+            if s in existing:
+                continue
+            if Path(s).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+                continue
+            self._add_queue_item(s)
+            existing.add(s)
+            added += 1
+        if added:
+            self._append_log("INFO", f"Queued {added} image(s)")
+        self._refresh_queue_state()
+
+    def _add_queue_item(self, image_path: str):
+        idx = len(self._items)
+        card = QFrame(); card.setObjectName("StyleTile")
+        card.setStyleSheet(
+            "QFrame#StyleTile {"
+            f" background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED}; "
+            f"border-radius: 12px;"
+            " }"
+        )
+        card.setFixedWidth(220)
+        cl = QVBoxLayout(card); cl.setContentsMargins(10, 10, 10, 10); cl.setSpacing(6)
+        thumb = QLabel(); thumb.setAlignment(Qt.AlignCenter)
+        thumb.setFixedSize(200, 200)
+        thumb.setStyleSheet(f"background: {t.BG_HOVER}; border-radius: 8px;")
+        from PySide6.QtGui import QPixmap
+        pm = QPixmap(image_path)
+        if not pm.isNull():
+            thumb.setPixmap(pm.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        cl.addWidget(thumb)
+        name_lbl = QLabel(Path(image_path).name)
+        name_lbl.setStyleSheet(f"color: {t.TEXT}; font-size: 11px; font-weight: 600;")
+        name_lbl.setWordWrap(True)
+        cl.addWidget(name_lbl)
+        summary = QLabel("▸ Headline × 5")
+        summary.setStyleSheet(f"color: {t.ACCENT_SOFT}; font-size: 11px;")
+        cl.addWidget(summary)
+        row = QHBoxLayout(); row.setSpacing(6); row.setContentsMargins(0, 0, 0, 0)
+        cfg = QPushButton("Configure"); cfg.setObjectName("OnCardBtn")
+        cfg.setCursor(Qt.PointingHandCursor)
+        cfg.clicked.connect(lambda _=False, i=idx: self._open_config(i))
+        rm = QPushButton("✕"); rm.setObjectName("GhostBtn")
+        rm.setFixedWidth(36); rm.setCursor(Qt.PointingHandCursor)
+        rm.clicked.connect(lambda _=False, i=idx: self._remove_item(i))
+        row.addWidget(cfg, 1); row.addWidget(rm)
+        cl.addLayout(row)
+        # Results strip placeholder (populated after Run)
+        results_strip = QHBoxLayout(); results_strip.setSpacing(4); results_strip.setContentsMargins(0, 6, 0, 0)
+        results_holder = QWidget(); results_holder.setLayout(results_strip)
+        cl.addWidget(results_holder)
+
+        item = {
+            "path": image_path,
+            "card_widget": card,
+            "summary_label": summary,
+            "config_btn": cfg,
+            "remove_btn": rm,
+            "axis": "headline",
+            "count": 5,
+            "results_strip": results_strip,
+            "results_holder": results_holder,
+            "out_dir": None,
+        }
+        self._items.append(item)
+        self._relayout_grid()
+
+    def _relayout_grid(self):
+        while self.grid_layout.count():
+            it = self.grid_layout.takeAt(0)
+            w = it.widget()
+            if w: w.setParent(None)
+        cols = 4
+        for i, item in enumerate(self._items):
+            r, c = divmod(i, cols)
+            self.grid_layout.addWidget(item["card_widget"], r, c)
+
+    def _remove_item(self, idx: int):
+        if 0 <= idx < len(self._items):
+            self._items[idx]["card_widget"].setParent(None)
+            self._items.pop(idx)
+            self._relayout_grid()
+            self._refresh_queue_state()
+
+    def _clear_queue(self):
+        for it in self._items:
+            it["card_widget"].setParent(None)
+        self._items.clear()
+        self._refresh_queue_state()
+
+    def _refresh_queue_state(self):
+        n = len(self._items)
+        total = sum(it["count"] for it in self._items)
+        self.queue_count_lbl.setText(f"{n} image{'s' if n != 1 else ''} queued · {total} variation{'s' if total != 1 else ''}")
+        self.run_btn.setEnabled(n > 0)
+
+    def _open_config(self, idx: int):
+        if not (0 <= idx < len(self._items)):
+            return
+        item = self._items[idx]
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Configure iteration")
+        dlg.setStyleSheet(f"QDialog {{ background: {t.BG_ELEVATED}; }}")
+        l = QVBoxLayout(dlg); l.setContentsMargins(16, 16, 16, 16); l.setSpacing(10)
+        l.addWidget(QLabel(f"<b>{Path(item['path']).name}</b>", styleSheet=f"color: {t.TEXT}; font-size: 13px;"))
+        l.addWidget(QLabel("Axis: Headline (single axis available in V1)",
+                           styleSheet=f"color: {t.TEXT_DIM}; font-size: 11px;"))
+        l.addWidget(QLabel("Number of variations", objectName="Muted"))
+        spin = QSpinBox(); spin.setRange(1, 12); spin.setValue(int(item["count"]))
+        l.addWidget(spin)
+        l.addSpacing(8)
+        btns = QHBoxLayout(); btns.addStretch()
+        ok = QPushButton("Save"); ok.setObjectName("PrimaryBtn")
+        ok.clicked.connect(dlg.accept)
+        btns.addWidget(ok)
+        l.addLayout(btns)
+        if dlg.exec() == QDialog.Accepted:
+            item["count"] = int(spin.value())
+            item["summary_label"].setText(f"▸ Headline × {item['count']}")
+            self._refresh_queue_state()
+
+    # ── Run / results ───────────────────────────────────────────────────
+
+    def _append_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log.appendPlainText(f"[{ts}] {level:<4} {msg}")
+
+    def _run_queue(self):
+        if not self._items:
+            return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+        self.run_btn.setEnabled(False); self.run_btn.setText("Running…")
+        self.status_pill.setText("Running")
+        self.status_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+        self._threads.clear(); self._workers.clear(); self._completed = 0
+
+        for idx, item in enumerate(self._items):
+            # Disable the config & remove buttons during the run.
+            item["config_btn"].setEnabled(False)
+            item["remove_btn"].setEnabled(False)
+            # Clear any previous results strip.
+            while item["results_strip"].count():
+                w = item["results_strip"].takeAt(0).widget()
+                if w: w.setParent(None)
+            thread = QThread()
+            worker = IterationItemWorker(
+                item_index=idx, image_path=item["path"],
+                n_variants=item["count"], image_model=core.DEFAULT_IMAGE_MODEL,
+                resolution="1k",
+            )
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.log.connect(lambda lvl, msg: self._append_log(lvl, msg))
+            worker.result.connect(self._on_variant_result)
+            worker.finished.connect(self._on_item_finished)
+            self._threads.append(thread); self._workers.append(worker)
+            thread.start()
+
+    def _on_variant_result(self, item_idx: int, r: dict):
+        # Append the variant thumbnail to the source card's strip.
+        if not (0 <= item_idx < len(self._items)):
+            return
+        item = self._items[item_idx]
+        out_dir = self._workers[item_idx]._out_dir
+        if not out_dir or r.get("status") != "ok":
+            return
+        local = Path(out_dir) / r.get("file", "")
+        if not local.exists():
+            return
+        from PySide6.QtGui import QPixmap
+        thumb = QLabel(); thumb.setFixedSize(64, 64)
+        pm = QPixmap(str(local))
+        if not pm.isNull():
+            thumb.setPixmap(pm.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        thumb.setStyleSheet(f"border: 1px solid {t.BORDER_MUTED}; border-radius: 6px;")
+        thumb.setToolTip(r.get("headline", ""))
+        thumb.setCursor(Qt.PointingHandCursor)
+        thumb.mousePressEvent = lambda _ev, p=local: open_path(p)
+        item["results_strip"].addWidget(thumb)
+
+    def _on_item_finished(self, item_idx: int, out_dir: str, count_ok: int):
+        if 0 <= item_idx < len(self._items):
+            item = self._items[item_idx]
+            item["out_dir"] = out_dir
+            item["config_btn"].setEnabled(True)
+            item["remove_btn"].setEnabled(True)
+            item["summary_label"].setText(f"✓ Headline × {count_ok} done")
+        # Tear down the thread.
+        try:
+            self._threads[item_idx].quit()
+            self._threads[item_idx].wait()
+        except Exception:
+            pass
+        self._completed += 1
+        if self._completed >= len(self._workers):
+            self.run_btn.setEnabled(True); self.run_btn.setText("Run queue")
+            self.status_pill.setText("Done")
+            self.status_pill.setStyleSheet(
+                f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+                f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+            )
+
+
 # ─── Animation (multi-shot narrative video) ──────────────────────────────────
 
 class AnimationOpWorker(QObject):

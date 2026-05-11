@@ -11,7 +11,8 @@ from . import core
 from . import theme as t
 from .pages import (
     AdaptPage, AnimationPage, BatchFixPage, BrandsPage, BRollPage, DashboardPage,
-    FunnelAdsPage, GeneratePage, HistoryPage, RunDetailPage, SettingsPage, TwinHubPage
+    FunnelAdsPage, GeneratePage, HistoryPage, IterationPage, RunDetailPage,
+    SettingsPage, TwinHubPage
 )
 from .swap_page import SwapPage
 from pathlib import Path as _PathForAssets
@@ -108,6 +109,7 @@ class Sidebar(QWidget):
             ("adapt", "adapt", "Adapt"),
             ("fix", "wrench", "Fix"),
             ("broll", "broll", "B-Roll"),
+            ("iteration", "generate", "Iteration"),
             ("history", "history", "History"),
         ]:
             item = SidebarItem(icon, label)
@@ -274,12 +276,13 @@ class MainWindow(QMainWindow):
         self.adapt = AdaptPage()
         self.fix = BatchFixPage()
         self.broll = BRollPage()
+        self.iteration = IterationPage()
         self.history = HistoryPage()
         self.brands = BrandsPage()
         self.detail = RunDetailPage()
         self.settings = SettingsPage()
         for p in (self.dashboard, self.animation, self.funnel, self.twin, self.swap, self.generate, self.adapt, self.fix, self.broll,
-                  self.history, self.brands, self.detail, self.settings):
+                  self.iteration, self.history, self.brands, self.detail, self.settings):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
 
@@ -328,6 +331,7 @@ class MainWindow(QMainWindow):
             "adapt":     (self.adapt,     "Adapt"),
             "fix":       (self.fix,       "Fix"),
             "broll":     (self.broll,     "B-Roll"),
+            "iteration": (self.iteration, "Iteration"),
             "history":   (self.history,   "History"),
             "brands":    (self.brands,    "Brands"),
             "settings":  (self.settings,  "Settings"),
