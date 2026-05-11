@@ -1957,88 +1957,290 @@ def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:
     return text
 
 
-# ─── ITERATE HEADLINE (single-axis static ad iteration) ─────────────────────
+# ─── STATIC AD ITERATION REGISTRY ───────────────────────────────────────────
 #
-# Vision LLM reads one static ad, extracts its main headline + style, and
-# returns N variants in the same style category. The page then runs each
-# variant through NanoBanana 2 edit with the source as image 1 so only the
-# headline text changes — every other pixel stays identical.
+# Each axis is a self-describing entry: an LLM "what to detect + how to vary"
+# system prompt and an image-edit prompt template applied per variant. The
+# core dispatcher (run_iterate) calls analyze_for_axis() to produce N variant
+# strings, then loops through call_image() with the per-variant edit prompt.
+#
+# Adding a new axis = add an entry here. No code change anywhere else.
 
-ITERATE_HEADLINE_SYSTEM_PROMPT = """You are an expert ad copy iterator. The user gives you ONE static ad image. Your job:
+_AXIS_PROMPT_HEADER = """You are an expert ad iterator analyzing one static ad image. Output STRICT JSON only — no preamble, no markdown, no commentary."""
 
-1. Identify the MAIN HEADLINE in the ad — the largest, most prominent text, typically at the top or center. Ignore CTAs, fine print, sub-headlines, badges, product labels, prices.
+ITERATION_AXES: dict[str, dict] = {
+    "headline": {
+        "label": "Headline",
+        "describe": "the main headline text",
+        "analyzer": _AXIS_PROMPT_HEADER + """
 
-2. Classify the headline's style across three dimensions:
-   - format: one of {question, declarative, imperative, numerical, barred, contrast, exclamation, list}
-   - tone:   one of {empathetic, urgent, shocking, playful, clinical, conversational, authoritative}
-   - length: short (1-4 words) / medium (5-10) / long (11+)
+Identify the MAIN HEADLINE — the largest, most prominent text, typically at the top or center. Ignore CTAs, fine print, sub-headlines, badges, prices.
 
-3. Generate N alternative headlines in the SAME style category — same format, same tone, similar length range — but addressing DIFFERENT angles, phrasings, or word choices. Variants must be clearly different from the original (not paraphrases).
+Classify its style: format ∈ {question, declarative, imperative, numerical, barred, contrast, exclamation, list}, tone ∈ {empathetic, urgent, shocking, playful, clinical, conversational, authoritative}, length ∈ {short, medium, long}.
 
-═══════════════════════════════════════
-HARD RULES
-═══════════════════════════════════════
+Generate {N} alternative headlines in the SAME style category but with different angles, phrasings, or word choices. Variants must be clearly different from the original (not paraphrases). Match the source language. Never name real people or copyrighted IP.
 
-1. Match the original language. If the source is French, all variants are French. If English, English.
-2. Keep brand-safe tone — no shouting, no excessive punctuation unless the original used it.
-3. Never name real people, real brands (other than the one in the ad), or copyrighted IP.
-4. Each variant must be standalone (no need for context to make sense).
-5. Output ONLY the JSON object below — no preamble, no markdown, no commentary.
-
-═══════════════════════════════════════
-OUTPUT — STRICT JSON
-═══════════════════════════════════════
-
+OUTPUT:
 {
-  "detected_headline": "the exact headline text extracted from the image",
-  "style": {
-    "format": "question|declarative|imperative|numerical|barred|contrast|exclamation|list",
-    "tone": "empathetic|urgent|shocking|playful|clinical|conversational|authoritative",
-    "length": "short|medium|long"
-  },
+  "detected": "the exact original headline text",
+  "style_summary": "format/tone/length",
   "variants": ["headline 1", "headline 2", "..."]
+}""",
+        "edit_prompt": (
+            "Edit the source image (image 1) by replacing ONLY the main "
+            "headline text with: \"{variant}\". Match the original "
+            "headline's font, weight, size, color, alignment, and position "
+            "exactly. Keep every other pixel of the source unchanged — "
+            "product, person, layout, sub-headline, CTA, background, "
+            "lighting, colors, typography style."
+        ),
+    },
+    "actor": {
+        "label": "Actor",
+        "describe": "the person featured in the ad",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the main PERSON in the ad. Describe them generically — never name a real person. Capture: gender, approximate age, ethnicity descriptor, hair, build, vibe.
+
+Generate {N} alternative personas that vary on age, gender, ethnicity, or lifestyle while keeping the ad context plausible. Each variant is one short sentence (~15 words) describing the new person.
+
+OUTPUT:
+{
+  "detected": "short generic description of the current person",
+  "style_summary": "demographic summary",
+  "variants": ["new person description 1", "new person description 2", "..."]
+}""",
+        "edit_prompt": (
+            "Edit the source image (image 1) by replacing the person with: "
+            "{variant}. Keep every other element pixel-for-pixel — the "
+            "same product, packaging, props, room, decor, lighting, "
+            "framing, camera angle, all overlays and text. The new person "
+            "must occupy the same position, pose, and gesture as the "
+            "original. Match the original lighting on the new person's "
+            "skin and hair."
+        ),
+    },
+    "decor": {
+        "label": "Décor",
+        "describe": "the setting / background of the ad",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the SETTING / décor of the ad: room type, decor cues, lighting direction, time of day, aesthetic.
+
+Generate {N} alternative settings that change the location while keeping the brand/product plausibly placed there. Each variant is one short sentence (~15 words) describing the new setting (e.g. "scandinavian bathroom with marble counter, soft morning light").
+
+OUTPUT:
+{
+  "detected": "short description of the current setting",
+  "style_summary": "lighting + aesthetic summary",
+  "variants": ["new setting 1", "new setting 2", "..."]
+}""",
+        "edit_prompt": (
+            "Edit the source image (image 1) by replacing the setting / "
+            "background with: {variant}. Keep every other element pixel-"
+            "for-pixel — the same person, pose, product, packaging, all "
+            "overlays and text, the framing and camera angle. The new "
+            "setting must light the subject realistically (matching the "
+            "described lighting direction and color temperature)."
+        ),
+    },
+    "concept": {
+        "label": "Concept",
+        "describe": "the structural concept of the ad",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current CONCEPT (visual structure) from this list:
+bullet_points, problem_solution, before_after, split_benefit, split_offer, us_vs_them, social_proof, offer_forward, hand_writing, long_text, native_ugc, headline_only, statistics, product_only.
+
+Generate {N} alternative concepts from the SAME list — different concepts each time — that would work for this brand and product. Each variant is the concept slug + one short sentence explaining how it would re-structure the visual.
+
+OUTPUT:
+{
+  "detected": "current_concept_slug",
+  "style_summary": "what defines the current concept visually",
+  "variants": ["concept_slug — how it would be restructured", "..."]
+}""",
+        "edit_prompt": (
+            "Take the source image (image 1) as the brand/product/copy "
+            "reference and re-design it following this NEW concept: "
+            "{variant}. You may regenerate the entire layout to fit the "
+            "new concept, but preserve: the exact same product packaging "
+            "(logo, label text, color, shape), the same brand identity "
+            "(colors, typography family, voice), and the core message of "
+            "the original ad. The new concept's visual structure replaces "
+            "the original."
+        ),
+    },
+    "awareness": {
+        "label": "Awareness",
+        "describe": "the funnel-stage / awareness level targeted",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current AWARENESS level of the targeted audience based on the copy + visuals:
+unaware, problem_aware, solution_aware, product_aware, most_aware.
+
+Generate {N} alternative awareness levels (each different from the original) and for each, rewrite the messaging to fit. Each variant is the awareness slug + the rewritten headline + a one-line sub-headline.
+
+OUTPUT:
+{
+  "detected": "current_awareness_slug",
+  "style_summary": "why the current copy targets this awareness level",
+  "variants": ["awareness_slug | new headline | new sub-headline", "..."]
+}""",
+        "edit_prompt": (
+            "Edit the source image (image 1) for a DIFFERENT awareness "
+            "level. Update the headline, sub-headline, and CTA wording to "
+            "match: {variant}. Keep every visual element pixel-for-pixel "
+            "— same product, person, room, decor, layout, color palette, "
+            "typography style. Only the text content changes."
+        ),
+    },
+    "offer": {
+        "label": "Offre",
+        "describe": "the deal / pricing / bundle shown",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current OFFER block in the ad (if any) — bundle, discount %, price point, free shipping, money-back, BOGO, volume deal, etc.
+
+Generate {N} alternative offer mechanisms in the same language and tone. Each variant is one short sentence (~12 words) describing the new offer pitch and any numbers.
+
+OUTPUT:
+{
+  "detected": "the current offer mechanism + any numbers, or 'no offer detected'",
+  "style_summary": "the offer style (discount/bundle/volume/guarantee/...)",
+  "variants": ["new offer 1", "new offer 2", "..."]
+}""",
+        "edit_prompt": (
+            "Edit the source image (image 1) by replacing the offer block "
+            "with: {variant}. Keep every other element pixel-for-pixel — "
+            "person, product, background, headline, CTA, layout, design "
+            "system. Match the original offer block's position, scale, "
+            "typography family, and color treatment."
+        ),
+    },
+    "style": {
+        "label": "Style",
+        "describe": "the overall visual aesthetic",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current visual STYLE / aesthetic of the ad: photoreal UGC, polished studio, illustrated, 3D render, flat design, brutalist, editorial magazine, hand-drawn, claymation, etc.
+
+Generate {N} alternative styles (clearly different from the current one). Each variant is one short label + a one-line rendering description (e.g. "claymation — hand-sculpted clay figure with visible fingerprints, glossy plasticine skin").
+
+OUTPUT:
+{
+  "detected": "current style label",
+  "style_summary": "key rendering cues",
+  "variants": ["new style label — rendering description", "..."]
+}""",
+        "edit_prompt": (
+            "Re-render the source image (image 1) in this NEW aesthetic: "
+            "{variant}. Keep the same subject, product, composition, and "
+            "all text overlays. Apply the new rendering technique uniformly "
+            "to every visual element."
+        ),
+    },
+    "palette": {
+        "label": "Palette",
+        "describe": "the color palette",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current color PALETTE of the ad — 2-5 dominant colors with named families (warm beige, deep navy, muted lavender) plus saturation and contrast level.
+
+Generate {N} alternative palettes appropriate for the brand category. Each variant is one short label + the 2-5 dominant hex codes or named colors.
+
+OUTPUT:
+{
+  "detected": "current palette description",
+  "style_summary": "saturation + contrast",
+  "variants": ["palette label — color1, color2, color3, ...", "..."]
+}""",
+        "edit_prompt": (
+            "Re-render the source image (image 1) with this NEW color "
+            "palette: {variant}. Recolor backgrounds, surfaces, text "
+            "blocks, accent strokes accordingly. Keep the product's actual "
+            "packaging colors UNCHANGED — the product must remain "
+            "recognizable. Keep composition, person, layout, text content "
+            "all pixel-for-pixel except for the color recoloring."
+        ),
+    },
+    "cta": {
+        "label": "CTA",
+        "describe": "the call-to-action button or text",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current CTA — the call-to-action button or text (e.g. "Découvrir", "Shop now", "Try it free", "+50% today").
+
+Generate {N} alternative CTA wordings in the same language. Each variant is short (1-5 words), action-oriented, and conversion-focused.
+
+OUTPUT:
+{
+  "detected": "the current CTA text",
+  "style_summary": "tone + length",
+  "variants": ["CTA 1", "CTA 2", "..."]
+}""",
+        "edit_prompt": (
+            "Edit the source image (image 1) by replacing ONLY the CTA "
+            "button/text with: \"{variant}\". Match the original CTA's "
+            "font, color, background, border-radius, position, and size. "
+            "Keep every other element pixel-for-pixel."
+        ),
+    },
+    "layout": {
+        "label": "Layout",
+        "describe": "the composition / layout of the elements",
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Identify the current LAYOUT: where the headline, sub-headline, product, person, CTA, and offer are positioned (top/middle/bottom, left/center/right), and the overall hierarchy.
+
+Generate {N} alternative layouts with a different composition. Each variant is one paragraph (~25 words) describing the new arrangement (e.g. "product centered occupying 60% of frame, headline reduced to bottom-left in 2 lines, CTA sticky at bottom-right corner").
+
+OUTPUT:
+{
+  "detected": "short description of the current layout",
+  "style_summary": "hierarchy summary",
+  "variants": ["new layout description 1", "..."]
+}""",
+        "edit_prompt": (
+            "Re-design the source image (image 1) with this NEW layout: "
+            "{variant}. Keep the same product, brand identity, color "
+            "palette, typography family, and the SAME message content. "
+            "Only the composition / positioning of elements changes."
+        ),
+    },
 }
-"""
 
 
-HEADLINE_REPLACE_EDIT_PROMPT_TEMPLATE = (
-    "Edit the source image (image 1) by replacing ONLY the main headline "
-    "text. The new headline must read exactly: \"{new_headline}\". Match "
-    "the original headline's font, weight, size, color, alignment, and "
-    "position exactly. Keep every other pixel of the source unchanged — "
-    "the same product, person, layout, design, sub-headline, CTA, "
-    "background, lighting, colors, typography style. Do NOT regenerate "
-    "the rest of the image — preserve image 1 pixel-for-pixel except for "
-    "the main headline area where the new text replaces the old."
-)
-
-
-def analyze_and_iterate_headline(
+def analyze_for_axis(
     provider: "Provider",
     image_url: str,
+    axis_key: str,
     n_variants: int,
 ) -> dict:
-    """Vision-LLM call: read a static ad and return {detected_headline,
-    style, variants} as a parsed JSON dict. The page renders each variant
-    via a NanoBanana 2 edit call so only the headline text changes.
+    """Generic axis analyzer. Routes to ITERATION_AXES[axis_key], calls the
+    LLM with the axis-specific system prompt + an N-templated user prompt,
+    and parses the strict JSON output.
 
-    Raises RuntimeError on empty / unparseable output.
+    Returns {detected, style_summary, variants}. Raises RuntimeError on
+    empty / unparseable output.
     """
+    axis = ITERATION_AXES.get(axis_key)
+    if not axis:
+        raise RuntimeError(f"Unknown iteration axis: {axis_key!r}")
+    sys_prompt = axis["analyzer"].replace("{N}", str(n_variants))
     user_prompt = (
-        f"Analyze the attached static ad and produce {n_variants} headline "
-        f"variants in the same style. Output the strict JSON per the "
+        f"Analyze the attached static ad and produce {n_variants} variants "
+        f"on the {axis['describe']} axis. Output the strict JSON per the "
         f"system rules — nothing else."
     )
     text = provider.call_llm(
         prompt=user_prompt,
         image_url=image_url,
-        system_prompt=ITERATE_HEADLINE_SYSTEM_PROMPT,
-        label="LLM-iter-headline",
+        system_prompt=sys_prompt,
+        label=f"LLM-iter-{axis_key}",
     )
     raw = (text or "").strip()
-    # Strip Markdown code fences if the LLM added them.
     if raw.startswith("```"):
-        # Find the first newline after the opening fence and the final fence
         import re
         m = re.search(r"^```(?:json)?\s*\n(.*?)\n```\s*$", raw, re.DOTALL)
         if m:
@@ -2047,12 +2249,28 @@ def analyze_and_iterate_headline(
     try:
         out = _json.loads(raw)
     except Exception as e:
-        raise RuntimeError(f"Headline iterator LLM returned unparseable JSON: {e}\n\n{raw[:400]}")
+        raise RuntimeError(f"{axis_key} iterator returned unparseable JSON: {e}\n\n{raw[:400]}")
     variants = out.get("variants") or []
     if not isinstance(variants, list) or not variants:
-        raise RuntimeError(f"Headline iterator returned no variants: {raw[:400]}")
+        raise RuntimeError(f"{axis_key} iterator returned no variants: {raw[:400]}")
     out["variants"] = variants[:n_variants]
     return out
+
+
+# Backward-compat alias for the previous single-axis core function call site.
+def analyze_and_iterate_headline(
+    provider: "Provider",
+    image_url: str,
+    n_variants: int,
+) -> dict:
+    out = analyze_for_axis(provider, image_url, "headline", n_variants)
+    # Map the new generic keys onto the previous shape so existing callers
+    # keep working without touching their parsing.
+    return {
+        "detected_headline": out.get("detected", ""),
+        "style": {"summary": out.get("style_summary", "")},
+        "variants": out.get("variants", []),
+    }
 
 
 # ─── SWAP PRODUCT (Seedance v2 video-to-video) ──────────────────────────────

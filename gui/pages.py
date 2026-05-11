@@ -6104,11 +6104,12 @@ class IterationItemWorker(QObject):
     result = Signal(int, dict)  # (item_index, variant_result_dict)
     finished = Signal(int, str, int)  # (item_index, out_dir_path, count_ok)
 
-    def __init__(self, item_index: int, image_path: str, n_variants: int,
-                 image_model: str, resolution: str):
+    def __init__(self, item_index: int, image_path: str, axis: str,
+                 n_variants: int, image_model: str, resolution: str):
         super().__init__()
         self._idx = item_index
         self._image_path = image_path
+        self._axis = axis
         self._n = n_variants
         self._image_model = image_model
         self._resolution = resolution
@@ -6127,12 +6128,16 @@ class IterationItemWorker(QObject):
     def _on_out_dir(self, p):
         self._out_dir = str(p)
 
+    def _emit_log(self, lvl: str, msg: str):
+        self.log.emit(lvl, f"[item {self._idx + 1}] {msg}")
+
     def run(self):
         try:
-            core.run_iterate_headline(
+            core.run_iterate(
                 self._image_path,
+                self._axis,
                 self._n,
-                on_log=lambda lvl, msg: self.log.emit(lvl, f"[item {self._idx + 1}] {msg}"),
+                on_log=self._emit_log,
                 on_result=self._on_result,
                 on_out_dir=self._on_out_dir,
                 should_cancel=lambda: self._cancel,
@@ -6140,7 +6145,7 @@ class IterationItemWorker(QObject):
                 resolution=self._resolution,
             )
         except Exception as e:
-            self.log.emit("ERR", f"[item {self._idx + 1}] {e}")
+            self._emit_log("ERR", str(e))
         self.finished.emit(self._idx, self._out_dir, self._count_ok)
 
 
@@ -6199,14 +6204,14 @@ class IterationPage(QWidget):
         cc.addWidget(self.drop)
 
         bottom_row = QHBoxLayout(); bottom_row.setSpacing(10)
-        # Image model picker — defaults to Nano Banana Pro (preserves the
-        # original ad's small text / logo details best on the edit).
+        # Image model picker — GPT Image 2 default (best at preserving
+        # rasterized text and recomposing layouts cleanly for ad edits).
         bottom_row.addWidget(_field_label("Image model"))
         self.image_model = QComboBox()
         for slug, label in core.IMAGE_MODEL_CHOICES:
             self.image_model.addItem(label, userData=slug)
         for i in range(self.image_model.count()):
-            if self.image_model.itemData(i) == "nano_banana_pro":
+            if self.image_model.itemData(i) == "gpt_image_2":
                 self.image_model.setCurrentIndex(i); break
         self.image_model.setMinimumWidth(160)
         bottom_row.addWidget(self.image_model)
@@ -6303,7 +6308,10 @@ class IterationPage(QWidget):
         name_lbl.setStyleSheet(f"color: {t.TEXT}; font-size: 11px; font-weight: 600;")
         name_lbl.setWordWrap(True)
         cl.addWidget(name_lbl)
-        summary = QLabel("▸ Headline × 5")
+        from providers.prompts import ITERATION_AXES as _AXES
+        default_axis = "headline"
+        default_label = _AXES[default_axis]["label"]
+        summary = QLabel(f"▸ {default_label} × 5")
         summary.setStyleSheet(f"color: {t.ACCENT_SOFT}; font-size: 11px;")
         cl.addWidget(summary)
         row = QHBoxLayout(); row.setSpacing(6); row.setContentsMargins(0, 0, 0, 0)
@@ -6326,7 +6334,7 @@ class IterationPage(QWidget):
             "summary_label": summary,
             "config_btn": cfg,
             "remove_btn": rm,
-            "axis": "headline",
+            "axis": default_axis,
             "count": 5,
             "results_strip": results_strip,
             "results_holder": results_holder,
@@ -6368,13 +6376,38 @@ class IterationPage(QWidget):
         if not (0 <= idx < len(self._items)):
             return
         item = self._items[idx]
+        from providers.prompts import ITERATION_AXES
         dlg = QDialog(self)
         dlg.setWindowTitle("Configure iteration")
         dlg.setStyleSheet(f"QDialog {{ background: {t.BG_ELEVATED}; }}")
         l = QVBoxLayout(dlg); l.setContentsMargins(16, 16, 16, 16); l.setSpacing(10)
         l.addWidget(QLabel(f"<b>{Path(item['path']).name}</b>", styleSheet=f"color: {t.TEXT}; font-size: 13px;"))
-        l.addWidget(QLabel("Axis: Headline (single axis available in V1)",
-                           styleSheet=f"color: {t.TEXT_DIM}; font-size: 11px;"))
+
+        l.addWidget(QLabel("Iteration axis", objectName="Muted"))
+        axis_combo = QComboBox()
+        # Populate combo with (label, key) pairs from the registry. Insertion
+        # order matches the registry — Headline first, etc.
+        for key, meta in ITERATION_AXES.items():
+            axis_combo.addItem(meta["label"], userData=key)
+        # Select current axis
+        for i in range(axis_combo.count()):
+            if axis_combo.itemData(i) == item["axis"]:
+                axis_combo.setCurrentIndex(i); break
+        axis_combo.setMinimumWidth(200)
+        l.addWidget(axis_combo)
+
+        # Per-axis hint (shows what the axis actually does).
+        hint = QLabel()
+        hint.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px; padding: 4px 0;")
+        hint.setWordWrap(True)
+        def _refresh_hint():
+            k = axis_combo.currentData() or "headline"
+            meta = ITERATION_AXES.get(k, {})
+            hint.setText(f"Will iterate {meta.get('describe', k)} across N variants — every other element stays untouched.")
+        axis_combo.currentIndexChanged.connect(lambda _i: _refresh_hint())
+        _refresh_hint()
+        l.addWidget(hint)
+
         l.addWidget(QLabel("Number of variations", objectName="Muted"))
         spin = QSpinBox(); spin.setRange(1, 12); spin.setValue(int(item["count"]))
         l.addWidget(spin)
@@ -6385,8 +6418,10 @@ class IterationPage(QWidget):
         btns.addWidget(ok)
         l.addLayout(btns)
         if dlg.exec() == QDialog.Accepted:
+            item["axis"] = axis_combo.currentData() or "headline"
             item["count"] = int(spin.value())
-            item["summary_label"].setText(f"▸ Headline × {item['count']}")
+            axis_label = ITERATION_AXES[item["axis"]]["label"]
+            item["summary_label"].setText(f"▸ {axis_label} × {item['count']}")
             self._refresh_queue_state()
 
     # ── Run / results ───────────────────────────────────────────────────
@@ -6420,6 +6455,7 @@ class IterationPage(QWidget):
             thread = QThread()
             worker = IterationItemWorker(
                 item_index=idx, image_path=item["path"],
+                axis=item["axis"],
                 n_variants=item["count"],
                 image_model=(self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL),
                 resolution=self.resolution.currentText() or "1k",
@@ -6460,11 +6496,13 @@ class IterationPage(QWidget):
 
     def _on_item_finished(self, item_idx: int, out_dir: str, count_ok: int):
         if 0 <= item_idx < len(self._items):
+            from providers.prompts import ITERATION_AXES
             item = self._items[item_idx]
             item["out_dir"] = out_dir
             item["config_btn"].setEnabled(True)
             item["remove_btn"].setEnabled(True)
-            item["summary_label"].setText(f"✓ Headline × {count_ok} done")
+            axis_label = ITERATION_AXES.get(item["axis"], {}).get("label", item["axis"])
+            item["summary_label"].setText(f"✓ {axis_label} × {count_ok} done")
         # Tear down the thread.
         try:
             self._threads[item_idx].quit()

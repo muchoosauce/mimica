@@ -48,7 +48,7 @@ from providers.prompts import (
     FUNNEL_SYSTEM_PROMPTS,
     analyze_image_for_twin as _analyze_twin,
     analyze_for_twin_video as _analyze_twin_video,
-    analyze_and_iterate_headline as _iterate_headline,
+    analyze_for_axis as _iterate_analyze,
     analyze_video_for_swap as _analyze_swap,
     generate_animation_character_prompt as _gen_anim_char_prompt,
     generate_broll_image_prompts as _gen_broll_img_prompts,
@@ -2344,8 +2344,9 @@ def run_twin_video_animate(
 #      explicit "replace only the main headline" prompt
 #   4. Download each variant to outputs/<ts>_iterate_headline_<stem>/
 
-def run_iterate_headline(
+def run_iterate(
     image_path: str,
+    axis: str,
     n_variants: int,
     on_log: Callable[[str, str], None],
     on_result: Callable[[dict], None],
@@ -2357,9 +2358,13 @@ def run_iterate_headline(
     resolution: str = "1k",
     provider_name: Optional[str] = None,
 ) -> Optional[Path]:
-    """Run headline iteration on a single source image. Emits one on_result
-    per variant. Returns the output directory."""
-    from providers.prompts import HEADLINE_REPLACE_EDIT_PROMPT_TEMPLATE
+    """Run a single-axis iteration on one source image. Dispatches by
+    `axis` to the right analyzer + edit prompt from
+    providers.prompts.ITERATION_AXES. Emits one on_result per variant."""
+    from providers.prompts import ITERATION_AXES
+    if axis not in ITERATION_AXES:
+        on_log("ERR", f"Unknown axis: {axis!r}"); return None
+    axis_meta = ITERATION_AXES[axis]
     n = max(1, int(n_variants or 1))
 
     provider = get_provider(provider_name) if provider_name else get_active_provider()
@@ -2376,12 +2381,12 @@ def run_iterate_headline(
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     base = Path(output_root).expanduser() if output_root else get_output_dir()
     stem = _safe_name(src.stem) or "iter"
-    out_dir = base / f"{ts}_iterate_headline_{stem}"
+    out_dir = base / f"{ts}_iterate_{axis}_{stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
     on_out_dir(out_dir)
     on_log("INFO", f"Output: {out_dir}")
 
-    # 1) Upload the source — same URL is reused for each variant.
+    # 1) Upload source once, reused across all variants.
     try:
         on_log("INFO", f"Uploading source: {src.name}")
         src_url = provider.upload_image(src)
@@ -2390,22 +2395,20 @@ def run_iterate_headline(
     if should_cancel():
         return out_dir
 
-    # 2) Vision LLM extracts headline + produces N variants.
+    # 2) Axis-specific Vision LLM analyzer produces N variant strings.
     try:
-        on_log("INFO", "Analyzing headline + generating variants...")
-        analysis = _iterate_headline(provider, src_url, n)
+        on_log("INFO", f"Analyzing {axis_meta['describe']} + generating {n} variants...")
+        analysis = _iterate_analyze(provider, src_url, axis, n)
     except Exception as e:
-        on_log("ERR", f"Headline analysis failed: {e}"); return out_dir
+        on_log("ERR", f"{axis} analysis failed: {e}"); return out_dir
     variants = analysis.get("variants") or []
-    detected = analysis.get("detected_headline", "")
-    style_info = analysis.get("style", {})
+    detected = analysis.get("detected", "")
+    style_summary = analysis.get("style_summary", "")
     on_log(
         "OK",
-        f"Detected headline: \"{detected[:80]}\" · style: "
-        f"{style_info.get('format', '?')}/{style_info.get('tone', '?')}/{style_info.get('length', '?')} · "
+        f"Detected: \"{str(detected)[:80]}\" · {style_summary[:80]} · "
         f"{len(variants)} variants ready",
     )
-    # Snapshot the analysis so the user can inspect / re-run from the dir.
     try:
         (out_dir / "analysis.json").write_text(
             json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -2414,16 +2417,17 @@ def run_iterate_headline(
     except Exception:
         pass
 
-    # 3) Render each variant via NanoBanana 2 edit with source as image 1.
-    aspect = "1:1"  # most statics are square or near-square; per-variant edits
-    # preserve the source aspect anyway. NanoBanana derives output ratio from
-    # the source frame when given as image_urls[0].
+    # 3) Render each variant via image-to-image edit. The source remains
+    # image_urls[0] for every variant — the model treats it as the canvas
+    # and applies the axis-specific edit instruction on top.
+    aspect = "1:1"  # provider derives true ratio from the source frame anyway.
+    edit_template = axis_meta["edit_prompt"]
 
-    def render_one(idx: int, headline: str) -> dict:
-        label = f"iter_h_{idx:02d}"
-        prompt = HEADLINE_REPLACE_EDIT_PROMPT_TEMPLATE.format(new_headline=headline)
+    def render_one(idx: int, variant: str) -> dict:
+        label = f"iter_{axis[:4]}_{idx:02d}"
+        prompt = edit_template.format(variant=variant)
         try:
-            on_log("INFO", f"[{label}] editing source with new headline...")
+            on_log("INFO", f"[{label}] editing source ({axis})...")
             try:
                 img_url = provider.call_image(
                     model=image_model, prompt=prompt, image_urls=[src_url],
@@ -2441,13 +2445,13 @@ def run_iterate_headline(
             provider.download(img_url, dest)
             on_log("OK", f"[{label}] saved {dest.name}")
             return {
-                "index": idx, "status": "ok", "headline": headline,
+                "index": idx, "status": "ok", "variant": variant,
                 "image_url": img_url, "file": dest.name,
             }
         except Exception as e:
             on_log("ERR", f"[{label}] {e}")
             return {
-                "index": idx, "status": "error", "headline": headline,
+                "index": idx, "status": "error", "variant": variant,
                 "error": str(e),
             }
 
@@ -2466,12 +2470,12 @@ def run_iterate_headline(
 
     results.sort(key=lambda r: r["index"])
     report = {
-        "type": "iterate_headline",
+        "type": f"iterate_{axis}",
         "timestamp": ts,
         "source": str(src),
-        "axis": "headline",
-        "detected_headline": detected,
-        "style": style_info,
+        "axis": axis,
+        "detected": detected,
+        "style_summary": style_summary,
         "params": {
             "iterations": n,
             "image_model": image_model,
@@ -2487,6 +2491,12 @@ def run_iterate_headline(
     ok = sum(1 for r in results if r.get("status") == "ok")
     on_log("OK", f"Done · {ok}/{len(results)} variants succeeded.")
     return out_dir
+
+
+# Backward-compat alias for any external callers that still target the
+# old single-axis entry point.
+def run_iterate_headline(image_path, n_variants, on_log, on_result, **kwargs):
+    return run_iterate(image_path, "headline", n_variants, on_log, on_result, **kwargs)
 
 
 def _write_twin_video_report(
