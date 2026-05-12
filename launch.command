@@ -34,24 +34,62 @@ if [ -d ".git" ] && command -v git >/dev/null 2>&1; then
   fi
 fi
 
-# Pick the Python binary. The wrapper .app sets PYTHON_BIN to a verified
-# 3.10+ interpreter; running from a Terminal we fall back to system python3
-# but still version-check it so a stale venv from 3.9 can't silently corrupt
-# pip later.
-PY="${PYTHON_BIN:-python3}"
+# Pick the Python binary. Order of preference:
+#   1. $PYTHON_BIN if set (the wrapper .app passes a verified path here)
+#   2. `python3` from PATH — works in Terminal but fails on double-click on
+#      vanilla macOS because /usr/bin/python3 (Apple's 3.9) precedes Homebrew
+#   3. Fallback scan of known Homebrew prefixes for 3.10+ binaries — covers
+#      double-click launches where PATH only has /usr/bin and /bin
+_is_310_plus() {
+  "$1" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null
+}
 
-if ! command -v "$PY" >/dev/null 2>&1; then
-  printf "${C_RED}$PY not found. Install Python 3.10+ from https://www.python.org/downloads/${C_RESET}\n"
+PY="${PYTHON_BIN:-}"
+if [ -z "$PY" ] && command -v python3 >/dev/null 2>&1 && _is_310_plus "$(command -v python3)"; then
+  PY="$(command -v python3)"
+fi
+if [ -z "$PY" ] || ! _is_310_plus "$PY"; then
+  # Scan Homebrew + python.org locations in newest-first order.
+  for candidate in \
+    /opt/homebrew/bin/python3.13 \
+    /opt/homebrew/bin/python3.12 \
+    /opt/homebrew/bin/python3.11 \
+    /opt/homebrew/bin/python3.10 \
+    /opt/homebrew/opt/python@3.13/libexec/bin/python3 \
+    /opt/homebrew/opt/python@3.12/libexec/bin/python3 \
+    /opt/homebrew/opt/python@3.11/libexec/bin/python3 \
+    /opt/homebrew/opt/python@3.10/libexec/bin/python3 \
+    /usr/local/bin/python3.13 \
+    /usr/local/bin/python3.12 \
+    /usr/local/bin/python3.11 \
+    /usr/local/bin/python3.10 \
+    /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
+  do
+    if [ -x "$candidate" ] && _is_310_plus "$candidate"; then
+      PY="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$PY" ] || ! command -v "$PY" >/dev/null 2>&1; then
+  printf "${C_RED}No Python 3.10+ found. You have: $(python3 --version 2>&1)${C_RESET}\n"
+  printf "${C_YELLOW}Install a newer Python:\n  • https://www.python.org/downloads/  (check \"Add Python to PATH\")\n  • or:  brew install python@3.12${C_RESET}\n"
   read -n 1 -s -r -p "Press any key to close..."
   exit 1
 fi
 
-if ! "$PY" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
+if ! _is_310_plus "$PY"; then
   printf "${C_RED}Python 3.10+ required. You have: $("$PY" --version 2>&1)${C_RESET}\n"
   printf "${C_YELLOW}Install a newer Python:\n  • https://www.python.org/downloads/  (check \"Add Python to PATH\")\n  • or:  brew install python@3.12${C_RESET}\n"
   read -n 1 -s -r -p "Press any key to close..."
   exit 1
 fi
+
+printf "${C_DIM}Using Python: $PY ($("$PY" --version 2>&1))${C_RESET}\n"
 
 # Repair a half-built venv (no pip) — happens after a failed/interrupted
 # install or a Python-version swap.
