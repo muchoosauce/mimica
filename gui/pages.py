@@ -615,7 +615,7 @@ class GeneratePage(QWidget):
         root.setSpacing(18)
 
         head = QVBoxLayout(); head.setSpacing(2)
-        h1 = QLabel("Generate Variations"); h1.setObjectName("H1")
+        h1 = QLabel("Variation"); h1.setObjectName("H1")
         sub = QLabel("Drop one reference ad, pick your params, get N variations.")
         sub.setObjectName("Dim")
         head.addWidget(h1); head.addWidget(sub)
