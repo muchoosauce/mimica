@@ -1579,7 +1579,30 @@ def run_broll_videos(
 # ─── Funnel Ads pipeline ────────────────────────────────────────────────────
 
 FUNNEL_PLATFORMS = ["Meta", "TikTok", "Both"]
-FUNNEL_LANGUAGES = ["English", "French", "Both"]
+FUNNEL_LANGUAGES = [
+    "English",
+    "French",
+    "German",
+    "Spanish",
+    "Italian",
+    "Portuguese",
+    "Dutch",
+    "Polish",
+    "Swedish",
+    "Danish",
+    "Norwegian",
+    "Finnish",
+    "Czech",
+    "Greek",
+    "Turkish",
+    "Arabic",
+    "Hebrew",
+    "Russian",
+    "Japanese",
+    "Korean",
+    "Chinese (Simplified)",
+    "Hindi",
+]
 FUNNEL_ASPECTS = ["1:1", "4:5", "9:16"]
 
 
