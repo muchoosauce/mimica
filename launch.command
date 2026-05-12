@@ -49,23 +49,26 @@ if [ -z "$PY" ] && command -v python3 >/dev/null 2>&1 && _is_310_plus "$(command
   PY="$(command -v python3)"
 fi
 if [ -z "$PY" ] || ! _is_310_plus "$PY"; then
-  # Scan Homebrew + python.org locations in newest-first order.
+  # Scan Homebrew + python.org locations. Order matters: prefer 3.12 (the
+  # most battle-tested across Homebrew + PySide6) over 3.13 (still seeing
+  # `ensurepip` glitches in some fresh installs) and only fall through to
+  # 3.13 if nothing else is around.
   for candidate in \
-    /opt/homebrew/bin/python3.13 \
     /opt/homebrew/bin/python3.12 \
     /opt/homebrew/bin/python3.11 \
+    /opt/homebrew/bin/python3.13 \
     /opt/homebrew/bin/python3.10 \
-    /opt/homebrew/opt/python@3.13/libexec/bin/python3 \
     /opt/homebrew/opt/python@3.12/libexec/bin/python3 \
     /opt/homebrew/opt/python@3.11/libexec/bin/python3 \
+    /opt/homebrew/opt/python@3.13/libexec/bin/python3 \
     /opt/homebrew/opt/python@3.10/libexec/bin/python3 \
-    /usr/local/bin/python3.13 \
     /usr/local/bin/python3.12 \
     /usr/local/bin/python3.11 \
+    /usr/local/bin/python3.13 \
     /usr/local/bin/python3.10 \
-    /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
     /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
     /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
     /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
   do
     if [ -x "$candidate" ] && _is_310_plus "$candidate"; then
@@ -100,7 +103,26 @@ fi
 
 if [ ! -d ".venv" ]; then
   printf "${C_DIM}Creating virtual environment…${C_RESET}\n"
-  "$PY" -m venv .venv
+  # Some Homebrew Pythons (notably 3.13 on fresh installs) ship with a
+  # broken `ensurepip` module, so `python -m venv` errors out partway. Try
+  # the normal path first; on failure rebuild with `--without-pip` and
+  # bootstrap pip ourselves via the official get-pip.py.
+  if ! "$PY" -m venv .venv 2>/dev/null; then
+    printf "${C_YELLOW}ensurepip failed — falling back to manual pip bootstrap${C_RESET}\n"
+    rm -rf .venv
+    "$PY" -m venv --without-pip .venv || {
+      printf "${C_RED}Could not create the virtual environment.${C_RESET}\n"
+      read -n 1 -s -r -p "Press any key to close..."
+      exit 1
+    }
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL https://bootstrap.pypa.io/get-pip.py | .venv/bin/python -
+    else
+      printf "${C_RED}curl missing — cannot bootstrap pip into the venv.${C_RESET}\n"
+      read -n 1 -s -r -p "Press any key to close..."
+      exit 1
+    fi
+  fi
 fi
 
 # shellcheck disable=SC1091
