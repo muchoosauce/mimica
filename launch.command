@@ -44,11 +44,22 @@ _is_310_plus() {
   "$1" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null
 }
 
+# Some Homebrew Python bottles ship with broken rpaths to libexpat — the
+# binary imports `python` fine and reports the right version, but explodes
+# the moment any stdlib touches `xml.parsers.expat` (which `pip`/`ensurepip`
+# both transitively need for the package index XML-RPC client). Reject those
+# Pythons proactively so the scan falls through to a working candidate.
+_python_works_for_venv() {
+  "$1" -c "import venv, ssl, ctypes; from xml.parsers import expat" 2>/dev/null
+}
+
 PY="${PYTHON_BIN:-}"
-if [ -z "$PY" ] && command -v python3 >/dev/null 2>&1 && _is_310_plus "$(command -v python3)"; then
+if [ -z "$PY" ] && command -v python3 >/dev/null 2>&1 \
+   && _is_310_plus "$(command -v python3)" \
+   && _python_works_for_venv "$(command -v python3)"; then
   PY="$(command -v python3)"
 fi
-if [ -z "$PY" ] || ! _is_310_plus "$PY"; then
+if [ -z "$PY" ] || ! _is_310_plus "$PY" || ! _python_works_for_venv "$PY"; then
   # Scan Homebrew + python.org locations. Order matters: prefer 3.12 (the
   # most battle-tested across Homebrew + PySide6) over 3.13 (still seeing
   # `ensurepip` glitches in some fresh installs) and only fall through to
@@ -71,7 +82,7 @@ if [ -z "$PY" ] || ! _is_310_plus "$PY"; then
     /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
     /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
   do
-    if [ -x "$candidate" ] && _is_310_plus "$candidate"; then
+    if [ -x "$candidate" ] && _is_310_plus "$candidate" && _python_works_for_venv "$candidate"; then
       PY="$candidate"
       break
     fi
