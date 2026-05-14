@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mimica Studio — Production créa AI managée pour media buyers</title>
+<meta name="description" content="Production créa AI managée pour les media buyers et petites agences. Multi-brand, marque blanche, livré en 48h. À partir de $500/mois." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Caveat:wght@500&display=swap" rel="stylesheet" />
+
+<style>
+/* ─── DESIGN TOKENS ────────────────────────────────────────────── */
+:root {
+  /* Spacing scale (4pt grid) */
+  --s-4: 4px;   --s-8: 8px;   --s-12: 12px; --s-16: 16px; --s-20: 20px;
+  --s-24: 24px; --s-32: 32px; --s-40: 40px; --s-48: 48px; --s-64: 64px;
+  --s-80: 80px; --s-96: 96px; --s-120: 120px; --s-160: 160px;
+
+  /* Colors */
+  --canvas: #0A0A0F;
+  --surface-1: #13131C;
+  --surface-2: #1A1A24;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-emp: rgba(255, 255, 255, 0.14);
+  --text: #F4F4F6;
+  --muted: #9999A0;
+  --dim: #5C5C66;
+  --accent: #7C5CFF;
+  --pink: #EC4899;
+  --gradient: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+
+  /* Radius */
+  --r-card: 16px;
+  --r-img: 12px;
+  --r-pill: 9999px;
+  --r-viewport: 24px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 200ms;
+  --dur-slow: 600ms;
+}
+
+/* ─── RESET ────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.6;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+img, svg { display: block; max-width: 100%; }
+
+/* ─── PAGE FRAMED TOP CORNERS ──────────────────────────────────── */
+body {
+  border-top-left-radius: var(--r-viewport);
+  border-top-right-radius: var(--r-viewport);
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* ─── CONTAINER ────────────────────────────────────────────────── */
+.container {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 0 var(--s-32);
+}
+@media (max-width: 640px) {
+  .container { padding: 0 var(--s-24); }
+}
+
+/* ─── SECTION (all sections same vertical padding) ─────────────── */
+section { padding: var(--s-120) 0; }
+@media (max-width: 640px) {
+  section { padding: var(--s-80) 0; }
+}
+
+/* ─── TYPOGRAPHY ───────────────────────────────────────────────── */
+.h1 {
+  font-size: 64px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  max-width: 800px;
+  margin: 0 auto;
+}
+.h2 {
+  font-size: 48px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.h3 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.sub {
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 560px;
+  margin: 0 auto;
+}
+.eyebrow {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.body { font-size: 17px; line-height: 1.6; }
+.body-sm { font-size: 15px; line-height: 1.5; }
+
+.gradient-text {
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+@media (max-width: 1024px) {
+  .h1 { font-size: 52px; }
+  .h2 { font-size: 40px; }
+}
+@media (max-width: 640px) {
+  .h1 { font-size: 38px; }
+  .h2 { font-size: 32px; }
+  .sub { font-size: 17px; }
+}
+
+/* ─── NAV (floating pill, centered) ────────────────────────────── */
+.nav-wrap {
+  position: fixed;
+  top: var(--s-16);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--s-24);
+  pointer-events: none;
+}
+.nav-pill {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-24);
+  padding: var(--s-12) var(--s-24);
+  background: rgba(15, 15, 23, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.nav-logo-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.nav-logo-sub { color: var(--muted); font-weight: 400; }
+.nav-items {
+  display: flex;
+  gap: var(--s-24);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.nav-items a {
+  transition: color var(--dur-fast) var(--ease);
+}
+.nav-items a:hover { color: var(--text); }
+.nav-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: var(--s-8) var(--s-16);
+  background: var(--gradient);
+  color: #fff;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 500;
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.nav-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(124, 92, 255, 0.35);
+}
+@media (max-width: 768px) {
+  .nav-items { display: none; }
+}
+
+/* ─── HERO ─────────────────────────────────────────────────────── */
+.hero {
+  padding: 0;
+  padding-top: calc(var(--s-120) + var(--s-80));
+  padding-bottom: var(--s-120);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+/* Horizon glow */
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -200px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60vw;
+  max-width: 900px;
+  height: 600px;
+  background: radial-gradient(ellipse at center, rgba(124, 92, 255, 0.35) 0%, rgba(236, 72, 153, 0.18) 35%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}
+.hero > * { position: relative; z-index: 1; }
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: var(--s-8) var(--s-16);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: var(--s-32);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.hero-badge:hover { border-color: var(--border-emp); }
+.hero-badge-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--gradient);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+}
+.hero-badge-arrow { color: var(--muted); transition: transform var(--dur-fast) var(--ease); }
+.hero-badge:hover .hero-badge-arrow { transform: translateX(4px); }
+
+.hero-h1 { margin-bottom: var(--s-24); }
+.hero-sub { margin-bottom: var(--s-40); }
+
+.hero-ctas {
+  display: flex;
+  justify-content: center;
+  gap: var(--s-12);
+  margin-bottom: var(--s-40);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: var(--s-12) var(--s-24);
+  border-radius: var(--r-pill);
+  font-size: 15px;
+  font-weight: 500;
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.btn-primary {
+  background: var(--gradient);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(124, 92, 255, 0.25);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(124, 92, 255, 0.4);
+}
+.btn-primary .arrow { transition: transform var(--dur-fast) var(--ease); }
+.btn-primary:hover .arrow { transform: translateX(4px); }
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-emp);
+}
+.btn-secondary:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.hero-trust {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-12);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: var(--s-96);
+}
+.stars { display: flex; gap: 2px; color: var(--accent); }
+.stars svg { width: 14px; height: 14px; }
+
+/* ─── PORTFOLIO MARQUEE (full-bleed) ───────────────────────────── */
+.marquee {
+  --card-w: 240px;
+  --card-gap: 24px;
+  --set-w: calc(8 * var(--card-w) + 7 * var(--card-gap));
+  --shift: calc(var(--set-w) + var(--card-gap));
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-24);
+  overflow: hidden;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  margin-right: calc(-50vw + 50%);
+  padding: 8px 0;
+  mask-image: linear-gradient(90deg, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+.marquee-row {
+  display: flex;
+  width: max-content;
+  gap: var(--card-gap);
+  will-change: transform;
+}
+.marquee-row-1 { animation: marquee-left 60s linear infinite; }
+.marquee-row-2 { animation: marquee-right 70s linear infinite; }
+.marquee:hover .marquee-row { animation-play-state: paused; }
+@keyframes marquee-left {
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(-1 * var(--shift))); }
+}
+@keyframes marquee-right {
+  from { transform: translateX(calc(-1 * var(--shift))); }
+  to   { transform: translateX(0); }
+}
+
+.ad-card {
+  flex-shrink: 0;
+  position: relative;
+  width: var(--card-w);
+  height: calc(var(--card-w) * 1.25);
+  border-radius: var(--r-img);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  padding: var(--s-16);
+  cursor: pointer;
+  transform-style: preserve-3d;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow 300ms var(--ease);
+  will-change: transform;
+}
+.ad-card:hover {
+  border-color: var(--border-emp);
+  box-shadow: 0 24px 48px -12px rgba(124, 92, 255, 0.25);
+  z-index: 10;
+}
+.ad-card::before {
+  content: '';
+  position: absolute;
+  inset: -25%;
+  background: var(--bg-gradient);
+  background-size: 220% 220%;
+  animation: gradient-shift 14s ease-in-out infinite;
+  opacity: 0.95;
+  pointer-events: none;
+}
+.ad-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(124, 92, 255, 0.20) 0%, transparent 55%);
+  opacity: 0;
+  transition: opacity 220ms var(--ease);
+  pointer-events: none;
+}
+.ad-card:hover::after { opacity: 1; }
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+.ad-card-label {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: rgba(10, 10, 15, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: var(--r-pill);
+  transition: opacity 220ms var(--ease);
+  white-space: nowrap;
+}
+.ad-card-label.cycling { opacity: 0; }
+.ad-card-1 { --bg-gradient: linear-gradient(135deg, #1A1530 0%, #0A0A0F 50%, #2A1A30 100%); }
+.ad-card-2 { --bg-gradient: linear-gradient(135deg, #2A1A22 0%, #0A0A0F 50%, #1F1A30 100%); }
+.ad-card-3 { --bg-gradient: linear-gradient(135deg, #1F1A30 0%, #0A0A0F 50%, #251B30 100%); }
+.ad-card-4 { --bg-gradient: linear-gradient(135deg, #251B30 0%, #0A0A0F 50%, #1A1830 100%); }
+.ad-card-5 { --bg-gradient: linear-gradient(135deg, #1A1830 0%, #0A0A0F 50%, #2A1830 100%); }
+.ad-card-6 { --bg-gradient: linear-gradient(135deg, #2A1830 0%, #0A0A0F 50%, #1A1530 100%); }
+.ad-card-7 { --bg-gradient: linear-gradient(135deg, #1F2030 0%, #0A0A0F 50%, #1A1530 100%); }
+.ad-card-8 { --bg-gradient: linear-gradient(135deg, #251930 0%, #0A0A0F 50%, #2A1A22 100%); }
+@media (max-width: 640px) {
+  .marquee { --card-w: 160px; --card-gap: 16px; }
+}
+
+/* ─── PAIN SECTION ─────────────────────────────────────────────── */
+.section-center { text-align: center; }
+.pain-headline {
+  font-size: 48px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.pain-headline .muted { color: var(--muted); }
+.pain-highlight {
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ─── DELIVER SECTION ──────────────────────────────────────────── */
+.deliver .h2 .muted { color: var(--muted); }
+
+/* ─── PROCESS SECTION ──────────────────────────────────────────── */
+.process-header { text-align: center; margin-bottom: var(--s-64); }
+.process-header .eyebrow { margin-bottom: var(--s-16); display: inline-block; }
+.process-list {
+  max-width: 720px;
+  margin: 0 auto;
+  border-top: 1px solid var(--border);
+}
+.process-item {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  align-items: center;
+  gap: var(--s-32);
+  padding: var(--s-24) 0;
+  border-bottom: 1px solid var(--border);
+}
+.process-num {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.process-title { font-size: 17px; font-weight: 500; color: var(--text); }
+.process-meta { font-size: 14px; color: var(--muted); }
+@media (max-width: 640px) {
+  .process-item { grid-template-columns: 40px 1fr; gap: var(--s-16); }
+  .process-meta { grid-column: 2; font-size: 13px; }
+}
+
+/* ─── PRICING ──────────────────────────────────────────────────── */
+.pricing-header { text-align: center; margin-bottom: var(--s-64); }
+.pricing-header .eyebrow { margin-bottom: var(--s-16); display: inline-block; }
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-16);
+  max-width: 1024px;
+  margin: 0 auto;
+}
+@media (max-width: 1024px) {
+  .pricing-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .pricing-grid { grid-template-columns: 1fr; }
+}
+.tier {
+  position: relative;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--s-32);
+  display: flex;
+  flex-direction: column;
+  min-height: 480px;
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.tier:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-emp);
+}
+.tier-highlighted {
+  border: 1.5px solid transparent;
+  background:
+    linear-gradient(var(--surface-1), var(--surface-1)) padding-box,
+    conic-gradient(from var(--angle), #7C5CFF, #EC4899, #7C5CFF, #EC4899, #7C5CFF) border-box;
+  animation: rotate-border 8s linear infinite;
+}
+@keyframes rotate-border {
+  to { --angle: 360deg; }
+}
+.tier-badge {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--s-4) var(--s-12);
+  background: var(--gradient);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  white-space: nowrap;
+}
+.tier-name { font-size: 20px; font-weight: 600; margin-bottom: var(--s-16); }
+.tier-price { display: flex; align-items: baseline; gap: var(--s-4); margin-bottom: var(--s-24); }
+.tier-price-num { font-size: 48px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+.tier-price-mo { font-size: 15px; color: var(--muted); }
+.tier-desc { font-size: 14px; color: var(--muted); margin-bottom: var(--s-32); line-height: 1.5; }
+.tier-bullets { list-style: none; flex: 1; margin-bottom: var(--s-32); }
+.tier-bullets li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-12);
+  padding: var(--s-12) 0;
+  font-size: 15px;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+}
+.tier-bullets li:first-child { border-top: none; padding-top: 0; }
+.tier-bullets svg { width: 16px; height: 16px; color: var(--accent); flex-shrink: 0; }
+.tier-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-8);
+  width: 100%;
+  padding: var(--s-12) var(--s-24);
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-emp);
+  border-radius: var(--r-pill);
+  font-size: 15px;
+  font-weight: 500;
+  transition: all var(--dur-fast) var(--ease);
+}
+.tier-cta:hover {
+  background: var(--surface-2);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.tier-cta-primary {
+  background: var(--gradient);
+  border-color: transparent;
+  color: #fff;
+}
+.tier-cta-primary:hover {
+  background: var(--gradient);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(124, 92, 255, 0.35);
+}
+
+/* ─── FILTER (FOR / NOT FOR) ───────────────────────────────────── */
+.filter-headline {
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  max-width: 720px;
+  margin: 0 auto var(--s-24);
+}
+.filter-not {
+  font-size: 19px;
+  color: var(--muted);
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+.filter-header { text-align: center; margin-bottom: var(--s-32); }
+.filter-header .eyebrow { display: inline-block; }
+
+/* ─── FAQ ──────────────────────────────────────────────────────── */
+.faq-header { text-align: center; margin-bottom: var(--s-64); }
+.faq-header .eyebrow { margin-bottom: var(--s-16); display: inline-block; }
+.faq-list { max-width: 720px; margin: 0 auto; }
+.faq-item {
+  border-bottom: 1px solid var(--border);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.faq-item:first-child { border-top: 1px solid var(--border); }
+.faq-q {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--s-20) 0;
+  text-align: left;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text);
+  transition: color var(--dur-fast) var(--ease);
+}
+.faq-q:hover { color: var(--text); }
+.faq-item:hover { background: rgba(255, 255, 255, 0.015); }
+.faq-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.faq-item.open .faq-icon { transform: rotate(45deg); color: var(--accent); }
+.faq-a {
+  max-height: 0;
+  overflow: hidden;
+  font-size: 16px;
+  color: var(--muted);
+  line-height: 1.6;
+  transition: max-height var(--dur-fast) var(--ease), padding var(--dur-fast) var(--ease);
+}
+.faq-item.open .faq-a {
+  max-height: 200px;
+  padding: 0 0 var(--s-20) 0;
+}
+
+/* ─── FINAL CTA ────────────────────────────────────────────────── */
+.final-cta { text-align: center; }
+.final-cta .eyebrow { margin-bottom: var(--s-16); display: inline-block; }
+.final-cta .h2 { margin-bottom: var(--s-24); }
+.final-cta .sub { margin-bottom: var(--s-40); }
+
+/* ─── FOOTER ───────────────────────────────────────────────────── */
+footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: var(--s-40) 0;
+}
+.footer-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-32);
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: var(--muted);
+}
+.footer-links {
+  display: flex;
+  gap: var(--s-32);
+}
+.footer-links a {
+  transition: color var(--dur-fast) var(--ease);
+}
+.footer-links a:hover { color: var(--text); }
+.footer-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ─── ANIMATIONS (fade-up on scroll) ───────────────────────────── */
+.fade-up {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
+}
+.fade-up.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.stagger > * { transition-delay: 0ms; }
+.stagger > *:nth-child(2) { transition-delay: 50ms; }
+.stagger > *:nth-child(3) { transition-delay: 100ms; }
+.stagger > *:nth-child(4) { transition-delay: 150ms; }
+.stagger > *:nth-child(5) { transition-delay: 200ms; }
+.stagger > *:nth-child(6) { transition-delay: 250ms; }
+
+/* ─── 1. H1 WORD REVEAL STAGGER ────────────────────────────────── */
+.hero-reveal .word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 600ms var(--ease), transform 600ms var(--ease);
+}
+.hero-reveal.visible .word {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── 3. CONIC GRADIENT ROTATION (Pulse tier border) ───────────── */
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ─── 4. CTA SHIMMER SWEEP ─────────────────────────────────────── */
+.btn-primary,
+.nav-cta {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-primary::after,
+.nav-cta::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.28) 50%, transparent 100%);
+  pointer-events: none;
+  animation: shimmer 5s ease-in-out infinite;
+  animation-delay: 2.5s;
+  z-index: 1;
+}
+@keyframes shimmer {
+  0%   { left: -60%; }
+  18%  { left: 160%; }
+  100% { left: 160%; }
+}
+
+/* ─── 5. COUNT-UP (no CSS, JS-driven) ──────────────────────────── */
+[data-count-target] { display: inline-block; min-width: 0; }
+
+/* ─── 6. GLOBAL GRADIENT LAYER (flows across all sections) ─────── */
+.bg-glows {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 38% 16% at 15% 22%, rgba(124, 92, 255, 0.20) 0%, transparent 65%),
+    radial-gradient(ellipse 36% 14% at 88% 38%, rgba(236, 72, 153, 0.18) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 14% at 50% 55%, rgba(124, 92, 255, 0.16) 0%, rgba(236, 72, 153, 0.12) 50%, transparent 70%),
+    radial-gradient(ellipse 36% 14% at 12% 75%, rgba(236, 72, 153, 0.16) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 18% at 50% 93%, rgba(124, 92, 255, 0.18) 0%, transparent 70%);
+}
+
+/* ─── 7. SECTION SETUP ─────────────────────────────────────────── */
+section { position: relative; overflow: hidden; }
+.container { position: relative; z-index: 1; }
+
+/* ─── 8. HERO 3D PARALLAX WALL ─────────────────────────────────── */
+.hero-3d-wall {
+  position: absolute;
+  inset: 0;
+  perspective: 1500px;
+  perspective-origin: 50% 50%;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.wall-inner {
+  position: absolute;
+  top: 36%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform-style: preserve-3d;
+  transition: transform 1200ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+.wall-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 160px;
+  height: 200px;
+  margin-left: -80px;
+  margin-top: -100px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, #1A1530 0%, #0A0A0F 60%, #2A1A30 100%);
+  transform-style: preserve-3d;
+  transform: translate3d(var(--x), var(--y), var(--z)) rotate(var(--r));
+  animation: wall-drift var(--dur, 18s) ease-in-out infinite alternate;
+  animation-delay: var(--d, 0s);
+  will-change: transform;
+}
+.wall-card:nth-child(2n)   { background: linear-gradient(135deg, #2A1A22 0%, #0A0A0F 60%, #1F1A30 100%); }
+.wall-card:nth-child(3n)   { background: linear-gradient(135deg, #1F1A30 0%, #0A0A0F 60%, #251B30 100%); }
+.wall-card:nth-child(4n)   { background: linear-gradient(135deg, #251930 0%, #0A0A0F 60%, #2A1830 100%); }
+.wall-card:nth-child(5n+1) { background: linear-gradient(135deg, #1A1830 0%, #0A0A0F 60%, #2A1830 100%); }
+.wall-card.depth-deep { filter: blur(8px);  opacity: 0.22; }
+.wall-card.depth-mid  { filter: blur(3px);  opacity: 0.40; }
+.wall-card.depth-near { filter: blur(0);    opacity: 0.55; }
+@keyframes wall-drift {
+  0%   { transform: translate3d(var(--x), var(--y), var(--z)) rotate(var(--r)); }
+  100% { transform: translate3d(calc(var(--x) + 40px), calc(var(--y) - 25px), var(--z)) rotate(calc(var(--r) + 6deg)); }
+}
+@media (max-width: 768px) {
+  .wall-card { transform: scale(0.6) translate3d(var(--x), var(--y), var(--z)) rotate(var(--r)); }
+  .wall-card.depth-deep  { opacity: 0.14; }
+  .wall-card.depth-mid   { opacity: 0.28; }
+  .wall-card.depth-near  { opacity: 0.40; }
+}
+@media (max-width: 480px) {
+  .hero-3d-wall { display: none; }
+}
+
+/* ─── 9. STACK 3D AMBIENT CARDS (deliver section, no orbit) ────── */
+.deliver { padding: var(--s-160) 0; }
+.orbit-system {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 0;
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+.orbit-ring { display: none; }
+.orbit-logo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 110px;
+  height: 138px;
+  margin-left: -55px;
+  margin-top: -69px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1A1530 0%, #0A0A0F 60%, #2A1A30 100%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 12px;
+  color: var(--text);
+  transform: translate3d(var(--x), var(--y), var(--z)) rotate(var(--r));
+  animation: stack-drift var(--dur, 16s) ease-in-out infinite alternate;
+  animation-delay: var(--d, 0s);
+  will-change: transform;
+}
+.orbit-logo:nth-child(2n)   { background: linear-gradient(135deg, #2A1A22 0%, #0A0A0F 60%, #1F1A30 100%); }
+.orbit-logo:nth-child(3n)   { background: linear-gradient(135deg, #1F1A30 0%, #0A0A0F 60%, #251B30 100%); }
+.orbit-logo:nth-child(5n+1) { background: linear-gradient(135deg, #251930 0%, #0A0A0F 60%, #2A1830 100%); }
+.orbit-logo svg { width: 28px; height: 28px; }
+.orbit-logo-name {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+@keyframes stack-drift {
+  0%   { transform: translate3d(var(--x), var(--y), var(--z)) rotate(var(--r)); }
+  100% { transform: translate3d(calc(var(--x) + 22px), calc(var(--y) - 14px), var(--z)) rotate(calc(var(--r) + 4deg)); }
+}
+@media (max-width: 768px) {
+  .orbit-logo { width: 88px; height: 110px; margin-left: -44px; margin-top: -55px; padding: 14px 10px; }
+  .orbit-logo svg { width: 24px; height: 24px; }
+  .orbit-logo-name { font-size: 9px; }
+}
+@media (max-width: 480px) {
+  .orbit-system { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wall-card, .orbit-logo, .wall-inner { animation: none; transition: none; }
+}
+
+/* Glow orbs */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  pointer-events: none;
+  z-index: 0;
+}
+.orb-violet { background: rgba(124, 92, 255, 0.16); }
+.orb-pink   { background: rgba(236, 72, 153, 0.13); }
+.orb-mixed  { background: radial-gradient(circle, rgba(124, 92, 255, 0.18) 0%, rgba(236, 72, 153, 0.10) 70%); }
+.orb-tl { top: -10%; left: -10%; width: 480px; height: 480px; }
+.orb-tr { top: -10%; right: -10%; width: 480px; height: 480px; }
+.orb-bl { bottom: -15%; left: -10%; width: 520px; height: 520px; }
+.orb-br { bottom: -15%; right: -10%; width: 520px; height: 520px; }
+.orb-tc { top: -20%; left: 50%; transform: translateX(-50%); width: 700px; height: 400px; }
+.orb-bc { bottom: -25%; left: 50%; transform: translateX(-50%); width: 700px; height: 400px; }
+
+/* Ghost typographic labels (background) */
+.ghost-label {
+  position: absolute;
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: clamp(140px, 20vw, 260px);
+  letter-spacing: -0.05em;
+  color: rgba(255, 255, 255, 0.028);
+  pointer-events: none;
+  z-index: 0;
+  user-select: none;
+  white-space: nowrap;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+.ghost-tl { top: 8%;  left: -2%; }
+.ghost-tr { top: 8%;  right: -2%; }
+.ghost-bl { bottom: 6%; left: -2%; }
+.ghost-br { bottom: 6%; right: -2%; }
+.ghost-tc { top: -4%; left: 50%; transform: translateX(-50%); }
+.ghost-bc { bottom: -8%; left: 50%; transform: translateX(-50%); }
+
+/* Dot pattern (subtle texture) */
+.dot-pattern {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+  z-index: 0;
+  mask-image: radial-gradient(ellipse 70% 55% at center, black 25%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at center, black 25%, transparent 85%);
+}
+
+@media (max-width: 640px) {
+  .ghost-label { font-size: clamp(72px, 18vw, 140px); }
+  .orb { filter: blur(80px); }
+  .orb-tl, .orb-tr, .orb-bl, .orb-br { width: 280px; height: 280px; }
+  .orb-tc, .orb-bc { width: 360px; height: 240px; }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ─── GLOBAL GRADIENT LAYER ──────────────────────────────────── -->
+<div class="bg-glows" aria-hidden="true"></div>
+
+<!-- ─── NAV ─────────────────────────────────────────────────────── -->
+<div class="nav-wrap">
+  <nav class="nav-pill">
+    <a href="#" class="nav-logo">
+      <span class="nav-logo-dot"></span>
+      mimica<span class="nav-logo-sub">/studio</span>
+    </a>
+    <div class="nav-items">
+      <a href="#work">Work</a>
+      <a href="#process">Process</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <a href="#start" class="nav-cta">Start a brief</a>
+  </nav>
+</div>
+
+<!-- ─── HERO ────────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-3d-wall" aria-hidden="true">
+    <div class="wall-inner">
+      <div class="wall-card depth-deep" style="--x: -580px; --y: -180px; --z: -580px; --r: -8deg; --d: 0s;"></div>
+      <div class="wall-card depth-mid"  style="--x: -420px; --y: -280px; --z: -350px; --r: 5deg;  --d: 2s;"></div>
+      <div class="wall-card depth-near" style="--x: -480px; --y: -60px;  --z: -180px; --r: -12deg; --d: 4s;"></div>
+      <div class="wall-card depth-deep" style="--x: 520px;  --y: -200px; --z: -550px; --r: 7deg;  --d: 1s;"></div>
+      <div class="wall-card depth-mid"  style="--x: 480px;  --y: -100px; --z: -320px; --r: -6deg; --d: 3s;"></div>
+      <div class="wall-card depth-near" style="--x: 440px;  --y: -280px; --z: -200px; --r: 10deg; --d: 5s;"></div>
+      <div class="wall-card depth-deep" style="--x: -240px; --y: -340px; --z: -500px; --r: -3deg; --d: 0.5s;"></div>
+      <div class="wall-card depth-mid"  style="--x: 240px;  --y: -340px; --z: -380px; --r: 4deg;  --d: 2.5s;"></div>
+      <div class="wall-card depth-deep" style="--x: -100px; --y: -100px; --z: -560px; --r: 8deg;  --d: 4.5s;"></div>
+      <div class="wall-card depth-mid"  style="--x: 120px;  --y: -120px; --z: -420px; --r: -6deg; --d: 1.5s;"></div>
+    </div>
+  </div>
+  <div class="container">
+    <div class="fade-up">
+      <a href="#pricing" class="hero-badge">
+        <span class="hero-badge-tag">Beta</span>
+        <span>−30% pour 10 premiers clients</span>
+        <span class="hero-badge-arrow">→</span>
+      </a>
+    </div>
+
+    <h1 class="h1 hero-h1 hero-reveal">
+      <span class="word">Pour</span> <span class="word">les</span> <span class="word">media</span> <span class="word">buyers</span><br />
+      <span class="word">et</span> <span class="word">petites</span> <span class="word">agences</span><br />
+      <span class="word">qui</span> <span class="word">veulent</span> <span class="word">livrer</span> <span class="word">plus.</span><br />
+      <span class="word gradient-text">Sans embaucher.</span>
+    </h1>
+
+    <p class="sub hero-sub fade-up">
+      Production créa AI managée pour Meta, TikTok, YouTube et Pinterest. À partir de $500/mois.
+    </p>
+
+    <div class="hero-ctas fade-up">
+      <a href="#work" class="btn btn-secondary">Voir le portfolio</a>
+      <a href="#pricing" class="btn btn-primary">
+        Choisir mon plan
+        <span class="arrow">→</span>
+      </a>
+    </div>
+
+    <div class="hero-trust fade-up">
+      <span class="stars">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.6 7.3H22l-6 4.4 2.3 7.3L12 16.6 5.7 21l2.3-7.3-6-4.4h7.4z"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.6 7.3H22l-6 4.4 2.3 7.3L12 16.6 5.7 21l2.3-7.3-6-4.4h7.4z"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.6 7.3H22l-6 4.4 2.3 7.3L12 16.6 5.7 21l2.3-7.3-6-4.4h7.4z"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.6 7.3H22l-6 4.4 2.3 7.3L12 16.6 5.7 21l2.3-7.3-6-4.4h7.4z"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.6 7.3H22l-6 4.4 2.3 7.3L12 16.6 5.7 21l2.3-7.3-6-4.4h7.4z"/></svg>
+      </span>
+      <span>Construit par des opérateurs qui ont géré <span data-count-target="40" data-count-prefix="$" data-count-suffix="M+">$40M+</span> de paid social.</span>
+    </div>
+
+    <div class="marquee fade-up" id="work">
+      <div class="marquee-row marquee-row-1">
+        <div class="ad-card ad-card-1" data-variations="Meta · 1:1|Meta · Carrousel|Meta · Story"><span class="ad-card-label">Meta · 1:1</span></div>
+        <div class="ad-card ad-card-2" data-variations="TikTok · 9:16|TikTok · UGC|TikTok · Hook"><span class="ad-card-label">TikTok · 9:16</span></div>
+        <div class="ad-card ad-card-3" data-variations="YouTube · Short|YouTube · Reels"><span class="ad-card-label">YouTube · Short</span></div>
+        <div class="ad-card ad-card-4" data-variations="Pinterest · 4:5|Pinterest · Idea"><span class="ad-card-label">Pinterest · 4:5</span></div>
+        <div class="ad-card ad-card-5" data-variations="Skincare · UGC|Skincare · Static"><span class="ad-card-label">Skincare · UGC</span></div>
+        <div class="ad-card ad-card-6" data-variations="Supplement · Static|Supplement · Carrousel"><span class="ad-card-label">Supplement · Static</span></div>
+        <div class="ad-card ad-card-7" data-variations="Fashion · Reels|Fashion · 4:5"><span class="ad-card-label">Fashion · Reels</span></div>
+        <div class="ad-card ad-card-8" data-variations="Tech · Demo|Tech · Hook"><span class="ad-card-label">Tech · Demo</span></div>
+        <!-- duplicate for seamless loop -->
+        <div class="ad-card ad-card-1" data-variations="Meta · 1:1|Meta · Carrousel|Meta · Story" aria-hidden="true"><span class="ad-card-label">Meta · 1:1</span></div>
+        <div class="ad-card ad-card-2" data-variations="TikTok · 9:16|TikTok · UGC|TikTok · Hook" aria-hidden="true"><span class="ad-card-label">TikTok · 9:16</span></div>
+        <div class="ad-card ad-card-3" data-variations="YouTube · Short|YouTube · Reels" aria-hidden="true"><span class="ad-card-label">YouTube · Short</span></div>
+        <div class="ad-card ad-card-4" data-variations="Pinterest · 4:5|Pinterest · Idea" aria-hidden="true"><span class="ad-card-label">Pinterest · 4:5</span></div>
+        <div class="ad-card ad-card-5" data-variations="Skincare · UGC|Skincare · Static" aria-hidden="true"><span class="ad-card-label">Skincare · UGC</span></div>
+        <div class="ad-card ad-card-6" data-variations="Supplement · Static|Supplement · Carrousel" aria-hidden="true"><span class="ad-card-label">Supplement · Static</span></div>
+        <div class="ad-card ad-card-7" data-variations="Fashion · Reels|Fashion · 4:5" aria-hidden="true"><span class="ad-card-label">Fashion · Reels</span></div>
+        <div class="ad-card ad-card-8" data-variations="Tech · Demo|Tech · Hook" aria-hidden="true"><span class="ad-card-label">Tech · Demo</span></div>
+      </div>
+      <div class="marquee-row marquee-row-2">
+        <div class="ad-card ad-card-5" data-variations="Beauty · Hero|Beauty · UGC"><span class="ad-card-label">Beauty · Hero</span></div>
+        <div class="ad-card ad-card-6" data-variations="Wellness · Carrousel|Wellness · Static"><span class="ad-card-label">Wellness · Carrousel</span></div>
+        <div class="ad-card ad-card-7" data-variations="Food · Reels|Food · UGC"><span class="ad-card-label">Food · Reels</span></div>
+        <div class="ad-card ad-card-8" data-variations="Apparel · Lookbook|Apparel · Story"><span class="ad-card-label">Apparel · Lookbook</span></div>
+        <div class="ad-card ad-card-1" data-variations="DTC · Hook|DTC · Demo"><span class="ad-card-label">DTC · Hook</span></div>
+        <div class="ad-card ad-card-2" data-variations="SaaS · Animation|SaaS · Carrousel"><span class="ad-card-label">SaaS · Animation</span></div>
+        <div class="ad-card ad-card-3" data-variations="Coaching · Reels|Coaching · UGC"><span class="ad-card-label">Coaching · Reels</span></div>
+        <div class="ad-card ad-card-4" data-variations="Course · Hook|Course · Demo"><span class="ad-card-label">Course · Hook</span></div>
+        <!-- duplicate for seamless loop -->
+        <div class="ad-card ad-card-5" data-variations="Beauty · Hero|Beauty · UGC" aria-hidden="true"><span class="ad-card-label">Beauty · Hero</span></div>
+        <div class="ad-card ad-card-6" data-variations="Wellness · Carrousel|Wellness · Static" aria-hidden="true"><span class="ad-card-label">Wellness · Carrousel</span></div>
+        <div class="ad-card ad-card-7" data-variations="Food · Reels|Food · UGC" aria-hidden="true"><span class="ad-card-label">Food · Reels</span></div>
+        <div class="ad-card ad-card-8" data-variations="Apparel · Lookbook|Apparel · Story" aria-hidden="true"><span class="ad-card-label">Apparel · Lookbook</span></div>
+        <div class="ad-card ad-card-1" data-variations="DTC · Hook|DTC · Demo" aria-hidden="true"><span class="ad-card-label">DTC · Hook</span></div>
+        <div class="ad-card ad-card-2" data-variations="SaaS · Animation|SaaS · Carrousel" aria-hidden="true"><span class="ad-card-label">SaaS · Animation</span></div>
+        <div class="ad-card ad-card-3" data-variations="Coaching · Reels|Coaching · UGC" aria-hidden="true"><span class="ad-card-label">Coaching · Reels</span></div>
+        <div class="ad-card ad-card-4" data-variations="Course · Hook|Course · Demo" aria-hidden="true"><span class="ad-card-label">Course · Hook</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── PAIN ────────────────────────────────────────────────────── -->
+<section>
+  <div class="container section-center">
+    <h2 class="pain-headline fade-up">
+      Tes clients veulent <span class="pain-highlight"><span data-count-target="10" data-count-suffix="×">10×</span> plus de créas</span>.<br />
+      <span class="muted">Ton équipe est déjà à plat.</span>
+    </h2>
+  </div>
+</section>
+
+<!-- ─── DELIVER ─────────────────────────────────────────────────── -->
+<section class="deliver">
+  <div class="orbit-system" aria-hidden="true">
+    <div class="orbit-ring"></div>
+    <div class="orbit-logo" style="--x: -440px; --y: -40px; --z: -220px; --r: -8deg; --d: 0s; --dur: 16s;" title="Meta">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.92 6.06C4.45 6.06 2.6 7.92 1.6 10.27a14.21 14.21 0 0 0-.91 5.18c0 1.84.66 3.6 2.51 3.6 1.32 0 2.42-.68 4.34-3.66 0 0 .8-1.41 1.35-2.37.19.31.4.62.6.96 0 0 .68 1.13 1.02 1.65 2.04 3.07 3.16 3.42 4.42 3.42 2.36 0 3.48-1.55 3.48-4.07 0-3.96-1.94-7.84-4.97-7.84-1.6 0-2.85.93-4.16 2.39-1.13-1.85-2.12-2.45-3.41-2.45z"/></svg>
+      <span class="orbit-logo-name">Meta</span>
+    </div>
+    <div class="orbit-logo" style="--x: -200px; --y: -100px; --z: -300px; --r: 6deg; --d: 1.5s; --dur: 14s;" title="TikTok">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.6 7.46a4.84 4.84 0 0 1-3.77-4.25V3h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.32-4.64c.3 0 .59.05.87.13v-3.5a6.84 6.84 0 0 0-1-.05 6.33 6.33 0 0 0-3.83 11.4 6.34 6.34 0 0 0 10.86-4.43V8.45a8.16 8.16 0 0 0 4.77 1.52V6.55c-.55-.06-1.08-.18-1.57-.09z"/></svg>
+      <span class="orbit-logo-name">TikTok</span>
+    </div>
+    <div class="orbit-logo" style="--x: 200px; --y: -100px; --z: -180px; --r: -10deg; --d: 3s; --dur: 18s;" title="YouTube">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3.02 3.02 0 0 0-2.12-2.14C19.5 3.55 12 3.55 12 3.55s-7.5 0-9.38.51A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14C4.5 20.45 12 20.45 12 20.45s7.5 0 9.38-.5a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.8zM9.55 15.57V8.43L15.82 12l-6.27 3.57z"/></svg>
+      <span class="orbit-logo-name">YouTube</span>
+    </div>
+    <div class="orbit-logo" style="--x: 440px; --y: -40px; --z: -260px; --r: 4deg; --d: 2.5s; --dur: 15s;" title="Pinterest">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12a12 12 0 0 0 7.64 11.18c-.1-.95-.2-2.4.04-3.43.22-.94 1.39-5.96 1.39-5.96s-.36-.72-.36-1.78c0-1.66.97-2.91 2.17-2.91 1.02 0 1.52.77 1.52 1.69 0 1.03-.66 2.57-1 4-.28 1.2.6 2.17 1.78 2.17 2.14 0 3.78-2.25 3.78-5.5 0-2.88-2.07-4.89-5.02-4.89-3.42 0-5.42 2.56-5.42 5.21 0 1.03.4 2.14.89 2.74.1.12.11.22.08.34l-.34 1.39c-.05.22-.18.27-.41.16-1.5-.7-2.43-2.89-2.43-4.65 0-3.78 2.75-7.26 7.93-7.26 4.17 0 7.4 2.97 7.4 6.94 0 4.14-2.61 7.47-6.23 7.47-1.22 0-2.36-.63-2.75-1.38l-.75 2.85c-.27 1.04-1 2.35-1.5 3.15A12 12 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      <span class="orbit-logo-name">Pinterest</span>
+    </div>
+    <div class="orbit-logo" style="--x: -200px; --y: 100px; --z: -200px; --r: 8deg; --d: 1s; --dur: 17s;" title="Instagram">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 3.25.15 4.77 1.69 4.92 4.92.06 1.27.07 1.65.07 4.85 0 3.2-.01 3.58-.07 4.85-.15 3.23-1.67 4.77-4.92 4.92-1.27.06-1.64.07-4.85.07-3.2 0-3.58-.01-4.85-.07-3.26-.15-4.77-1.7-4.92-4.92-.06-1.27-.07-1.64-.07-4.85 0-3.2.01-3.58.07-4.85.15-3.23 1.66-4.77 4.92-4.92 1.27-.06 1.65-.07 4.85-.07zM12 0C8.74 0 8.33.01 7.05.07 2.7.27.27 2.69.07 7.05.01 8.33 0 8.74 0 12s.01 3.67.07 4.95c.2 4.36 2.62 6.78 6.98 6.98 1.28.06 1.69.07 4.95.07s3.67-.01 4.95-.07c4.35-.2 6.78-2.62 6.98-6.98.06-1.28.07-1.69.07-4.95s-.01-3.67-.07-4.95C23.73 2.7 21.31.27 16.95.07 15.67.01 15.26 0 12 0zm0 5.84a6.16 6.16 0 1 0 0 12.32 6.16 6.16 0 0 0 0-12.32zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.41-11.85a1.44 1.44 0 1 0 0 2.88 1.44 1.44 0 0 0 0-2.88z"/></svg>
+      <span class="orbit-logo-name">Instagram</span>
+    </div>
+    <div class="orbit-logo" style="--x: 200px; --y: 100px; --z: -240px; --r: -6deg; --d: 4s; --dur: 16s;" title="Snapchat">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .29c-1.04 0-4.86.32-6.65 4.55-.6 1.42-.46 3.83-.34 5.78l.04.6c-.27.13-.62.26-.91.26-.36-.06-.66-.2-.94-.43-.12-.12-.45-.3-.75-.3-.5 0-1.42.5-1.42 1.25 0 .85.94 1.16 1.86 1.4 1.5.4 2.18 2.3 2.18 2.36.04.16.04.4-.1.62-.32.7-1.71 1.05-2.34 1.18-.83.18-1.01.7-1.01 1.1 0 .98 1.92 1.4 3.1 1.65.12.18.2.7.32 1.15.04.18.3.5.78.5.18 0 .5-.04.85-.13.5-.1.85-.13 1.13-.13.5 0 1.05.1 1.74.4.86.4 1.6.84 3.4.84 1.8 0 2.54-.45 3.4-.85.7-.3 1.25-.4 1.74-.4.28 0 .63.04 1.13.13.36.08.67.13.85.13.48 0 .74-.32.78-.5.13-.45.2-.97.32-1.15 1.18-.25 3.1-.67 3.1-1.65 0-.4-.18-.92-1.01-1.1-.63-.13-2.02-.48-2.34-1.18-.13-.22-.13-.46-.1-.62 0-.07.68-1.97 2.18-2.36.92-.24 1.86-.55 1.86-1.4 0-.74-.92-1.25-1.42-1.25-.3 0-.63.18-.75.3-.28.23-.58.37-.94.43-.3 0-.64-.13-.91-.26l.04-.6c.12-1.95.26-4.36-.34-5.78-1.8-4.23-5.6-4.55-6.65-4.55z"/></svg>
+      <span class="orbit-logo-name">Snapchat</span>
+    </div>
+  </div>
+  <div class="container section-center">
+    <div class="eyebrow fade-up" style="margin-bottom: var(--s-16); display: inline-block;">Ce qu'on livre</div>
+    <h2 class="h2 fade-up">
+      Statics, carrousels, UGC scriptés, motion light<br />
+      <span class="muted">— Meta, TikTok, YouTube, Pinterest.</span>
+    </h2>
+  </div>
+</section>
+
+<!-- ─── PROCESS ─────────────────────────────────────────────────── -->
+<section id="process">
+  <div class="container">
+    <div class="process-header">
+      <div class="eyebrow fade-up">Le process</div>
+      <h2 class="h2 fade-up" style="margin-top: var(--s-16);">Trois étapes. Pas trois mois.</h2>
+    </div>
+    <div class="process-list fade-up stagger">
+      <div class="process-item">
+        <div class="process-num">01</div>
+        <div class="process-title">Tu enregistres un Loom de 5 minutes.</div>
+        <div class="process-meta">2h pour confirmation</div>
+      </div>
+      <div class="process-item">
+        <div class="process-num">02</div>
+        <div class="process-title">On produit ton batch — humains + AI.</div>
+        <div class="process-meta">72h turnaround</div>
+      </div>
+      <div class="process-item">
+        <div class="process-num">03</div>
+        <div class="process-title">Tu reçois un Drive prêt à uploader.</div>
+        <div class="process-meta">Naming convention inclus</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── PRICING ─────────────────────────────────────────────────── -->
+<section id="pricing">
+  <div class="container">
+    <div class="pricing-header">
+      <div class="eyebrow fade-up">Tarifs</div>
+      <h2 class="h2 fade-up" style="margin-top: var(--s-16);">Prix affichés. Sans engagement.</h2>
+    </div>
+
+    <div class="pricing-grid fade-up stagger">
+      <div class="tier">
+        <div class="tier-name">Spark</div>
+        <div class="tier-price">
+          <span class="tier-price-num">$500</span>
+          <span class="tier-price-mo">/mo</span>
+        </div>
+        <div class="tier-desc">Le buyer solo, 1 brand.</div>
+        <ul class="tier-bullets">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>200 ads / mois</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>72h turnaround</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>5 revisions / mois</li>
+        </ul>
+        <a href="#" class="tier-cta">Commencer</a>
+      </div>
+
+      <div class="tier tier-highlighted">
+        <span class="tier-badge">Most popular</span>
+        <div class="tier-name">Pulse</div>
+        <div class="tier-price">
+          <span class="tier-price-num">$1k</span>
+          <span class="tier-price-mo">/mo</span>
+        </div>
+        <div class="tier-desc">2-3 clients, multi-plateforme.</div>
+        <ul class="tier-bullets">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>500 ads / mois</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>3 brands · 48h</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>15 revisions / mois</li>
+        </ul>
+        <a href="#" class="tier-cta tier-cta-primary">Commencer</a>
+      </div>
+
+      <div class="tier">
+        <div class="tier-name">Engine</div>
+        <div class="tier-price">
+          <span class="tier-price-num">$1.5k</span>
+          <span class="tier-price-mo">/mo</span>
+        </div>
+        <div class="tier-desc">Petite agence, 3-4 comptes.</div>
+        <ul class="tier-bullets">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>800 ads / mois</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>4 brands · 24h</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>30 revisions / mois</li>
+        </ul>
+        <a href="#" class="tier-cta">Commencer</a>
+      </div>
+
+      <div class="tier">
+        <div class="tier-name">Custom</div>
+        <div class="tier-price">
+          <span class="tier-price-num" style="font-size: 36px;">Let's talk</span>
+        </div>
+        <div class="tier-desc">Agences 5+ clients, in-house teams.</div>
+        <ul class="tier-bullets">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Volume illimité</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Producer dédié</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7" stroke-linecap="round" stroke-linejoin="round"/></svg>SLA + marque blanche</li>
+        </ul>
+        <a href="#" class="tier-cta">Book a call</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FILTER ──────────────────────────────────────────────────── -->
+<section>
+  <div class="container section-center">
+    <div class="filter-header">
+      <div class="eyebrow fade-up">Est-ce pour toi</div>
+    </div>
+    <h2 class="filter-headline fade-up" style="margin-top: var(--s-16);">
+      Pour les media buyers qui savent déjà briefer<br />
+      et veulent un partenaire ops stable.
+    </h2>
+    <p class="filter-not fade-up">Pas pour ceux qui cherchent un outil magique en un clic.</p>
+  </div>
+</section>
+
+<!-- ─── FAQ ─────────────────────────────────────────────────────── -->
+<section id="faq">
+  <div class="container">
+    <div class="faq-header">
+      <div class="eyebrow fade-up">Questions</div>
+      <h2 class="h2 fade-up" style="margin-top: var(--s-16);">FAQ.</h2>
+    </div>
+    <div class="faq-list fade-up">
+      <div class="faq-item">
+        <button class="faq-q">
+          C'est full-AI ou humain ?
+          <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+        </button>
+        <div class="faq-a">Hybride. On orchestre 6 modèles AI (Seedance, Kling, Flux, NanoBanana, Veo, Sora) avec un brief brand-locké, et un QC humain sur chaque batch avant livraison.</div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">
+          Vous prenez combien de clients ?
+          <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+        </button>
+        <div class="faq-a">10 en beta pour l'instant. Ensuite par cohortes pour garder la qualité de livraison stable.</div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">
+          Vous gérez aussi la stratégie paid ?
+          <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+        </button>
+        <div class="faq-a">Non. On produit la créa. Tu pilotes les comptes ads. C'est ton zone de génie, pas la nôtre.</div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">
+          Délai de démarrage ?
+          <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+        </button>
+        <div class="faq-a">Premier batch sous 72h après ton Loom de brief. Pas de form à remplir, pas de qualification de 3 semaines.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FINAL CTA ───────────────────────────────────────────────── -->
+<section class="final-cta" id="start">
+  <div class="container">
+    <div class="eyebrow fade-up">Prêt ?</div>
+    <h2 class="h2 fade-up" style="margin-top: var(--s-16);">Premier batch sous <span data-count-target="72" data-count-suffix="h">72h</span>.</h2>
+    <p class="sub fade-up">Pas de form, pas de qualification. Un Loom de 5 minutes, on répond sous 2h.</p>
+    <a href="#" class="btn btn-primary fade-up">
+      Start a brief
+      <span class="arrow">→</span>
+    </a>
+  </div>
+</section>
+
+<!-- ─── FOOTER ──────────────────────────────────────────────────── -->
+<footer>
+  <div class="container">
+    <div class="footer-content">
+      <a href="#" class="footer-logo">
+        <span class="nav-logo-dot"></span>
+        mimica<span class="nav-logo-sub">/studio</span>
+      </a>
+      <div class="footer-links">
+        <a href="#work">Work</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a href="mailto:hey@mimica.studio">hey@mimica.studio</a>
+      </div>
+      <div>© 2026 Mimica Studio</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// FAQ accordion
+document.querySelectorAll('.faq-q').forEach(q => {
+  q.addEventListener('click', () => {
+    const item = q.parentElement;
+    item.classList.toggle('open');
+  });
+});
+
+// 3D tilt + label cycling on ad cards
+document.querySelectorAll('.ad-card').forEach((card) => {
+  let cycleInterval;
+  const labelEl = card.querySelector('.ad-card-label');
+  const variations = (card.dataset.variations || labelEl.textContent).split('|');
+  let idx = 0;
+
+  card.addEventListener('mousemove', (e) => {
+    const rect = card.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) - 0.5;
+    const y = ((e.clientY - rect.top) / rect.height) - 0.5;
+    card.style.transform = `perspective(1000px) rotateX(${-y * 10}deg) rotateY(${x * 10}deg) scale(1.05)`;
+    card.style.transition = 'transform 80ms linear, border-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1)';
+    card.style.setProperty('--mx', `${(x + 0.5) * 100}%`);
+    card.style.setProperty('--my', `${(y + 0.5) * 100}%`);
+  });
+
+  card.addEventListener('mouseenter', () => {
+    if (variations.length > 1) {
+      cycleInterval = setInterval(() => {
+        labelEl.classList.add('cycling');
+        setTimeout(() => {
+          idx = (idx + 1) % variations.length;
+          labelEl.textContent = variations[idx];
+          labelEl.classList.remove('cycling');
+        }, 220);
+      }, 1400);
+    }
+  });
+
+  card.addEventListener('mouseleave', () => {
+    card.style.transition = 'transform 500ms cubic-bezier(0.16, 1, 0.3, 1), border-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1)';
+    card.style.transform = '';
+    card.style.removeProperty('--mx');
+    card.style.removeProperty('--my');
+    clearInterval(cycleInterval);
+    labelEl.classList.add('cycling');
+    setTimeout(() => {
+      idx = 0;
+      labelEl.textContent = variations[0];
+      labelEl.classList.remove('cycling');
+    }, 220);
+  });
+});
+
+// H1 word reveal stagger delays
+document.querySelectorAll('.hero-reveal').forEach(el => {
+  const words = el.querySelectorAll('.word');
+  words.forEach((w, i) => {
+    w.style.transitionDelay = `${i * 70}ms`;
+  });
+});
+
+// Hero 3D wall mouse parallax
+const heroEl = document.querySelector('.hero');
+const wallInner = document.querySelector('.wall-inner');
+if (heroEl && wallInner) {
+  let rafId = null;
+  heroEl.addEventListener('mousemove', (e) => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      const rect = heroEl.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) - 0.5;
+      const y = ((e.clientY - rect.top) / rect.height) - 0.5;
+      wallInner.style.transform = `rotateY(${x * 6}deg) rotateX(${-y * 4}deg)`;
+    });
+  });
+  heroEl.addEventListener('mouseleave', () => {
+    wallInner.style.transform = '';
+  });
+}
+
+// Fade-up on scroll (extended to hero-reveal)
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.15, rootMargin: '0px 0px -10% 0px' });
+
+document.querySelectorAll('.fade-up, .hero-reveal').forEach(el => observer.observe(el));
+
+// Count-up animation (ease-out-expo)
+function animateCount(el, target, duration, prefix, suffix) {
+  const start = performance.now();
+  function frame(now) {
+    const elapsed = now - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+    const value = Math.round(target * eased);
+    el.textContent = `${prefix}${value}${suffix}`;
+    if (progress < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+document.querySelectorAll('[data-count-target]').forEach(el => {
+  const target = parseInt(el.dataset.countTarget, 10);
+  const prefix = el.dataset.countPrefix || '';
+  const suffix = el.dataset.countSuffix || '';
+  // Start at zero before observed
+  el.textContent = `${prefix}0${suffix}`;
+  const countObs = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        animateCount(el, target, 1400, prefix, suffix);
+        countObs.unobserve(el);
+      }
+    });
+  }, { threshold: 0.5 });
+  countObs.observe(el);
+});
+</script>
+
+</body>
+</html>

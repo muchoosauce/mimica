@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mimica — Brief to Batch</title>
+</head>
+<body>
+  <div id="root" data-composition-id="root" data-width="1920" data-height="1080" data-start="0">
+
+    <!-- Main clip: drives 20s composition duration -->
+    <div id="main-clip" data-start="0" data-duration="20" data-track-index="0" class="clip main-clip">
+
+      <!-- Background ambient glow -->
+      <div class="bg-glow"></div>
+
+      <!-- BRIEF CENTRAL (persistent 0-20s) -->
+      <div class="brief">
+        <div class="brief-halo"></div>
+        <div class="brief-icon">
+          <svg viewBox="0 0 90 110" xmlns="http://www.w3.org/2000/svg">
+            <path d="M 15 5 L 60 5 L 85 30 L 85 105 L 15 105 Z" fill="none" stroke="#F4F4F6" stroke-width="2" stroke-linejoin="round" />
+            <path d="M 60 5 L 60 30 L 85 30" fill="none" stroke="#F4F4F6" stroke-width="2" stroke-linejoin="round" />
+            <line x1="25" y1="48" x2="75" y2="48" stroke="#F4F4F6" stroke-width="1.5" opacity="0.55" />
+            <line x1="25" y1="62" x2="65" y2="62" stroke="#F4F4F6" stroke-width="1.5" opacity="0.55" />
+            <line x1="25" y1="76" x2="75" y2="76" stroke="#F4F4F6" stroke-width="1.5" opacity="0.55" />
+            <line x1="25" y1="90" x2="55" y2="90" stroke="#F4F4F6" stroke-width="1.5" opacity="0.55" />
+          </svg>
+        </div>
+        <div class="orbit-ring">
+          <div class="orbit-el orbit-1"><span class="orbit-dot violet"></span></div>
+          <div class="orbit-el orbit-2"><span class="orbit-aa">Aa</span></div>
+          <div class="orbit-el orbit-3"><span class="orbit-dot pink"></span></div>
+          <div class="orbit-el orbit-4">
+            <span class="orbit-persona">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#F4F4F6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M 4 22 Q 4 14 12 14 Q 20 14 20 22" />
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCENE 2 — Création (3-8s) -->
+      <div class="scene scene-creation">
+        <div class="particle p1"></div>
+        <div class="particle p2"></div>
+        <div class="particle p3"></div>
+        <div class="particle p4"></div>
+        <div class="particle p5"></div>
+        <div class="particle p6"></div>
+        <div class="particle p7"></div>
+        <div class="particle p8"></div>
+        <div class="card creation-card cc1"></div>
+        <div class="card creation-card cc2"></div>
+        <div class="card creation-card cc3"></div>
+        <div class="card creation-card cc4"></div>
+      </div>
+
+      <!-- SCENE 3 — Adaptation (8-13s) -->
+      <div class="scene scene-adaptation">
+        <div class="card adapt-gray ag1"></div>
+        <div class="card adapt-gray ag2"></div>
+        <div class="card adapt-gray ag3"></div>
+        <div class="card adapt-gray ag4"></div>
+        <div class="ink-burst"></div>
+        <div class="card adapt-color ac1"></div>
+        <div class="card adapt-color ac2"></div>
+        <div class="card adapt-color ac3"></div>
+        <div class="card adapt-color ac4"></div>
+      </div>
+
+      <!-- SCENE 4 — Itération (13-18s) -->
+      <div class="scene scene-iteration">
+        <div class="winner-halo"></div>
+        <div class="card winner-card"></div>
+        <div class="card iter-var iv1"></div>
+        <div class="card iter-var iv2"></div>
+        <div class="card iter-var iv3"></div>
+        <div class="card iter-var iv4"></div>
+        <div class="card iter-var iv5"></div>
+        <div class="card iter-var iv6"></div>
+      </div>
+
+      <!-- SCENE 5 — Convergence (18-20s) -->
+      <div class="scene scene-convergence">
+        <div class="card conv conv1"></div>
+        <div class="card conv conv2"></div>
+        <div class="card conv conv3"></div>
+        <div class="card conv conv4"></div>
+      </div>
+
+    </div>
+
+    <style>
+      /* ─── BASE ─────────────────────────────────────────────────── */
+      #root {
+        background: #0A0A0F;
+        font-family: 'Inter', system-ui, sans-serif;
+        color: #F4F4F6;
+        position: relative;
+        overflow: hidden;
+        width: 1920px;
+        height: 1080px;
+      }
+      .main-clip {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* Ambient bg glow */
+      .bg-glow {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 1400px;
+        height: 1400px;
+        background: radial-gradient(circle, rgba(124, 92, 255, 0.10) 0%, rgba(236, 72, 153, 0.06) 30%, transparent 60%);
+        filter: blur(40px);
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      /* ─── BRIEF CENTRAL ───────────────────────────────────────── */
+      .brief {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 480px;
+        height: 480px;
+        z-index: 10;
+      }
+      .brief-halo {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 360px;
+        height: 360px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(124, 92, 255, 0.35) 0%, rgba(236, 72, 153, 0.18) 40%, transparent 70%);
+        filter: blur(30px);
+        z-index: 1;
+      }
+      .brief-icon {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 110px;
+        height: 130px;
+        z-index: 5;
+      }
+      .brief-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+      .orbit-ring {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 360px;
+        height: 360px;
+        z-index: 4;
+      }
+      .orbit-el {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 40px;
+        height: 40px;
+        margin: -20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .orbit-1 { transform: translateY(-180px); }
+      .orbit-2 { transform: translateX(180px); }
+      .orbit-3 { transform: translateY(180px); }
+      .orbit-4 { transform: translateX(-180px); }
+
+      .orbit-dot {
+        display: block;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        box-shadow: 0 0 12px currentColor;
+      }
+      .orbit-dot.violet { background: #7C5CFF; color: #7C5CFF; }
+      .orbit-dot.pink { background: #EC4899; color: #EC4899; }
+      .orbit-aa {
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 28px;
+        color: #F4F4F6;
+        letter-spacing: -0.02em;
+      }
+      .orbit-persona svg {
+        width: 28px;
+        height: 28px;
+      }
+
+      /* ─── CARDS (shared) ───────────────────────────────────────── */
+      .card {
+        position: absolute;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+      }
+
+      /* ─── SCENE: CRÉATION ──────────────────────────────────────── */
+      .scene-creation { position: absolute; inset: 0; z-index: 6; }
+      .particle {
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #F4F4F6;
+        box-shadow: 0 0 12px #7C5CFF, 0 0 24px #EC4899;
+        z-index: 7;
+      }
+      /* Particles end positions (near top, scattered) */
+      .p1 { top: 360px; left: 740px; }
+      .p2 { top: 320px; left: 820px; }
+      .p3 { top: 380px; left: 900px; }
+      .p4 { top: 340px; left: 980px; }
+      .p5 { top: 360px; left: 1060px; }
+      .p6 { top: 320px; left: 1140px; }
+      .p7 { top: 380px; left: 1220px; }
+      .p8 { top: 350px; left: 700px; }
+
+      /* 4 Création cards (upper arc) — gradient violet→pink */
+      .creation-card {
+        background: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+        width: 140px;
+        height: 175px;
+      }
+      .cc1 { top: 240px; left: 730px; }
+      .cc2 { top: 200px; left: 890px; }
+      .cc3 { top: 200px; left: 1050px; }
+      .cc4 { top: 240px; left: 1210px; }
+
+      /* ─── SCENE: ADAPTATION ────────────────────────────────────── */
+      .scene-adaptation { position: absolute; inset: 0; z-index: 6; }
+      .adapt-gray {
+        background: linear-gradient(135deg, #3A3A42 0%, #2A2A30 100%);
+        width: 140px;
+        height: 175px;
+      }
+      .ag1 { top: 460px; left: 200px; }
+      .ag2 { top: 640px; left: 280px; }
+      .ag3 { top: 460px; left: 1580px; }
+      .ag4 { top: 640px; left: 1500px; }
+
+      .ink-burst {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 600px;
+        height: 600px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(124, 92, 255, 0.6) 0%, rgba(236, 72, 153, 0.4) 40%, transparent 70%);
+        filter: blur(40px);
+        z-index: 5;
+      }
+
+      .adapt-color {
+        background: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+        width: 140px;
+        height: 175px;
+      }
+      .ac1 { top: 460px; left: 460px; }
+      .ac2 { top: 640px; left: 540px; }
+      .ac3 { top: 460px; left: 1320px; }
+      .ac4 { top: 640px; left: 1240px; }
+
+      /* ─── SCENE: ITÉRATION ─────────────────────────────────────── */
+      .scene-iteration { position: absolute; inset: 0; z-index: 6; }
+      .winner-halo {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 360px;
+        height: 360px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(124, 92, 255, 0.55) 0%, rgba(236, 72, 153, 0.30) 40%, transparent 70%);
+        filter: blur(30px);
+        z-index: 5;
+      }
+      .winner-card {
+        background: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+        width: 160px;
+        height: 200px;
+        top: 440px;
+        left: 880px;
+        z-index: 8;
+      }
+      .iter-var {
+        width: 120px;
+        height: 150px;
+        background: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+        z-index: 7;
+      }
+      .iv1 { top: 280px; left: 580px; }
+      .iv2 { top: 280px; left: 1220px; }
+      .iv3 { top: 460px; left: 360px; }
+      .iv4 { top: 460px; left: 1440px; }
+      .iv5 { top: 720px; left: 580px; }
+      .iv6 { top: 720px; left: 1220px; }
+
+      /* ─── SCENE: CONVERGENCE ───────────────────────────────────── */
+      .scene-convergence { position: absolute; inset: 0; z-index: 6; }
+      .conv {
+        width: 100px;
+        height: 125px;
+        background: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+      }
+      .conv1 { top: 200px; left: 460px; }
+      .conv2 { top: 200px; left: 1360px; }
+      .conv3 { top: 800px; left: 460px; }
+      .conv4 { top: 800px; left: 1360px; }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const ease = "expo.out";
+
+      // ─── PERSISTENT: BRIEF CENTRAL ─────────────────────────────
+      // Slow rotation of orbit ring (1 full rotation in 20s)
+      tl.to(".orbit-ring", { rotation: 360, duration: 20, ease: "none" }, 0);
+      // Counter-rotation of orbit elements to keep them upright
+      tl.to(".orbit-el", { rotation: -360, duration: 20, ease: "none" }, 0);
+      // ─── INTRO: brief fade in (0-1.2s) ──────────────────────────
+      tl.from(".brief-icon", { scale: 0.4, opacity: 0, duration: 1, ease: "back.out(1.4)" }, 0);
+      tl.from(".brief-halo", { scale: 0.3, opacity: 0, duration: 1.2, ease: "power3.out" }, 0);
+
+      // Brief pulse (cycles after intro, ends near 20s)
+      tl.to(".brief-icon", { scale: 1.06, duration: 1, repeat: 17, yoyo: true, ease: "sine.inOut" }, 1);
+      // Halo gentle pulse (starts after intro completes)
+      tl.to(".brief-halo", { scale: 1.12, opacity: 0.85, duration: 1, repeat: 17, yoyo: true, ease: "sine.inOut" }, 1.2);
+      tl.from(".orbit-ring", { scale: 0.6, opacity: 0, duration: 1, ease: "power2.out" }, 0.3);
+      tl.from(".bg-glow", { opacity: 0, duration: 2, ease: "power2.out" }, 0);
+
+      // ─── SCENE 2: CRÉATION (3-8s) ──────────────────────────────
+      // Particles rise from brief, then condense
+      tl.from(".particle", {
+        x: 0,
+        y: 200,
+        opacity: 0,
+        scale: 0,
+        duration: 0.8,
+        stagger: 0.06,
+        ease: "power2.out"
+      }, 3);
+      // Cards materialize from particles (upper arc)
+      tl.from(".creation-card", {
+        scale: 0,
+        opacity: 0,
+        y: 60,
+        rotation: -8,
+        duration: 0.7,
+        stagger: 0.12,
+        ease: "back.out(1.6)"
+      }, 4);
+      // Particles fade as cards form
+      tl.to(".particle", {
+        opacity: 0,
+        scale: 0,
+        duration: 0.5,
+        stagger: 0.04,
+        ease: "power2.in"
+      }, 4.2);
+      // Cards float briefly
+      tl.to(".creation-card", {
+        y: "-=12",
+        duration: 1.2,
+        stagger: 0.1,
+        ease: "sine.inOut",
+        yoyo: true,
+        repeat: 1
+      }, 4.8);
+      // Crossfade out at scene end
+      tl.to(".creation-card", {
+        opacity: 0,
+        y: "-=30",
+        duration: 0.6,
+        stagger: 0.06,
+        ease: "power2.in",
+        overwrite: "auto"
+      }, 7.4);
+
+      // ─── SCENE 3: ADAPTATION (8-13s) ───────────────────────────
+      // Gray cards drift in from sides
+      tl.from(".ag1", { x: -300, opacity: 0, duration: 0.8, ease: "power2.out" }, 8);
+      tl.from(".ag2", { x: -350, opacity: 0, duration: 0.8, ease: "power2.out" }, 8.1);
+      tl.from(".ag3", { x: 300, opacity: 0, duration: 0.8, ease: "power2.out" }, 8);
+      tl.from(".ag4", { x: 350, opacity: 0, duration: 0.8, ease: "power2.out" }, 8.1);
+
+      // Gray cards converge toward center
+      tl.to(".ag1", { x: 280, y: 20, duration: 1.2, ease: "power2.inOut" }, 9.2);
+      tl.to(".ag2", { x: 220, y: -20, duration: 1.2, ease: "power2.inOut" }, 9.3);
+      tl.to(".ag3", { x: -260, y: 20, duration: 1.2, ease: "power2.inOut" }, 9.2);
+      tl.to(".ag4", { x: -220, y: -20, duration: 1.2, ease: "power2.inOut" }, 9.3);
+
+      // Ink burst (color emanates from brief)
+      tl.from(".ink-burst", { scale: 0.2, opacity: 0, duration: 0.5, ease: "power3.out" }, 10.4);
+      tl.to(".ink-burst", { scale: 1.4, opacity: 0, duration: 1.4, ease: "power2.out", overwrite: "auto" }, 10.9);
+
+      // Gray cards fade as colored versions appear
+      tl.to(".adapt-gray", { opacity: 0, duration: 0.4, ease: "power2.in" }, 10.8);
+
+      // Colored cards appear at the same positions
+      tl.from(".adapt-color", {
+        scale: 0.6,
+        opacity: 0,
+        duration: 0.6,
+        stagger: 0.08,
+        ease: "back.out(1.4)"
+      }, 11);
+
+      // Float briefly
+      tl.to(".adapt-color", {
+        y: "-=10",
+        duration: 0.6,
+        stagger: 0.06,
+        ease: "sine.inOut",
+        yoyo: true,
+        repeat: 1
+      }, 11.6);
+
+      // Crossfade out
+      tl.to(".adapt-color", {
+        opacity: 0,
+        scale: 0.85,
+        duration: 0.5,
+        stagger: 0.04,
+        ease: "power2.in",
+        overwrite: "auto"
+      }, 12.9);
+
+      // ─── SCENE 4: ITÉRATION (13-18s) ───────────────────────────
+      // Winner card appears with halo
+      tl.from(".winner-halo", { scale: 0.3, opacity: 0, duration: 0.8, ease: "power3.out" }, 13);
+      tl.from(".winner-card", { scale: 0.5, opacity: 0, duration: 0.7, ease: "back.out(1.5)" }, 13.2);
+
+      // Halo pulse on winner
+      tl.to(".winner-halo", {
+        scale: 1.15,
+        opacity: 0.8,
+        duration: 1,
+        repeat: 2,
+        yoyo: true,
+        ease: "sine.inOut"
+      }, 13.8);
+
+      // Variations fan out
+      tl.from(".iter-var", {
+        x: 0,
+        y: 0,
+        scale: 0,
+        opacity: 0,
+        duration: 0.7,
+        stagger: 0.1,
+        ease: "back.out(1.7)"
+      }, 14.4);
+
+      // Subtle continuous float
+      tl.to(".iter-var", {
+        y: "-=8",
+        duration: 0.8,
+        stagger: 0.08,
+        ease: "sine.inOut",
+        yoyo: true,
+        repeat: 1
+      }, 15.2);
+
+      // Crossfade out
+      tl.to(".iter-var", {
+        opacity: 0,
+        scale: 0.7,
+        duration: 0.5,
+        stagger: 0.04,
+        ease: "power2.in",
+        overwrite: "auto"
+      }, 17.2);
+      tl.to(".winner-card", { opacity: 0, scale: 0.7, duration: 0.5, ease: "power2.in" }, 17.3);
+      tl.to(".winner-halo", { opacity: 0, scale: 0.6, duration: 0.5, ease: "power2.in", overwrite: "auto" }, 17.3);
+
+      // ─── SCENE 5: CONVERGENCE (18-20s) ─────────────────────────
+      // 4 representative cards appear in corners
+      tl.from(".conv", {
+        scale: 0,
+        opacity: 0,
+        duration: 0.5,
+        stagger: 0.08,
+        ease: "back.out(1.3)"
+      }, 18);
+
+      // All converge toward brief center
+      tl.to(".conv1", { x: 500, y: 320, scale: 0.3, opacity: 0, duration: 1.1, ease: "power2.in" }, 18.8);
+      tl.to(".conv2", { x: -500, y: 320, scale: 0.3, opacity: 0, duration: 1.1, ease: "power2.in" }, 18.85);
+      tl.to(".conv3", { x: 500, y: -300, scale: 0.3, opacity: 0, duration: 1.1, ease: "power2.in" }, 18.9);
+      tl.to(".conv4", { x: -500, y: -300, scale: 0.3, opacity: 0, duration: 1.1, ease: "power2.in" }, 18.95);
+
+      // Brief halo expansion as cards merge
+      tl.to(".brief-halo", { scale: 1.4, opacity: 1, duration: 0.6, ease: "power2.out", overwrite: "auto" }, 19);
+      tl.to(".brief-halo", { scale: 1.0, opacity: 0.85, duration: 0.4, ease: "power2.in", overwrite: "auto" }, 19.6);
+
+      window.__timelines["root"] = tl;
+    </script>
+
+  </div>
+</body>
+</html>
