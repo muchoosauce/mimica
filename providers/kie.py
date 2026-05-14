@@ -389,10 +389,9 @@ class KieProvider(Provider):
             if resolution:
                 input_payload["resolution"] = resolution
                 self._log("INFO", f"[{label}] resolution: {resolution}")
-            # Only send `sound` when explicitly enabled — leave the upstream
-            # default (silent) in place otherwise.
-            if sound:
-                input_payload["sound"] = True
+            # Kie requires `sound` to always be present (422 "sound cannot be
+            # empty" otherwise) — send the boolean explicitly in both states.
+            input_payload["sound"] = bool(sound)
             self._log("INFO", f"[{label}] sound: {'on' if sound else 'off'}")
 
             # Product reference locking via Kling's `kling_elements`. The element
