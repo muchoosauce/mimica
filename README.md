@@ -13,29 +13,29 @@ Six workflows:
 
 Multi-format (1:1, 4:5, 9:16, …) and multi-language output in a single run.
 
-## Install (Mac)
+## Install (Mac) — one-click
 
+Double-click `install.command`. It auto-installs Xcode CLI Tools → Homebrew → Python 3.12 → clones the repo → sets up the venv → launches the app. 5-10 min on a fresh Mac, idempotent (safe to re-run).
+
+Or manually if you already have Python 3.10+ and Git:
 ```bash
-git clone git@github.com:<your-username>/<repo>.git mimica
+git clone https://github.com/muchoosauce/mimica.git
 cd mimica
 ./launch.command
 ```
 
-`launch.command` creates the venv, installs deps, and starts the app. First run takes about a minute. Then add your MuAPI key in the *Settings* page.
+If macOS refuses to open `launch.command`: right-click → **Open** → **Open** once.
 
-If macOS refuses to open `launch.command`: right-click → **Open** → **Open** once. Or in Terminal: `chmod +x launch.command update.command`.
+## Install (Windows 10/11) — one-click
 
-Needs Python 3.10+ (macOS ships with one, or grab it from [python.org](https://www.python.org/downloads/)) and Git (`xcode-select --install` if missing).
+Double-click `install.bat`. It uses winget to auto-install Python 3.12 + Git if missing, clones the repo, sets up the venv, launches the app. Same idempotent behavior as the Mac installer. Needs Windows 10 1809+ for winget (or Windows 11).
 
-## Install (Windows)
-
-```bash
-git clone https://github.com/<your-username>/<repo>.git mimica
+Or manually if you already have Python 3.10+ and Git:
+```cmd
+git clone https://github.com/muchoosauce/mimica.git
 cd mimica
 launch.bat
 ```
-
-Needs Python 3.10+ from [python.org](https://www.python.org/downloads/) — tick **"Add Python to PATH"** during install. Git from [git-scm.com](https://git-scm.com/download/win).
 
 ## Updates
 
