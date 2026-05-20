@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import base64
 import os
+import random
+import time
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from pydantic import BaseModel
+
+from providers.errors import is_transient
 
 from .prompts import DNA_SYSTEM_PROMPT, TAGGER_SYSTEM_PROMPT
 from .types import CollectedImage, ImageTag
@@ -20,6 +24,35 @@ from .types import CollectedImage, ImageTag
 MODEL = "claude-opus-4-7"
 MAX_IMAGE_DIM = 1280       # downsize before base64-encoding to control token cost
 JPEG_QUALITY = 85
+
+# Anthropic 529 ("overloaded_error") and other transients can persist for
+# tens of seconds. Retry up to 6 times with exponential backoff + jitter
+# (≈2,4,8,16,32,60s, capped at 60s) so a Brand DNA run survives a brief
+# capacity dip without forcing the user to re-trigger everything.
+_RETRY_ATTEMPTS = 6
+_RETRY_BASE_DELAY = 2.0
+_RETRY_MAX_DELAY = 60.0
+
+
+def _retry_anthropic(fn: Callable, *, label: str, on_log: Callable[[str, str], None]):
+    last_err: Optional[Exception] = None
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_err = e
+            if attempt == _RETRY_ATTEMPTS or not is_transient(e):
+                raise
+            delay = min(_RETRY_BASE_DELAY * (2 ** (attempt - 1)), _RETRY_MAX_DELAY)
+            delay += random.uniform(0, delay * 0.25)  # jitter to avoid thundering herd
+            on_log(
+                "WARN",
+                f"{label}: Anthropic transient error "
+                f"({type(e).__name__}); retry {attempt}/{_RETRY_ATTEMPTS - 1} in {delay:.1f}s",
+            )
+            time.sleep(delay)
+    if last_err:
+        raise last_err
 
 
 class BrandDNAModel(BaseModel):
@@ -55,19 +88,29 @@ class _TaggerResponse(BaseModel):
     tags: list[_TaggedImage]
 
 
-def _encode_image(path: Path) -> tuple[str, str]:
-    """Resize if needed and return (media_type, base64). Falls back to original bytes if PIL is missing."""
-    try:
-        from PIL import Image
-    except ImportError:
-        with open(path, "rb") as f:
+def _encode_image(img: CollectedImage) -> tuple[str, str]:
+    """Resize if needed and return (media_type, base64).
+
+    Reads from `img.data` when present (site-scraped, in-memory only), else
+    from `img.path`. Falls back to raw bytes if PIL is missing or the source
+    can't be decoded.
+    """
+    def _raw() -> tuple[str, str]:
+        if img.data is not None:
+            return img.media_type or "image/png", base64.b64encode(img.data).decode("ascii")
+        with open(img.path, "rb") as f:
             return "image/png", base64.b64encode(f.read()).decode("ascii")
 
     try:
-        im = Image.open(path)
+        from PIL import Image
+    except ImportError:
+        return _raw()
+
+    try:
+        source = BytesIO(img.data) if img.data is not None else img.path
+        im = Image.open(source)
     except Exception:
-        with open(path, "rb") as f:
-            return "image/png", base64.b64encode(f.read()).decode("ascii")
+        return _raw()
 
     if im.mode not in ("RGB", "L"):
         im = im.convert("RGB")
@@ -84,8 +127,10 @@ def _encode_image(path: Path) -> tuple[str, str]:
 def _image_blocks(images: list[CollectedImage]) -> list[dict]:
     blocks = []
     for img in images:
+        if img.data is None and img.path is None:
+            continue
         try:
-            media_type, data = _encode_image(img.path)
+            media_type, data = _encode_image(img)
         except Exception:
             continue
         blocks.append({
@@ -125,18 +170,22 @@ class AnthropicClient:
 
         on_log("INFO", f"Calling Claude {MODEL} with {len(images)} images "
                        f"and ~{len(compiled_text)} chars of text")
-        response = client.messages.parse(
-            model=MODEL,
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
-            system=[{
-                "type": "text",
-                "text": DNA_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=[{"role": "user", "content": user_content}],
-            output_format=BrandDNAModel,
+        response = _retry_anthropic(
+            lambda: client.messages.parse(
+                model=MODEL,
+                max_tokens=16000,
+                thinking={"type": "adaptive"},
+                output_config={"effort": "high"},
+                system=[{
+                    "type": "text",
+                    "text": DNA_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": user_content}],
+                output_format=BrandDNAModel,
+            ),
+            label="generate_dna",
+            on_log=on_log,
         )
         usage = response.usage
         on_log(
@@ -165,17 +214,21 @@ class AnthropicClient:
         }]
         content.extend(_image_blocks(images))
         on_log("INFO", f"Tagging {len(images)} candidate images via Claude {MODEL}")
-        response = client.messages.parse(
-            model=MODEL,
-            max_tokens=2048,
-            output_config={"effort": "low"},
-            system=[{
-                "type": "text",
-                "text": TAGGER_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=[{"role": "user", "content": content}],
-            output_format=_TaggerResponse,
+        response = _retry_anthropic(
+            lambda: client.messages.parse(
+                model=MODEL,
+                max_tokens=2048,
+                output_config={"effort": "low"},
+                system=[{
+                    "type": "text",
+                    "text": TAGGER_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": content}],
+                output_format=_TaggerResponse,
+            ),
+            label="tag_images",
+            on_log=on_log,
         )
         tags = [t.tag for t in response.parsed_output.tags]
         if len(tags) != len(images):

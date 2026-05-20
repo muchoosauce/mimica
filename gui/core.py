@@ -267,10 +267,56 @@ def get_api_key() -> str:
 
 # ─── Output dir ─────────────────────────────────────────────────────────────
 
-if _is_frozen():
-    DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "Ad Variator" / "outputs"
-else:
-    DEFAULT_OUTPUT_DIR = _here / "outputs"
+# Always ~/Documents/Ad Variator/outputs — Finder-accessible and outside both
+# the cloned source dir and the support dir, so reinstalls, wrapper re-clones,
+# or moving the dev repo can never drop the user's run history.
+DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "Ad Variator" / "outputs"
+
+
+def _migrate_legacy_outputs() -> None:
+    """One-time move of run folders from the legacy in-clone `outputs/` to the
+    canonical `~/Documents/Ad Variator/outputs/`. Name collisions get a
+    `-migrated-N` suffix — never overwrite an existing run.
+    """
+    target = DEFAULT_OUTPUT_DIR
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+    target_resolved = target.resolve()
+    existing = {p.name for p in target.iterdir()}
+    for legacy_root in _legacy_data_roots():
+        src_dir = legacy_root / "outputs"
+        if not src_dir.exists():
+            continue
+        try:
+            if src_dir.resolve() == target_resolved:
+                continue
+        except Exception:
+            continue
+        for src in src_dir.iterdir():
+            if not src.is_dir():
+                continue
+            name = src.name
+            if name in existing:
+                n = 2
+                while f"{name}-migrated-{n}" in existing:
+                    n += 1
+                name = f"{src.name}-migrated-{n}"
+            try:
+                shutil.move(str(src), str(target / name))
+                existing.add(name)
+            except Exception:
+                pass
+        try:
+            remaining = [p for p in src_dir.iterdir() if p.is_dir()]
+            if not remaining:
+                shutil.rmtree(src_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+_migrate_legacy_outputs()
 
 
 def get_output_dir() -> Path:
@@ -483,7 +529,123 @@ def _aspect_slug(a: str) -> str:
     return a.replace(":", "x").replace("/", "x")
 
 
+def _slugify_source(name: str) -> str:
+    """Filesystem-safe slug for a source image's filename stem."""
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+    return (slug[:40] or "src").lower()
+
+
 # ─── Generate pipeline ──────────────────────────────────────────────────────
+
+def _run_variation_into(
+    provider: Provider,
+    ref_path: Path,
+    n: int,
+    resolution: str,
+    aspects: list[str],
+    languages: list[str],
+    workers: int,
+    out_dir: Path,
+    image_model: str,
+    *,
+    prefix: Optional[str],
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    should_cancel: Callable[[], bool],
+) -> dict:
+    """Run the Variation pipeline for ONE reference image into an existing out_dir.
+
+    When `prefix` is set, output filenames are `{prefix}_var_NN{suffix}.png`
+    (used by batch mode for a flat layout). When None, the legacy
+    `variation_NN{suffix}.png` naming is preserved.
+
+    Returns {"ref_url", "prompts_by_lang", "results"}. The caller is
+    responsible for writing prompts.txt / report.json.
+    """
+    aspects = aspects or ["1:1"]
+    languages = languages or ["English"]
+
+    ref_url = provider.upload_image(ref_path)
+    if should_cancel():
+        return {"ref_url": ref_url, "prompts_by_lang": {}, "results": []}
+
+    prompts_by_lang: dict[str, list[str]] = {}
+    for lang in languages:
+        if should_cancel():
+            return {"ref_url": ref_url, "prompts_by_lang": prompts_by_lang, "results": []}
+        prompts_by_lang[lang] = _gen_prompts(provider, ref_url, n, language=lang)
+
+    total = sum(len(p) for p in prompts_by_lang.values()) * len(aspects)
+    src_tag = f"[{prefix}] " if prefix else ""
+    on_log(
+        "INFO",
+        f"{src_tag}Generating {total} images "
+        f"({n} variations × {len(languages)} lang × {len(aspects)} aspects, {workers} workers)..."
+    )
+
+    def one(idx, prompt, aspect, lang):
+        bits = []
+        if len(languages) > 1: bits.append(LANG_SLUG.get(lang, lang[:2].lower()))
+        if len(aspects) > 1: bits.append(_aspect_slug(aspect))
+        suffix = ("_" + "_".join(bits)) if bits else ""
+        if prefix:
+            file_name = f"{prefix}_var_{idx:02d}{suffix}.png"
+            label = f"{prefix}_var_{idx:02d}{suffix}"
+        else:
+            file_name = f"variation_{idx:02d}{suffix}.png"
+            label = f"var_{idx:02d}{suffix}"
+        provider._log("INFO", f"[{label}] generating ({lang} · {aspect})...")
+        softened = False
+        try:
+            try:
+                img_url = provider.call_image(
+                    model=image_model, prompt=prompt, image_urls=[ref_url],
+                    resolution=resolution, aspect_ratio=aspect, label=label,
+                )
+            except CensorshipError:
+                provider._log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
+                prompt = _soften(provider, prompt, ref_url)
+                softened = True
+                img_url = provider.call_image(
+                    model=image_model, prompt=prompt, image_urls=[ref_url],
+                    resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
+                )
+            dest = out_dir / file_name
+            provider.download(img_url, dest)
+            provider._log(
+                "OK",
+                f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+            )
+            return {"index": idx, "aspect": aspect, "language": lang, "status": "ok",
+                    "prompt": prompt, "image_url": img_url, "file": dest.name,
+                    "softened": softened, "source_prefix": prefix}
+        except Exception as e:
+            if is_censorship_error(e):
+                provider._log("ERR", f"[{label}] blocked by content filter (after retry). Try softer reference or brand copy.")
+            else:
+                provider._log("ERR", f"[{label}] {e}")
+            return {"index": idx, "aspect": aspect, "language": lang, "status": "error",
+                    "prompt": prompt, "error": str(e), "source_prefix": prefix}
+
+    jobs = [
+        (i + 1, p, a, lang)
+        for lang, prompts in prompts_by_lang.items()
+        for i, p in enumerate(prompts)
+        for a in aspects
+    ]
+    results = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, *j) for j in jobs]
+        for fut in as_completed(futures):
+            if should_cancel():
+                break
+            r = fut.result()
+            results.append(r)
+            on_result(r)
+
+    results.sort(key=lambda r: (r.get("language", ""), r["index"], r.get("aspect", "")))
+    return {"ref_url": ref_url, "prompts_by_lang": prompts_by_lang, "results": results}
+
 
 def run_generation(
     image_path: str,
@@ -528,92 +690,23 @@ def run_generation(
     languages = languages or ["English"]
 
     try:
-        ref_url = provider.upload_image(ref_path)
-        if should_cancel():
-            return out_dir
-
-        prompts_by_lang: dict[str, list[str]] = {}
-        for lang in languages:
-            if should_cancel():
-                return out_dir
-            prompts_by_lang[lang] = _gen_prompts(provider, ref_url, n, language=lang)
-
+        inner = _run_variation_into(
+            provider, ref_path, n, resolution, aspects, languages, workers,
+            out_dir, image_model,
+            prefix=None,
+            on_log=on_log, on_result=on_result, should_cancel=should_cancel,
+        )
         (out_dir / "prompts.txt").write_text(
             "\n\n".join(
                 f"=== {lang} · Variation {i:02d} ===\n{p}"
-                for lang, prompts in prompts_by_lang.items()
+                for lang, prompts in inner["prompts_by_lang"].items()
                 for i, p in enumerate(prompts, 1)
             ), encoding="utf-8")
-
-        total = sum(len(p) for p in prompts_by_lang.values()) * len(aspects)
-        on_log(
-            "INFO",
-            f"Generating {total} images "
-            f"({n} variations × {len(languages)} lang × {len(aspects)} aspects, {workers} workers)..."
-        )
-
-        def one(idx, prompt, aspect, lang):
-            bits = []
-            if len(languages) > 1: bits.append(LANG_SLUG.get(lang, lang[:2].lower()))
-            if len(aspects) > 1: bits.append(_aspect_slug(aspect))
-            suffix = ("_" + "_".join(bits)) if bits else ""
-            file_name = f"variation_{idx:02d}{suffix}.png"
-            label = f"var_{idx:02d}{suffix}"
-            provider._log("INFO", f"[{label}] generating ({lang} · {aspect})...")
-            softened = False
-            try:
-                try:
-                    img_url = provider.call_image(
-                        model=image_model, prompt=prompt, image_urls=[ref_url],
-                        resolution=resolution, aspect_ratio=aspect, label=label,
-                    )
-                except CensorshipError:
-                    provider._log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
-                    prompt = _soften(provider, prompt, ref_url)
-                    softened = True
-                    img_url = provider.call_image(
-                        model=image_model, prompt=prompt, image_urls=[ref_url],
-                        resolution=resolution, aspect_ratio=aspect, label=label + "-retry",
-                    )
-                dest = out_dir / file_name
-                provider.download(img_url, dest)
-                provider._log(
-                    "OK",
-                    f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
-                )
-                return {"index": idx, "aspect": aspect, "language": lang, "status": "ok",
-                        "prompt": prompt, "image_url": img_url, "file": dest.name,
-                        "softened": softened}
-            except Exception as e:
-                if is_censorship_error(e):
-                    provider._log("ERR", f"[{label}] blocked by content filter (after retry). Try softer reference or brand copy.")
-                else:
-                    provider._log("ERR", f"[{label}] {e}")
-                return {"index": idx, "aspect": aspect, "language": lang, "status": "error",
-                        "prompt": prompt, "error": str(e)}
-
-        jobs = [
-            (i + 1, p, a, lang)
-            for lang, prompts in prompts_by_lang.items()
-            for i, p in enumerate(prompts)
-            for a in aspects
-        ]
-        results = []
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(one, *j) for j in jobs]
-            for fut in as_completed(futures):
-                if should_cancel():
-                    break
-                r = fut.result()
-                results.append(r)
-                on_result(r)
-
-        results.sort(key=lambda r: (r.get("language", ""), r["index"], r.get("aspect", "")))
         report = {
             "type": "generate",
             "timestamp": ts,
             "reference": str(ref_path),
-            "reference_url": ref_url,
+            "reference_url": inner["ref_url"],
             "params": {
                 "iterations": n,
                 "resolution": resolution,
@@ -626,15 +719,236 @@ def run_generation(
                 "image_model": image_model,
                 "llm_model": "claude-sonnet-4-6",
             },
-            "results": results,
+            "results": inner["results"],
         }
         (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        ok = sum(1 for r in results if r.get("status") == "ok")
-        on_log("OK", f"Done: {ok}/{len(results)} succeeded.")
+        ok = sum(1 for r in inner["results"] if r.get("status") == "ok")
+        on_log("OK", f"Done: {ok}/{len(inner['results'])} succeeded.")
         return out_dir
     except Exception as e:
         on_log("ERR", str(e))
         return out_dir
+
+
+def run_batch_variation(
+    image_paths: list[str],
+    n: int,
+    resolution: str,
+    aspects: list[str],
+    languages: list[str],
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    *,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Run the Variation pipeline across N source images, fully parallelized.
+
+    Two-phase design:
+      Phase 1: upload + LLM prompt-gen for every source in parallel (workers pool)
+      Phase 2: flatten all (source × variation × aspect × lang) into one big
+               image-gen pool (same workers count) so the bottleneck becomes
+               total throughput, not per-source serial latency.
+
+    Each source is treated independently (no shared brand DNA). Output is a
+    single flat `batch_variation_TIMESTAMP/` folder with filenames prefixed
+    `srcNN_<slug>_var_MM...png`.
+    """
+    if not image_paths:
+        on_log("ERR", "No source images.")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    refs: list[Path] = []
+    for p in image_paths:
+        rp = Path(p).expanduser().resolve()
+        if not rp.exists():
+            on_log("WARN", f"Skipping missing file: {rp}")
+            continue
+        refs.append(rp)
+    if not refs:
+        on_log("ERR", "No usable source images.")
+        return None
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    out_dir = base / f"batch_variation_{ts}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Batch output: {out_dir}")
+    on_log("INFO", f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]}")
+
+    aspects = aspects or ["1:1"]
+    languages = languages or ["English"]
+
+    # ── Phase 1: parallel upload + LLM prompt-gen per source ───────────────
+    def _prepare(src_i: int, ref: Path) -> dict:
+        prefix = f"src{src_i:02d}_{_slugify_source(ref.stem)}"
+        try:
+            if should_cancel():
+                return {"index": src_i, "ref": ref, "prefix": prefix, "cancelled": True}
+            ref_url = provider.upload_image(ref)
+            prompts_by_lang: dict[str, list[str]] = {}
+            for lang in languages:
+                if should_cancel():
+                    return {"index": src_i, "ref": ref, "prefix": prefix,
+                            "ref_url": ref_url, "prompts_by_lang": prompts_by_lang,
+                            "cancelled": True}
+                prompts_by_lang[lang] = _gen_prompts(provider, ref_url, n, language=lang)
+            return {"index": src_i, "ref": ref, "prefix": prefix,
+                    "ref_url": ref_url, "prompts_by_lang": prompts_by_lang}
+        except Exception as e:
+            on_log("ERR", f"[{prefix}] prepare failed: {e}")
+            return {"index": src_i, "ref": ref, "prefix": prefix, "error": str(e)}
+
+    on_log("INFO", f"Phase 1/2 — preparing {len(refs)} source(s) in parallel "
+                   f"(upload + LLM, {workers} workers)")
+    prepared: list[Optional[dict]] = [None] * len(refs)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        fut_to_idx = {pool.submit(_prepare, i + 1, ref): i for i, ref in enumerate(refs)}
+        for fut in as_completed(fut_to_idx):
+            idx = fut_to_idx[fut]
+            prepared[idx] = fut.result()
+            if should_cancel():
+                # Let in-flight tasks finish but stop scheduling new image gen.
+                pass
+
+    # ── Phase 2: flatten all image-gen jobs into one global pool ───────────
+    jobs: list[dict] = []
+    for p in prepared:
+        if not p or p.get("error") or "prompts_by_lang" not in p:
+            continue
+        for lang, prompts in p["prompts_by_lang"].items():
+            for j, prompt in enumerate(prompts, 1):
+                for asp in aspects:
+                    jobs.append({
+                        "src_index": p["index"], "prefix": p["prefix"], "ref_url": p["ref_url"],
+                        "idx": j, "prompt": prompt, "aspect": asp, "lang": lang,
+                    })
+
+    on_log("INFO", f"Phase 2/2 — generating {len(jobs)} images in parallel "
+                   f"({workers} workers)")
+
+    def _gen(job: dict) -> dict:
+        bits: list[str] = []
+        if len(languages) > 1:
+            bits.append(LANG_SLUG.get(job["lang"], job["lang"][:2].lower()))
+        if len(aspects) > 1:
+            bits.append(_aspect_slug(job["aspect"]))
+        suffix = ("_" + "_".join(bits)) if bits else ""
+        file_name = f"{job['prefix']}_var_{job['idx']:02d}{suffix}.png"
+        label = f"{job['prefix']}_var_{job['idx']:02d}{suffix}"
+        provider._log("INFO", f"[{label}] generating ({job['lang']} · {job['aspect']})...")
+        softened = False
+        prompt = job["prompt"]
+        try:
+            try:
+                img_url = provider.call_image(
+                    model=image_model, prompt=prompt, image_urls=[job["ref_url"]],
+                    resolution=resolution, aspect_ratio=job["aspect"], label=label,
+                )
+            except CensorshipError:
+                provider._log("WARN", f"[{label}] blocked by content filter — rewriting prompt and retrying")
+                prompt = _soften(provider, prompt, job["ref_url"])
+                softened = True
+                img_url = provider.call_image(
+                    model=image_model, prompt=prompt, image_urls=[job["ref_url"]],
+                    resolution=resolution, aspect_ratio=job["aspect"], label=label + "-retry",
+                )
+            dest = out_dir / file_name
+            provider.download(img_url, dest)
+            provider._log(
+                "OK",
+                f"[{label}] saved {dest.name}" + (" (after softening)" if softened else ""),
+            )
+            return {"src_index": job["src_index"], "index": job["idx"],
+                    "aspect": job["aspect"], "language": job["lang"], "status": "ok",
+                    "prompt": prompt, "image_url": img_url, "file": dest.name,
+                    "softened": softened, "source_prefix": job["prefix"]}
+        except Exception as e:
+            if is_censorship_error(e):
+                provider._log("ERR", f"[{label}] blocked by content filter (after retry).")
+            else:
+                provider._log("ERR", f"[{label}] {e}")
+            return {"src_index": job["src_index"], "index": job["idx"],
+                    "aspect": job["aspect"], "language": job["lang"], "status": "error",
+                    "prompt": prompt, "error": str(e), "source_prefix": job["prefix"]}
+
+    results_by_src: dict[int, list[dict]] = {p["index"]: [] for p in prepared if p}
+    if jobs and not should_cancel():
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_gen, j) for j in jobs]
+            for fut in as_completed(futures):
+                if should_cancel():
+                    break
+                r = fut.result()
+                results_by_src.setdefault(r["src_index"], []).append(r)
+                on_result(r)
+
+    # ── Build per-source report + flat prompts.txt ─────────────────────────
+    sources_report: list[dict] = []
+    prompts_blob: list[str] = []
+    for p in prepared:
+        if not p:
+            continue
+        if p.get("error"):
+            sources_report.append({"reference": str(p["ref"]), "prefix": p["prefix"],
+                                   "error": p["error"], "results": []})
+            continue
+        results = results_by_src.get(p["index"], [])
+        results.sort(key=lambda r: (r.get("language", ""), r["index"], r.get("aspect", "")))
+        for lang, prompts in p.get("prompts_by_lang", {}).items():
+            for j, pr in enumerate(prompts, 1):
+                prompts_blob.append(f"=== {p['prefix']} · {lang} · Variation {j:02d} ===\n{pr}")
+        sources_report.append({
+            "reference": str(p["ref"]),
+            "reference_url": p.get("ref_url"),
+            "prefix": p["prefix"],
+            "results": results,
+        })
+
+    (out_dir / "prompts.txt").write_text("\n\n".join(prompts_blob), encoding="utf-8")
+
+    batch_report = {
+        "type": "batch_variation",
+        "timestamp": ts,
+        "params": {
+            "iterations": n,
+            "resolution": resolution,
+            "aspects": aspects,
+            "languages": languages,
+            "workers": workers,
+            "provider": provider.name,
+            "image_model": image_model,
+            "llm_model": "claude-sonnet-4-6",
+        },
+        "sources": sources_report,
+    }
+    (out_dir / "batch_report.json").write_text(
+        json.dumps(batch_report, indent=2), encoding="utf-8"
+    )
+
+    total = sum(len(s.get("results", [])) for s in sources_report)
+    total_ok = sum(
+        1 for s in sources_report for r in s.get("results", []) if r.get("status") == "ok"
+    )
+    on_log(
+        "OK",
+        f"Batch done: {total_ok}/{total} images succeeded across {len(sources_report)} source(s).",
+    )
+    return out_dir
 
 
 # ─── Adapt pipeline ─────────────────────────────────────────────────────────
@@ -2381,6 +2695,10 @@ def run_iterate(
     resolution: str = "1k",
     provider_name: Optional[str] = None,
     targets: Optional[list[dict]] = None,
+    language: Optional[str] = None,
+    brand_name: Optional[str] = None,
+    actor_description: Optional[str] = None,
+    out_dir_override: Optional[Path] = None,
 ) -> Optional[Path]:
     """Run a single-axis iteration on one source image. Dispatches by
     `axis` to the right analyzer + edit prompt from ITERATION_AXES.
@@ -2412,11 +2730,25 @@ def run_iterate(
     if not src.exists():
         on_log("ERR", f"Source image not found: {src}"); return None
 
+    # Resolve Brand DNA text from the brand name if provided. Silently skip
+    # if the brand can't be found — the page-level UI already validates.
+    brand_dna_text: Optional[str] = None
+    if brand_name:
+        b = load_brands().get(brand_name) or {}
+        dna = (b.get("dna") or "").strip()
+        if dna:
+            brand_dna_text = dna
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = Path(output_root).expanduser() if output_root else get_output_dir()
-    stem = _safe_name(src.stem) or "iter"
-    out_dir = base / f"{ts}_iterate_{axis}_{stem}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if out_dir_override is not None:
+        out_dir = Path(out_dir_override).expanduser().resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        base = Path(output_root).expanduser() if output_root else get_output_dir()
+        stem = _safe_name(src.stem) or "iter"
+        lang_tag = f"_{LANG_SLUG.get(language, language).lower()}" if language else ""
+        out_dir = base / f"{ts}_iterate_{axis}{lang_tag}_{stem}"
+        out_dir.mkdir(parents=True, exist_ok=True)
     on_out_dir(out_dir)
     on_log("INFO", f"Output: {out_dir}")
 
@@ -2433,7 +2765,15 @@ def run_iterate(
     # If explicit catalog targets were picked → use them directly (no LLM).
     # Otherwise → call the axis's Vision-LLM analyzer (open-axis path).
     if targets:
-        variants = [f"{t.get('label', '')} — {t.get('hint', '')}" for t in targets]
+        # Prefer `prompt_label` (English/neutral, written for the LLM) over
+        # `label` (UI-facing, can be localized). Falls back to label when
+        # an entry has no separate prompt label. This prevents catalog
+        # labels in French/Spanish/etc. from leaking into the rendered ad
+        # when the user picked a different target language.
+        variants = [
+            f"{(t.get('prompt_label') or t.get('label') or '')} — {t.get('hint', '')}"
+            for t in targets
+        ]
         detected = "(explicit catalog targets)"
         style_summary = ", ".join(t.get("slug", "") for t in targets)
         analysis = {
@@ -2444,7 +2784,13 @@ def run_iterate(
     else:
         try:
             on_log("INFO", f"Analyzing {axis_meta['describe']} + generating {n} variants...")
-            analysis = _iterate_analyze(provider, src_url, axis, n)
+            analysis = _iterate_analyze(
+                provider, src_url, axis, n,
+                language=language,
+                brand_name=brand_name,
+                brand_dna=brand_dna_text,
+                actor_description=actor_description,
+            )
         except Exception as e:
             on_log("ERR", f"{axis} analysis failed: {e}"); return out_dir
         variants = analysis.get("variants") or []
@@ -2468,10 +2814,35 @@ def run_iterate(
     # and applies the axis-specific edit instruction on top.
     aspect = "1:1"  # provider derives true ratio from the source frame anyway.
     edit_template = axis_meta["edit_prompt"]
+    # Axes whose edit prompt touches rasterized copy on the image. Adding
+    # a language directive here ensures NanoBanana / GPT Image rewrite the
+    # text in the requested language, not the source language.
+    _COPY_AXES = {"headline", "cta", "awareness", "offer", "concept"}
+    lang_suffix = ""
+    if language and axis in _COPY_AXES:
+        lang_suffix = (
+            f" All visible text on the rendered image MUST be written in "
+            f"{language}, in idiomatic native-level phrasing."
+        )
+
+    # Native UGC axis: anchor the synthetic actor on the brand's ICP if a
+    # Brand DNA is available. Without this, the model invents a generic
+    # influencer who rarely matches the brand's real audience. Capped at
+    # 600 chars to stay well under per-image prompt budgets.
+    persona_suffix = ""
+    if axis == "native_ugc_selfie" and brand_dna_text:
+        snippet = brand_dna_text.strip().replace("\n", " ")
+        if len(snippet) > 600:
+            snippet = snippet[:600].rsplit(" ", 1)[0] + "…"
+        persona_suffix = (
+            f"\n\nACTOR PERSONA CONSTRAINT — the person in the selfie must "
+            f"plausibly belong to this brand's target audience. Match their "
+            f"demographics, lifestyle, and styling cues:\n{snippet}"
+        )
 
     def render_one(idx: int, variant: str) -> dict:
         label = f"iter_{axis[:4]}_{idx:02d}"
-        prompt = edit_template.format(variant=variant)
+        prompt = edit_template.format(variant=variant) + lang_suffix + persona_suffix
         try:
             on_log("INFO", f"[{label}] editing source ({axis})...")
             try:
@@ -2527,6 +2898,9 @@ def run_iterate(
             "image_model": image_model,
             "resolution": resolution,
             "provider": provider.name,
+            "language": language,
+            "brand_name": brand_name,
+            "actor_description": actor_description,
         },
         "results": results,
     }
@@ -3121,6 +3495,194 @@ def create_animation_project(
         "shots": {},
     }
     save_animation_state(out_dir, state)
+    return out_dir
+
+
+# ─── Free-form image generation ───────────────────────────────────────────────
+#
+# Pure "describe what you want" image gen, with optional reference images that
+# the prompt can address via @image1, @image2, ... tokens (interpreted natively
+# by NanoBanana / GPT Image 2 / Seedream and friends).
+#
+# This is the "blank canvas" entrypoint — unlike Variation (which needs a
+# source packshot), Twin (which needs a reference ad), or Iteration (which
+# edits an existing image), this one starts from nothing and produces what
+# the user described.
+
+def run_image_generate(
+    prompt: str,
+    n_variants: int,
+    resolution: str,
+    aspect: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    *,
+    references: Optional[list[str]] = None,
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    image_model: str = DEFAULT_IMAGE_MODEL,
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Generate N images from a free-form prompt, with up to 8 optional
+    reference images uploaded once and reused across all N variants.
+
+    The prompt can reference uploads via `@image1`, `@image2`, ... — these
+    tokens are interpreted natively by the provider's image models (they
+    map to image_urls[0], image_urls[1], ... respectively). No prompt
+    rewriting needed on our side.
+
+    If `references` is None/empty, we go through the pure text-to-image
+    code path (call_image_t2i) — same as the Twin generation phase.
+
+    Outputs land in {output_root or default}/{ts}_generate_{slug}/ with
+    a report.json + variant_NN.png files.
+    """
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+    n = max(1, int(n_variants or 1))
+    if not (prompt or "").strip():
+        on_log("ERR", "Empty prompt — nothing to generate.")
+        return None
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set. Open Settings.")
+        return None
+
+    refs: list[Path] = []
+    for r in (references or []):
+        p = Path(r).expanduser().resolve()
+        if not p.exists():
+            on_log("WARN", f"Reference not found, skipping: {p}")
+            continue
+        refs.append(p)
+    if len(refs) > 8:
+        on_log("WARN", f"Truncating references to 8 (got {len(refs)}).")
+        refs = refs[:8]
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    # Use the first 6 words of the prompt as the folder slug.
+    slug_seed = " ".join((prompt or "").strip().split()[:6]) or "image"
+    out_dir = base / f"{ts}_generate_{_safe_name(slug_seed)[:60]}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+
+    mode = f"image-to-image ({len(refs)} ref{'s' if len(refs) != 1 else ''})" if refs else "text-to-image"
+    on_log(
+        "INFO",
+        f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]} · "
+        f"{mode} · {n} variant{'s' if n > 1 else ''} · {aspect} · {resolution}",
+    )
+
+    # Persist the prompt so the run can be inspected / replayed.
+    (out_dir / "prompt.txt").write_text(prompt.strip() + "\n", encoding="utf-8")
+
+    # 1) Upload references once, reuse URLs across every variant.
+    ref_urls: list[str] = []
+    if refs:
+        try:
+            on_log("INFO", f"Uploading {len(refs)} reference image(s)...")
+            for i, p in enumerate(refs, 1):
+                url = provider.upload_image(p)
+                ref_urls.append(url)
+                on_log("OK", f"Reference {i} uploaded.")
+                # Mirror a thumbnail into the run folder for traceability.
+                try:
+                    shutil.copy2(p, out_dir / f"reference_{i:02d}{p.suffix or '.png'}")
+                except Exception:
+                    pass
+        except Exception as e:
+            on_log("ERR", f"Reference upload failed: {e}")
+            return out_dir
+    if should_cancel():
+        return out_dir
+
+    # 2) Render N variants in parallel.
+    def render_one(idx: int) -> dict:
+        label = f"gen_{idx:02d}"
+        try:
+            on_log("INFO", f"[{label}] rendering...")
+            try:
+                if ref_urls:
+                    img_url = provider.call_image(
+                        model=image_model, prompt=prompt,
+                        image_urls=ref_urls,
+                        resolution=resolution, aspect_ratio=aspect,
+                        label=label,
+                    )
+                else:
+                    img_url = provider.call_image_t2i(
+                        model=image_model, prompt=prompt,
+                        resolution=resolution, aspect_ratio=aspect,
+                        label=label,
+                    )
+            except CensorshipError:
+                on_log("WARN", f"[{label}] blocked by content filter — softening prompt")
+                soft = _soften(provider, prompt, ref_urls[0] if ref_urls else "")
+                if ref_urls:
+                    img_url = provider.call_image(
+                        model=image_model, prompt=soft, image_urls=ref_urls,
+                        resolution=resolution, aspect_ratio=aspect,
+                        label=label + "-retry",
+                    )
+                else:
+                    img_url = provider.call_image_t2i(
+                        model=image_model, prompt=soft,
+                        resolution=resolution, aspect_ratio=aspect,
+                        label=label + "-retry",
+                    )
+            file_name = f"variant_{idx:02d}.png"
+            dest = out_dir / file_name
+            provider.download(img_url, dest)
+            on_log("OK", f"[{label}] saved {dest.name}")
+            return {
+                "index": idx, "status": "ok", "prompt": prompt,
+                "image_url": img_url, "file": dest.name,
+            }
+        except Exception as e:
+            on_log("ERR", f"[{label}] {e}")
+            return {"index": idx, "status": "error", "prompt": prompt, "error": str(e)}
+
+    results: list[dict] = []
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futs = [pool.submit(render_one, i + 1) for i in range(n)]
+            for f in as_completed(futs):
+                if should_cancel():
+                    break
+                r = f.result()
+                results.append(r)
+                on_result(r)
+    except Exception as e:
+        on_log("ERR", str(e))
+
+    results.sort(key=lambda r: r["index"])
+    report = {
+        "type": "image_generate",
+        "timestamp": ts,
+        "prompt": prompt,
+        "n_references": len(refs),
+        "params": {
+            "iterations": n,
+            "image_model": image_model,
+            "resolution": resolution,
+            "aspect": aspect,
+            "provider": provider.name,
+        },
+        "results": results,
+    }
+    try:
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    ok = sum(1 for r in results if r.get("status") == "ok")
+    on_log("OK", f"Done · {ok}/{len(results)} variants succeeded.")
     return out_dir
 
 

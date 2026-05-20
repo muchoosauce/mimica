@@ -15,6 +15,7 @@ from .pages import (
     SettingsPage, TwinHubPage
 )
 from .swap_page import SwapPage
+from .image_generator_page import ImageGeneratorPage
 from pathlib import Path as _PathForAssets
 
 from .widgets import GradientLogo, GradientText, icon_label, svg_icon, ICONS
@@ -101,6 +102,10 @@ class Sidebar(QWidget):
         # Primary nav
         for key, icon, label in [
             ("dashboard", "dashboard", "Dashboard"),
+            # Create = free-form image generation with optional @imageN refs.
+            # Sits at the top of "make stuff" because it's the most fundamental
+            # blank-canvas entry — no source ad, no brand required.
+            ("create", "generate", "Create"),
             ("animation", "animation", "Animation"),
             ("funnel", "funnel", "Funnel Ads"),
             ("twin", "twin", "Twin"),
@@ -228,6 +233,7 @@ class TopBar(QWidget):
 
     _ICON_MAP = {
         "Dashboard":    "dashboard",
+        "Create":       "generate",
         "Animation":    "animation",
         "Funnel Ads":   "funnel",
         "Twin":         "twin",
@@ -268,6 +274,7 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.dashboard = DashboardPage()
+        self.create = ImageGeneratorPage()
         self.animation = AnimationPage()
         self.funnel = FunnelAdsPage()
         self.twin = TwinHubPage()
@@ -281,7 +288,7 @@ class MainWindow(QMainWindow):
         self.brands = BrandsPage()
         self.detail = RunDetailPage()
         self.settings = SettingsPage()
-        for p in (self.dashboard, self.animation, self.funnel, self.twin, self.swap, self.generate, self.adapt, self.fix, self.broll,
+        for p in (self.dashboard, self.create, self.animation, self.funnel, self.twin, self.swap, self.generate, self.adapt, self.fix, self.broll,
                   self.iteration, self.history, self.brands, self.detail, self.settings):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
@@ -323,6 +330,7 @@ class MainWindow(QMainWindow):
     def _on_nav(self, key: str):
         mapping = {
             "dashboard": (self.dashboard, "Dashboard"),
+            "create":    (self.create,    "Create"),
             "animation": (self.animation, "Animation"),
             "funnel":    (self.funnel,    "Funnel Ads"),
             "twin":      (self.twin,      "Twin"),

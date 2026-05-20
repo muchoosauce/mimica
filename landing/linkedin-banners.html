@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>Mimica — Bannières LinkedIn</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.min.js"></script>
+<style>
+  :root {
+    --canvas: #0A0A0F;
+    --surface-1: #13131C;
+    --surface-2: #1A1A24;
+    --text: #F4F4F6;
+    --muted: #9999A0;
+    --dim: #5C5C66;
+    --accent: #7C5CFF;
+    --pink: #EC4899;
+    --gradient: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #07070B; color: var(--text); font-family: 'Inter', -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+  .page { max-width: 1640px; margin: 0 auto; padding: 64px 32px 96px; }
+  .page h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  .page p.lede { color: var(--muted); margin: 0 0 48px; font-size: 15px; max-width: 720px; line-height: 1.55; }
+
+  .card { margin-bottom: 56px; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 16px; flex-wrap: wrap; }
+  .card-title { font-size: 14px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); margin: 0; }
+  .card-meta { font-size: 12px; color: var(--muted); }
+  .card-actions { display: flex; gap: 8px; }
+  .btn { background: var(--surface-2); color: var(--text); border: 1px solid rgba(255,255,255,0.08); padding: 8px 14px; font: inherit; font-size: 13px; font-weight: 500; border-radius: 999px; cursor: pointer; transition: all 0.15s ease; }
+  .btn:hover { background: var(--surface-1); border-color: rgba(255,255,255,0.16); }
+  .btn-primary { background: var(--gradient); border: none; color: #0F0F1E; font-weight: 600; }
+  .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.05); }
+
+  /* Banner is rendered at exact LinkedIn pixel size 1584×396, then scaled down for preview */
+  .preview { width: 100%; aspect-ratio: 4 / 1; overflow: hidden; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); position: relative; background: var(--canvas); }
+  .banner {
+    width: 1584px; height: 396px;
+    position: relative; overflow: hidden;
+    background: var(--canvas);
+    transform-origin: top left;
+    /* scaled by JS to fit preview width — fallback to CSS */
+  }
+  .preview { container-type: inline-size; }
+  @container (min-width: 0) {
+    .banner { transform: scale(calc(100cqw / 1584)); }
+  }
+
+  /* Safe zone overlay — shows where LinkedIn profile picture covers the banner */
+  .safe-zone {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.15s;
+    /* Profile picture: ~160px diameter, centered roughly at x:185px from left, y:bottom-of-banner.
+       Approx safe-circle in 1584×396 coords: center (185, 396), radius 200 */
+    width: 1584px; height: 396px; top: 0; left: 0;
+    transform-origin: top left;
+  }
+  @container (min-width: 0) {
+    .safe-zone { transform: scale(calc(100cqw / 1584)); }
+  }
+  .preview.show-safe .safe-zone { opacity: 1; }
+  .safe-zone::before {
+    content: ''; position: absolute;
+    left: 105px; bottom: -110px; width: 220px; height: 220px;
+    border-radius: 50%; border: 2px dashed rgba(124, 92, 255, 0.7);
+    box-shadow: 0 0 0 4000px rgba(0,0,0,0.45) inset;
+  }
+  .safe-zone::after {
+    content: 'Photo profil LinkedIn'; position: absolute;
+    left: 350px; bottom: 30px; font-size: 16px; color: rgba(255,255,255,0.7); font-weight: 500;
+  }
+
+  /* ============== SHARED WORDMARK ============== */
+  .wordmark {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    line-height: 0.9;
+    display: inline-block;
+  }
+  .tagline {
+    font-family: 'Inter', sans-serif;
+    color: var(--muted);
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+  }
+  .dot-accent {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--gradient); vertical-align: middle; margin-left: 6px;
+  }
+
+  /* ============== VARIANT 1 — AURORA ORB ============== */
+  .v1 { background: #0A0A0F; }
+  .v1 .orb {
+    position: absolute; width: 900px; height: 900px; border-radius: 50%;
+    background: radial-gradient(circle at center, rgba(124,92,255,0.55) 0%, rgba(236,72,153,0.28) 35%, transparent 70%);
+    filter: blur(20px);
+    right: -180px; top: -300px;
+  }
+  .v1 .orb-2 {
+    position: absolute; width: 600px; height: 600px; border-radius: 50%;
+    background: radial-gradient(circle at center, rgba(236,72,153,0.32) 0%, transparent 65%);
+    filter: blur(40px);
+    right: 200px; bottom: -300px;
+  }
+  .v1 .content { position: absolute; right: 96px; top: 50%; transform: translateY(-50%); text-align: right; }
+  .v1 .wordmark { font-size: 128px; }
+  .v1 .tagline { font-size: 22px; margin-top: 14px; }
+
+  /* ============== VARIANT 2 — DOTTED GRID ============== */
+  .v2 { background: #0A0A0F; }
+  .v2 .grid {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.07) 1.2px, transparent 1.5px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  }
+  .v2 .glow-line {
+    position: absolute; left: 0; right: 0; top: 50%; height: 2px;
+    background: linear-gradient(90deg, transparent 0%, rgba(124,92,255,0.6) 30%, rgba(236,72,153,0.6) 70%, transparent 100%);
+    filter: blur(1px);
+    transform: translateY(-50%);
+  }
+  .v2 .glow-line::after {
+    content: ''; position: absolute; inset: -40px 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(124,92,255,0.18) 30%, rgba(236,72,153,0.18) 70%, transparent 100%);
+    filter: blur(30px);
+  }
+  .v2 .content { position: absolute; right: 96px; top: 50%; transform: translateY(-50%); text-align: right; }
+  .v2 .wordmark { font-size: 112px; }
+  .v2 .tagline { font-size: 20px; margin-top: 12px; }
+
+  /* ============== VARIANT 3 — DIAGONAL BEAM ============== */
+  .v3 { background: #0A0A0F; }
+  .v3 .beam {
+    position: absolute; width: 200%; height: 240px;
+    background: var(--gradient);
+    opacity: 0.85;
+    top: 50%; left: -50%;
+    transform: translateY(-50%) rotate(-8deg);
+    filter: blur(0.5px);
+    mask-image: linear-gradient(90deg, transparent 0%, black 25%, black 75%, transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 25%, black 75%, transparent 100%);
+  }
+  .v3 .beam-glow {
+    position: absolute; width: 200%; height: 380px;
+    background: var(--gradient);
+    opacity: 0.35;
+    top: 50%; left: -50%;
+    transform: translateY(-50%) rotate(-8deg);
+    filter: blur(60px);
+  }
+  .v3 .content { position: absolute; right: 96px; top: 50%; transform: translateY(-50%); text-align: right; }
+  .v3 .wordmark {
+    font-size: 120px;
+    background: linear-gradient(135deg, #FFFFFF 0%, #F4F4F6 100%);
+    -webkit-background-clip: text; background-clip: text;
+  }
+  .v3 .tagline { font-size: 20px; margin-top: 12px; color: rgba(255,255,255,0.85); }
+
+  /* ============== VARIANT 4 — TYPE FIRST (XL wordmark) ============== */
+  .v4 { background: #0A0A0F; }
+  .v4 .noise {
+    position: absolute; inset: 0; opacity: 0.4; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.6'/></svg>");
+  }
+  .v4 .halo {
+    position: absolute; width: 1100px; height: 1100px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(124,92,255,0.18) 0%, rgba(236,72,153,0.10) 30%, transparent 65%);
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+    filter: blur(20px);
+  }
+  .v4 .content { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+  .v4 .wordmark { font-size: 200px; letter-spacing: -0.05em; }
+  .v4 .tagline { font-size: 18px; margin-top: 18px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+
+  /* ============== VARIANT 5 — ORBIT RINGS ============== */
+  .v5 { background: #0A0A0F; }
+  .v5 svg.rings { position: absolute; left: -200px; top: 50%; transform: translateY(-50%); width: 900px; height: 900px; opacity: 0.55; }
+  .v5 .ring-glow {
+    position: absolute; width: 500px; height: 500px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(124,92,255,0.28) 0%, rgba(236,72,153,0.14) 35%, transparent 65%);
+    left: 50px; top: 50%; transform: translateY(-50%);
+    filter: blur(40px);
+  }
+  .v5 .content { position: absolute; right: 96px; top: 50%; transform: translateY(-50%); text-align: right; }
+  .v5 .wordmark { font-size: 120px; }
+  .v5 .tagline { font-size: 20px; margin-top: 12px; }
+
+  /* ============== VARIANT 6 — MINIMAL LEFT-ALIGN (creative right) ============== */
+  .v6 { background: #0A0A0F; }
+  .v6 .glow-corner {
+    position: absolute; width: 900px; height: 900px; border-radius: 50%;
+    background: radial-gradient(circle at center, rgba(236,72,153,0.38) 0%, rgba(124,92,255,0.22) 35%, transparent 65%);
+    filter: blur(30px);
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+  }
+  .v6 .content { position: absolute; left: 380px; top: 50%; transform: translateY(-50%); text-align: left; }
+  .v6 .wordmark { font-size: 96px; }
+  .v6 .tagline { font-size: 18px; margin-top: 12px; }
+  .v6 .name-line {
+    font-size: 14px; color: var(--text); margin-top: 22px; letter-spacing: 0.12em; text-transform: uppercase;
+    display: inline-block; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);
+  }
+
+  /* ============== Field hint ============== */
+  .hint {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,20,28,0.92); border: 1px solid rgba(255,255,255,0.08);
+    padding: 10px 18px; border-radius: 999px; font-size: 13px; color: var(--muted);
+    backdrop-filter: blur(10px);
+    z-index: 50;
+  }
+  .hint kbd { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; color: var(--text); font-family: 'Inter'; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <h1>Bannières LinkedIn — Mimica (fonds nus)</h1>
+  <p class="lede">
+    6 fonds minimalistes, 1584×396 px (format natif LinkedIn). Dégradé Mimica violet→rose sur fond #0A0A0F.
+    Le texte / wordmark sera ajouté manuellement (Canva, Figma…). Le bouton « Voir zone photo »
+    affiche où la photo de profil se posera pour éviter d'y placer un dégradé important.
+  </p>
+
+  <!-- ===================== V1 — AURORA ORB ===================== -->
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">01 — Aurora Orb</p>
+        <p class="card-meta">Orb gradient flottante côté droit, wordmark + tagline alignés droite.</p>
+      </div>
+      <div class="card-actions">
+        <button class="btn" data-toggle-safe="b-v1">Voir zone photo</button>
+        <button class="btn btn-primary" data-download="b-v1" data-name="mimica-banner-aurora.png">Télécharger PNG</button>
+      </div>
+    </div>
+    <div class="preview" id="p-v1">
+      <div class="banner v1" id="b-v1">
+        <div class="orb"></div>
+        <div class="orb-2"></div>
+      </div>
+      <div class="safe-zone"></div>
+    </div>
+  </div>
+
+  <!-- ===================== V2 — DOTTED GRID ===================== -->
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">02 — Dotted Grid + Beam</p>
+        <p class="card-meta">Grille pointillée discrète, ligne lumineuse horizontale gradient.</p>
+      </div>
+      <div class="card-actions">
+        <button class="btn" data-toggle-safe="b-v2">Voir zone photo</button>
+        <button class="btn btn-primary" data-download="b-v2" data-name="mimica-banner-grid.png">Télécharger PNG</button>
+      </div>
+    </div>
+    <div class="preview" id="p-v2">
+      <div class="banner v2" id="b-v2">
+        <div class="grid"></div>
+        <div class="glow-line"></div>
+      </div>
+      <div class="safe-zone"></div>
+    </div>
+  </div>
+
+  <!-- ===================== V3 — DIAGONAL BEAM ===================== -->
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">03 — Diagonal Beam</p>
+        <p class="card-meta">Bande gradient en diagonale, wordmark en blanc pour le contraste.</p>
+      </div>
+      <div class="card-actions">
+        <button class="btn" data-toggle-safe="b-v3">Voir zone photo</button>
+        <button class="btn btn-primary" data-download="b-v3" data-name="mimica-banner-beam.png">Télécharger PNG</button>
+      </div>
+    </div>
+    <div class="preview" id="p-v3">
+      <div class="banner v3" id="b-v3">
+        <div class="beam-glow"></div>
+        <div class="beam"></div>
+      </div>
+      <div class="safe-zone"></div>
+    </div>
+  </div>
+
+  <!-- ===================== V4 — TYPE FIRST ===================== -->
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">04 — Type First</p>
+        <p class="card-meta">Wordmark XL centré, halo radial, sous-titre en caps espacé.</p>
+      </div>
+      <div class="card-actions">
+        <button class="btn" data-toggle-safe="b-v4">Voir zone photo</button>
+        <button class="btn btn-primary" data-download="b-v4" data-name="mimica-banner-typefirst.png">Télécharger PNG</button>
+      </div>
+    </div>
+    <div class="preview" id="p-v4">
+      <div class="banner v4" id="b-v4">
+        <div class="halo"></div>
+        <div class="noise"></div>
+      </div>
+      <div class="safe-zone"></div>
+    </div>
+  </div>
+
+  <!-- ===================== V5 — ORBIT ===================== -->
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">05 — Orbit</p>
+        <p class="card-meta">Anneaux concentriques côté gauche, glow gradient, wordmark à droite.</p>
+      </div>
+      <div class="card-actions">
+        <button class="btn" data-toggle-safe="b-v5">Voir zone photo</button>
+        <button class="btn btn-primary" data-download="b-v5" data-name="mimica-banner-orbit.png">Télécharger PNG</button>
+      </div>
+    </div>
+    <div class="preview" id="p-v5">
+      <div class="banner v5" id="b-v5">
+        <div class="ring-glow"></div>
+        <svg class="rings" viewBox="0 0 900 900" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="g5" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#7C5CFF"/>
+              <stop offset="100%" stop-color="#EC4899"/>
+            </linearGradient>
+          </defs>
+          <circle cx="450" cy="450" r="120" fill="none" stroke="url(#g5)" stroke-width="1.5" opacity="0.9"/>
+          <circle cx="450" cy="450" r="200" fill="none" stroke="url(#g5)" stroke-width="1.2" opacity="0.6"/>
+          <circle cx="450" cy="450" r="290" fill="none" stroke="url(#g5)" stroke-width="1" opacity="0.4"/>
+          <circle cx="450" cy="450" r="380" fill="none" stroke="url(#g5)" stroke-width="1" opacity="0.25"/>
+          <circle cx="450" cy="450" r="6" fill="url(#g5)"/>
+        </svg>
+      </div>
+      <div class="safe-zone"></div>
+    </div>
+  </div>
+
+  <!-- ===================== V6 — EQUALIZER ===================== -->
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">06 — Equalizer</p>
+        <p class="card-meta">Barres verticales gradient (variations / itérations) à droite, wordmark à gauche.</p>
+      </div>
+      <div class="card-actions">
+        <button class="btn" data-toggle-safe="b-v6">Voir zone photo</button>
+        <button class="btn btn-primary" data-download="b-v6" data-name="mimica-banner-equalizer.png">Télécharger PNG</button>
+      </div>
+    </div>
+    <div class="preview" id="p-v6">
+      <div class="banner v6" id="b-v6">
+        <div class="glow-corner"></div>
+      </div>
+      <div class="safe-zone"></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="hint">Fonds nus prêts à exporter — ajoute texte / wordmark dans Canva ou Figma après téléchargement.</div>
+
+<script>
+  // Safe-zone toggles
+  document.querySelectorAll('[data-toggle-safe]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const preview = document.getElementById(btn.dataset.toggleSafe).closest('.preview');
+      preview.classList.toggle('show-safe');
+      btn.textContent = preview.classList.contains('show-safe') ? 'Masquer zone photo' : 'Voir zone photo';
+    });
+  });
+
+  // PNG download — render the banner element at its native 1584×396 size
+  document.querySelectorAll('[data-download]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.dataset.download);
+      const name = btn.dataset.name || 'mimica-banner.png';
+      const original = btn.textContent;
+      btn.textContent = 'Génération…';
+      btn.disabled = true;
+
+      // Temporarily remove the preview scale so the element renders at 1584×396
+      const restoreTransform = target.style.transform;
+      target.style.transform = 'none';
+
+      try {
+        const dataUrl = await htmlToImage.toPng(target, {
+          width: 1584,
+          height: 396,
+          pixelRatio: 2,
+          cacheBust: true,
+          backgroundColor: '#0A0A0F',
+          style: { transform: 'none' }
+        });
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = name;
+        a.click();
+      } catch (err) {
+        console.error(err);
+        alert('Erreur de génération PNG. Détails : ' + err.message);
+      } finally {
+        target.style.transform = restoreTransform;
+        btn.textContent = original;
+        btn.disabled = false;
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

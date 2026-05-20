@@ -1,7 +1,7 @@
 """Candidate product image detection — heuristic filter + LLM tagger."""
 from __future__ import annotations
 
-from pathlib import Path
+from io import BytesIO
 
 from .types import CollectedImage
 
@@ -16,7 +16,8 @@ def _ensure_dims(img: CollectedImage) -> None:
         return
     try:
         from PIL import Image
-        with Image.open(img.path) as im:
+        source = BytesIO(img.data) if img.data is not None else img.path
+        with Image.open(source) as im:
             img.width, img.height = im.size
     except Exception:
         img.width = img.height = 0
@@ -26,14 +27,24 @@ def heuristic_filter(images: list[CollectedImage], cap: int = 20) -> list[Collec
     """Pick the most plausible product/lifestyle candidates from a flat list.
 
     Cheap rules: dimensions ≥ 300px, sane aspect ratio, prefer larger images,
-    deduplicate by file path. Returns up to `cap` images sorted by area desc.
+    deduplicate by source. Returns up to `cap` images sorted by area desc.
+    Handles both on-disk images (`path` set) and in-memory site images
+    (`data` set).
     """
-    seen: set[Path] = set()
+    seen: set = set()
     keepers: list[CollectedImage] = []
     for img in images:
-        if img.path in seen or not img.path.exists():
+        if img.data is not None:
+            key = ("data", id(img))
+        elif img.path is not None:
+            if not img.path.exists():
+                continue
+            key = ("path", img.path)
+        else:
             continue
-        seen.add(img.path)
+        if key in seen:
+            continue
+        seen.add(key)
         _ensure_dims(img)
         if not img.width or not img.height:
             continue

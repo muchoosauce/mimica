@@ -1969,21 +1969,21 @@ def soften_prompt(provider: "Provider", prompt: str, ad_url: str) -> str:
 _AXIS_PROMPT_HEADER = """You are an expert ad iterator analyzing one static ad image. Output STRICT JSON only — no preamble, no markdown, no commentary."""
 
 CONCEPT_CATALOG = [
-    {"slug": "bullet_points", "label": "Bullet points", "hint": "vertical or horizontal list of 3-5 short bullets with icons or arrows, headline on top, CTA at the bottom"},
-    {"slug": "problem_solution", "label": "Problème / Solution", "hint": "two-zone layout — top half shows the problem clearly, bottom half shows the solution with the product"},
-    {"slug": "before_after", "label": "Avant / Après", "hint": "split in two halves — left = avant (problem state), right = après (result), with clear labels"},
-    {"slug": "split_benefit", "label": "Split + bénéfice", "hint": "split layout — left side product hero, right side big-headline benefit highlight"},
-    {"slug": "split_offer", "label": "Split + offre", "hint": "split layout — left side product hero, right side offer block with deal and CTA"},
-    {"slug": "us_vs_them", "label": "Us VS Them", "hint": "comparative two-column layout — left column 'them' (competitor flaws in red), right column 'us' (advantages in green)"},
-    {"slug": "us_vs_them_them", "label": "Us VS Them VS Them", "hint": "three-column comparative — us (winner) vs two competitors, our column highlighted"},
-    {"slug": "social_proof", "label": "Social proof", "hint": "centered review/avis card with 5 stars, customer name, short review text + product packshot"},
-    {"slug": "offer_forward", "label": "Offre en avant", "hint": "offer-led — biggest element is the price/deal/percentage, product secondary"},
-    {"slug": "hand_writing", "label": "Hand writing", "hint": "designed as a handwritten note style on paper/post-it/notebook texture"},
-    {"slug": "long_text", "label": "Textuel long", "hint": "text-heavy editorial — long paragraph as the dominant element, product image small"},
-    {"slug": "native_ugc", "label": "Native FB/IG/TT", "hint": "designed as a native social-media post (Facebook/Instagram/TikTok screenshot style)"},
-    {"slug": "headline_only", "label": "Headline only", "hint": "minimal — giant typographic headline filling 60% of the frame, product small"},
-    {"slug": "statistics", "label": "Statistiques", "hint": "data-led — big numbers / percentages / charts as the dominant element"},
-    {"slug": "product_only", "label": "Produit simple", "hint": "minimalist product packshot — product centered on solid backdrop, no text"},
+    {"slug": "bullet_points", "label": "Bullet points", "prompt_label": "Bullet points", "hint": "vertical or horizontal list of 3-5 short bullets with icons or arrows, headline on top, CTA at the bottom. All bullet copy MUST be written in the target language specified at the end of this prompt."},
+    {"slug": "problem_solution", "label": "Problème / Solution", "prompt_label": "Problem / Solution", "hint": "two-zone layout — top half shows the problem clearly, bottom half shows the solution with the product. Any zone labels rendered on the image must be in the target language."},
+    {"slug": "before_after", "label": "Avant / Après", "prompt_label": "Before / After", "hint": "split in two halves — left = problem state, right = result state, with clear labels (labels rendered in the TARGET LANGUAGE specified at the end of this prompt — NEVER hardcode 'avant'/'après'/'before'/'after' in any specific language unless that matches the target). WHEN the product's promise is a human transformation (focus, energy, calm, sleep, mood, skin, hair, body, posture, confidence): the SAME person must appear on BOTH sides, in the SAME framing and SAME angle, but in VISIBLY DIFFERENT states — left side embodies the problem (slumped posture, tired eyes, head-in-hands, scattered, frowning, low energy in their face and body), right side embodies the result (upright posture, sharp eyes, smile, in-flow energy, visibly energized). The state difference must be readable in under 1 second from the human alone — not from the props. Product visible in both halves but secondary (max 20% of each half), human is the hero. ONLY when the product's promise is NOT a human transformation (cleaning product, kitchen tool, plant fertilizer, etc.) is it acceptable to show two object/environment states without a person. STRICTLY FORBIDDEN: a before/after that only swaps background color or props around the same product packshot — that fails the brief."},
+    {"slug": "split_benefit", "label": "Split + bénéfice", "prompt_label": "Split + benefit", "hint": "split layout — left side product hero, right side big-headline benefit highlight (headline copy in the target language)"},
+    {"slug": "split_offer", "label": "Split + offre", "prompt_label": "Split + offer", "hint": "split layout — left side product hero, right side offer block with deal and CTA (all copy in the target language)"},
+    {"slug": "us_vs_them", "label": "Us VS Them", "prompt_label": "Us vs Them", "hint": "comparative two-column layout — left column 'them' (competitor flaws in red), right column 'us' (advantages in green). Column headers and copy in the TARGET LANGUAGE."},
+    {"slug": "us_vs_them_them", "label": "Us VS Them VS Them", "prompt_label": "Us vs Them vs Them", "hint": "three-column comparative — us (winner) vs two competitors, our column highlighted. All copy in the target language."},
+    {"slug": "social_proof", "label": "Social proof", "prompt_label": "Social proof", "hint": "centered review card with 5 stars, customer name, short review text + product packshot (all copy in the target language)"},
+    {"slug": "offer_forward", "label": "Offre en avant", "prompt_label": "Offer forward", "hint": "offer-led — biggest element is the price/deal/percentage, product secondary (currency + copy in the target language)"},
+    {"slug": "hand_writing", "label": "Hand writing", "prompt_label": "Hand writing", "hint": "designed as a handwritten note style on paper/post-it/notebook texture (handwritten copy in the target language)"},
+    {"slug": "long_text", "label": "Textuel long", "prompt_label": "Long form text", "hint": "text-heavy editorial — long paragraph as the dominant element, product image small (paragraph in the target language)"},
+    {"slug": "native_ugc", "label": "Native FB/IG/TT", "prompt_label": "Native social-media post", "hint": "designed as a native social-media post (Facebook/Instagram/TikTok screenshot style) — UI chrome and any visible copy in the target language"},
+    {"slug": "headline_only", "label": "Headline only", "prompt_label": "Headline only", "hint": "minimal — giant typographic headline filling 60% of the frame, product small (headline in the target language)"},
+    {"slug": "statistics", "label": "Statistiques", "prompt_label": "Statistics", "hint": "ONE hero statistic that occupies 40-60% of the frame (giant percentage or number, brand-color typography, immediately legible). AT MOST one secondary supporting stat, rendered much smaller (~15% of hero size), placed off-axis. Single source line in fine print. Product visible but clearly secondary (max 20% of frame). All accompanying copy (caption, source line, supporting stat label) in the target language. STRICTLY FORBIDDEN: more than 2 numerical data points total, donut + bar + people-icons stacked, multi-stat dashboard layouts, infographic walls. The whole ad must read as 'one killer number that stops the scroll' — not as a report."},
+    {"slug": "product_only", "label": "Produit simple", "prompt_label": "Product only", "hint": "minimalist product packshot — product centered on solid backdrop, no text"},
 ]
 
 AWARENESS_CATALOG = [
@@ -2014,12 +2014,81 @@ OFFER_CATALOG = [
     {"slug": "bogo", "label": "1 + 1 free", "hint": "buy one get one free (BOGO) framing — 1+1 mechanic as the main hook"},
     {"slug": "percentage_off", "label": "% off", "hint": "percentage discount (-30%, -50%) huge and centered, original price secondary"},
     {"slug": "price_anchor", "label": "Price anchor", "hint": "price anchoring — original price visibly crossed out, new price highlighted in the brand accent"},
-    {"slug": "free_shipping", "label": "Free shipping", "hint": "free shipping (livraison offerte) as the main hook, secondary product visual"},
-    {"slug": "money_back", "label": "Money-back", "hint": "money-back guarantee badge prominent (90 days satisfait-ou-remboursé), reassurance-led"},
+    {"slug": "free_shipping", "label": "Free shipping", "hint": "free-shipping mechanic as the main hook (text rendered in the TARGET LANGUAGE — e.g. 'Free shipping' / 'Livraison offerte' / 'Envío gratis' depending on language), secondary product visual"},
+    {"slug": "money_back", "label": "Money-back", "hint": "money-back guarantee badge prominent (e.g. '90-day money-back' rendered in the TARGET LANGUAGE), reassurance-led"},
     {"slug": "limited_time", "label": "Limited time", "hint": "limited-time urgency (offer expires X) front and center, countdown vibe"},
     {"slug": "volume_discount", "label": "Volume discount", "hint": "volume tier mechanic — 1 unit = €X, 2 units = €Y/unit, 3+ units = €Z/unit shown as a table"},
-    {"slug": "gift_with_purchase", "label": "Gift with purchase", "hint": "free gift with purchase (offert dès X€, bonus offert) shown as the main hook"},
+    {"slug": "gift_with_purchase", "label": "Gift with purchase", "hint": "free gift with purchase mechanic (e.g. 'Free gift over $X' rendered in the TARGET LANGUAGE) shown as the main hook"},
     {"slug": "subscription_save", "label": "Subscription save", "hint": "subscription discount (save X% with auto-renew) framed as the smart option"},
+]
+
+
+# Native UGC selfie formats. Used by the `native_ugc_selfie` iteration axis,
+# which regenerates a polished studio ad into a raw iPhone selfie keeping
+# ONLY the source product packaging as the immutable hero element.
+NATIVE_UGC_FORMATS = [
+    {
+        "slug": "mirror_selfie",
+        "label": "Mirror selfie",
+        "hint": (
+            "person standing in front of a bathroom or full-length mirror, holding "
+            "the product up at chest level, smartphone partially visible in the "
+            "reflection covering part of the face, ambient overhead bathroom light "
+            "or natural window light, real bathroom clutter visible in the reflection "
+            "(towels, toiletries, mirror smudges)"
+        ),
+    },
+    {
+        "slug": "pov_arm_extended",
+        "label": "POV arm extended",
+        "hint": (
+            "first-person POV with one arm extended toward the camera holding the "
+            "product as the foreground hero, face partially visible behind the product "
+            "(forehead and eyes peeking, or chin and smile), slight motion blur from "
+            "handheld phone, casual home or street setting blurred behind"
+        ),
+    },
+    {
+        "slug": "in_use_moment",
+        "label": "In-use moment",
+        "hint": (
+            "person captured mid-use of the product (drinking, applying, eating, "
+            "mixing, opening) in an unposed candid moment, photographed from across "
+            "the room or just above eye-level, real lived-in setting (kitchen "
+            "counter / bedroom / desk / gym locker room), natural ambient light only"
+        ),
+    },
+    {
+        "slug": "unboxing_reaction",
+        "label": "Unboxing reaction",
+        "hint": (
+            "person just received the product, holding it close to chest or beside "
+            "the face, fresh packaging still visible (no wear), genuine first-look "
+            "facial expression (surprised, delighted, intrigued, eyebrow-raise), "
+            "couch or kitchen counter or entryway setting, daytime natural light"
+        ),
+    },
+    {
+        "slug": "morning_routine",
+        "label": "Morning routine",
+        "hint": (
+            "person captured in their morning routine with the product integrated "
+            "naturally (next to coffee mug on counter, on bathroom vanity beside "
+            "toothbrush, on bedside table beside phone), soft morning window light, "
+            "person partially in frame (hand reaching for product, or in pajamas in "
+            "the background), no styling effort visible"
+        ),
+    },
+    {
+        "slug": "duo_friend_share",
+        "label": "Duo / friend share",
+        "hint": (
+            "two friends in the frame, one holding the product up while talking to "
+            "the other, both reacting genuinely (one curious, one already convinced), "
+            "casual social setting (couch, café table, kitchen island), candid "
+            "phone-snap framing, no posed energy"
+        ),
+    },
 ]
 
 
@@ -2267,7 +2336,104 @@ OUTPUT:
             "Only the composition / positioning of elements changes."
         ),
     },
+    "native_ugc_selfie": {
+        "label": "Native UGC",
+        "describe": "regenerated as a raw iPhone selfie keeping ONLY the product",
+        "catalog": NATIVE_UGC_FORMATS,
+        "analyzer": _AXIS_PROMPT_HEADER + """
+
+Extract the PRODUCT from the source ad — packaging shape, color palette, label/logo text, category. Ignore decor, current actor, copy overlays, design layout.
+
+Generate {N} native UGC selfie scenarios, one per requested format. Each variant must be one short paragraph (~30 words) combining: the requested format, a believable real setting, the lighting source, the actor's demographic that plausibly matches the product's ICP (if a brand persona context is provided in the system prompt, use it; else infer from product category), and a brief expression cue.
+
+OUTPUT:
+{
+  "detected": "product packaging description + product category",
+  "style_summary": "inferred ICP demographic",
+  "variants": ["<format slug> — <setting>, <actor>, <lighting>, <expression>", "..."]
+}""",
+        "edit_prompt": (
+            "Regenerate the image as a raw iPhone UGC selfie photo.\n\n"
+            "PRESERVE FROM IMAGE 1 (immutable): ONLY the exact product "
+            "packaging — same logo, same label text, same colors, same shape, "
+            "same proportions, same readable copy on the pack. The product is "
+            "the only element carried over from the source.\n\n"
+            "REPLACE EVERYTHING ELSE entirely according to this scenario: "
+            "{variant}\n\n"
+            "AESTHETIC RULES (must follow strictly):\n"
+            "- Raw iPhone selfie aesthetic: handheld angle, slight optical "
+            "micro-flaws, real visible skin texture (pores, slight redness, "
+            "no airbrushing), slight motion blur acceptable.\n"
+            "- Natural ambient light only — overhead bathroom light, soft "
+            "window light, fluorescent kitchen — NEVER studio softbox, NEVER "
+            "rim lights, NEVER lens flares, NEVER professional product lighting.\n"
+            "- Real lived-in setting — visible household clutter, normal "
+            "surfaces, real-world background depth.\n"
+            "- ABSOLUTELY NO text overlays, NO graphic callouts, NO design "
+            "elements, NO arrows, NO badges, NO typography work, NO logos "
+            "other than what is printed on the product packaging itself.\n"
+            "- The output must read as a real customer's iPhone Story post, "
+            "NOT a brand campaign or studio shot. If it looks polished, you "
+            "have failed the brief."
+        ),
+    },
 }
+
+
+def _iter_actor_prompt_with_description(description: str, n_variants: int) -> str:
+    """When the user supplies a free-text actor description, swap the default
+    persona-from-image analyzer for one that produces N micro-variations of
+    that exact description (same person, same vibe — only context/expression/
+    angle micro-shifts so the N edits don't collapse into duplicates)."""
+    return _AXIS_PROMPT_HEADER + f"""
+
+The user has explicitly described the actor they want for this ad:
+
+USER-PROVIDED ACTOR DESCRIPTION:
+{description}
+
+Generate {n_variants} variants of the SAME PERSON (matching every demographic and styling cue above), differing only on micro-context cues (expression, micro-pose, gaze direction, energy) so the rendered images don't all collapse into the same shot. NEVER change gender, age, ethnicity, build, or styling from what the user described.
+
+OUTPUT:
+{{
+  "detected": "user-provided",
+  "style_summary": "{description[:90]}",
+  "variants": ["variant description 1", "variant description 2", "..."]
+}}"""
+
+
+def _inject_iter_context(
+    sys_prompt: str,
+    *,
+    brand_name: str | None = None,
+    brand_dna: str | None = None,
+    language: str | None = None,
+) -> str:
+    """Prepend brand/language framing to an iteration analyzer system prompt
+    when they are provided. No-op when both are empty (preserves existing
+    behavior for callers that don't pass these)."""
+    blocks: list[str] = []
+    if brand_dna and brand_dna.strip():
+        nm = (brand_name or "the brand").strip()
+        blocks.append(
+            f"=== BRAND CONTEXT ===\n"
+            f"Brand: {nm}\n"
+            f"DNA: {brand_dna.strip()}\n"
+            f"=== END BRAND CONTEXT ===\n\n"
+            f"Use this brand's voice, tone, and ICP for any generated copy or persona. "
+            f"Persona variants must plausibly match this brand's target audience.\n"
+        )
+    if language and language.strip():
+        blocks.append(
+            f"=== TARGET LANGUAGE ===\n"
+            f"All text content in variants (headlines, CTAs, sub-headlines, offer copy, "
+            f"awareness messaging) MUST be written in {language.strip()}. Use idiomatic, "
+            f"native-level {language.strip()} — never literal translation.\n"
+            f"=== END TARGET LANGUAGE ===\n"
+        )
+    if not blocks:
+        return sys_prompt
+    return "\n".join(blocks) + "\n" + sys_prompt
 
 
 def analyze_for_axis(
@@ -2275,10 +2441,22 @@ def analyze_for_axis(
     image_url: str,
     axis_key: str,
     n_variants: int,
+    *,
+    language: str | None = None,
+    brand_name: str | None = None,
+    brand_dna: str | None = None,
+    actor_description: str | None = None,
 ) -> dict:
     """Generic axis analyzer. Routes to ITERATION_AXES[axis_key], calls the
     LLM with the axis-specific system prompt + an N-templated user prompt,
     and parses the strict JSON output.
+
+    Optional context:
+      - language: forces all text variants into the named language.
+      - brand_name / brand_dna: injects brand voice + ICP framing.
+      - actor_description: only honored for axis='actor'. Replaces the
+        from-image persona analyzer with one that micro-varies the user's
+        described persona instead.
 
     Returns {detected, style_summary, variants}. Raises RuntimeError on
     empty / unparseable output.
@@ -2286,7 +2464,18 @@ def analyze_for_axis(
     axis = ITERATION_AXES.get(axis_key)
     if not axis:
         raise RuntimeError(f"Unknown iteration axis: {axis_key!r}")
-    sys_prompt = axis["analyzer"].replace("{N}", str(n_variants))
+    if axis_key == "actor" and actor_description and actor_description.strip():
+        base_sys = _iter_actor_prompt_with_description(
+            actor_description.strip(), n_variants
+        )
+    else:
+        base_sys = axis["analyzer"].replace("{N}", str(n_variants))
+    sys_prompt = _inject_iter_context(
+        base_sys,
+        brand_name=brand_name,
+        brand_dna=brand_dna,
+        language=language,
+    )
     user_prompt = (
         f"Analyze the attached static ad and produce {n_variants} variants "
         f"on the {axis['describe']} axis. Output the strict JSON per the "

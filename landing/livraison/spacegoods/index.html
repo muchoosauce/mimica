@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Livraison · Spacegoods — Mimica</title>
+<meta name="description" content="Livraison de variantes — réservé client Mimica.">
+
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/*
+ ═══════════════════════════════════════════════════════════════
+   CONFIGURATION (à éditer pour chaque nouveau client)
+
+   - Le dossier doit s'appeler /livraison/{client-slug}/
+   - Mettre les assets directement à côté de ce fichier index.html
+   - Mettre un fichier all.zip avec tous les fichiers
+   - Mettre à jour le data-* sur <body> ci-dessous + le tableau JS
+ ═══════════════════════════════════════════════════════════════
+*/
+
+:root {
+  --s-4: 4px; --s-8: 8px; --s-12: 12px; --s-16: 16px; --s-20: 20px;
+  --s-24: 24px; --s-32: 32px; --s-40: 40px; --s-48: 48px; --s-64: 64px;
+  --s-80: 80px; --s-96: 96px;
+  --canvas: #0A0A0F;
+  --surface-1: #13131C;
+  --surface-2: #1A1A24;
+  --surface-3: #20202C;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-emp: rgba(255, 255, 255, 0.14);
+  --text: #F4F4F6;
+  --muted: #9999A0;
+  --dim: #5C5C66;
+  --accent: #7C5CFF;
+  --pink: #EC4899;
+  --gradient: linear-gradient(135deg, #7C5CFF 0%, #EC4899 100%);
+  --r-card: 16px;
+  --r-img: 12px;
+  --r-pill: 9999px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 200ms;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 var(--s-24);
+}
+
+/* ─── HEADER ─────────────────────────────────────────────────── */
+.delivery-header {
+  padding: var(--s-48) 0 var(--s-32);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.delivery-header::before {
+  content: '';
+  position: absolute;
+  top: -100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60vw;
+  max-width: 700px;
+  height: 400px;
+  background: radial-gradient(ellipse at center, rgba(124, 92, 255, 0.20) 0%, rgba(236, 72, 153, 0.10) 35%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}
+.delivery-header > * { position: relative; z-index: 1; }
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  margin-bottom: var(--s-32);
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 600;
+}
+.brand-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--gradient);
+  box-shadow: 0 0 14px rgba(124, 92, 255, 0.55);
+}
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.delivery-title {
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: var(--s-16) 0 var(--s-12);
+}
+.delivery-title .gradient-text {
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.delivery-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-12);
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: var(--s-32);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.delivery-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+}
+.delivery-meta-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+/* ─── DOWNLOAD ALL CTA ────────────────────────────────────────── */
+.download-all-row {
+  display: flex;
+  justify-content: center;
+  gap: var(--s-12);
+  flex-wrap: wrap;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-8);
+  padding: 14px var(--s-32);
+  border: none;
+  border-radius: var(--r-pill);
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.btn-primary {
+  background: var(--gradient);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(124, 92, 255, 0.25);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(124, 92, 255, 0.4);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-emp);
+}
+.btn-secondary:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.btn-icon { width: 16px; height: 16px; }
+
+/* ─── GALLERY ─────────────────────────────────────────────────── */
+.gallery {
+  padding: var(--s-32) 0 var(--s-80);
+}
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-16);
+}
+@media (max-width: 900px) {
+  .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .gallery-grid { grid-template-columns: 1fr; }
+}
+.creative-card {
+  position: relative;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.creative-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-emp);
+  box-shadow: 0 16px 40px -8px rgba(124, 92, 255, 0.18);
+}
+.creative-card img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+  cursor: zoom-in;
+}
+.creative-card .download-btn {
+  position: absolute;
+  top: var(--s-12);
+  right: var(--s-12);
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 15, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  color: #fff;
+  text-decoration: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.creative-card:hover .download-btn,
+.creative-card:focus-within .download-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+.creative-card .download-btn:hover {
+  background: var(--gradient);
+}
+.creative-card .download-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.creative-card-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: var(--s-12) var(--s-16);
+  background: linear-gradient(180deg, transparent 0%, rgba(10, 10, 15, 0.85) 100%);
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+/* ─── SOURCE BADGE (premier item: la source d'origine) ────────── */
+.creative-card--source::after {
+  content: 'Source';
+  position: absolute;
+  top: var(--s-12);
+  left: var(--s-12);
+  z-index: 2;
+  padding: 4px var(--s-12);
+  background: rgba(10, 10, 15, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+/* ─── LIGHTBOX ────────────────────────────────────────────────── */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 15, 0);
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: var(--s-40);
+  cursor: zoom-out;
+  transition: background 0.35s ease, backdrop-filter 0.35s ease;
+}
+.lightbox.is-open {
+  display: flex;
+  background: rgba(10, 10, 15, 0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+.lightbox-img {
+  max-width: min(92vw, 900px);
+  max-height: 88vh;
+  border-radius: 14px;
+  box-shadow: 0 32px 96px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06);
+  cursor: default;
+  display: block;
+}
+.lightbox-close {
+  position: absolute;
+  top: var(--s-24);
+  right: var(--s-24);
+  width: 44px;
+  height: 44px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+  opacity: 0;
+}
+.lightbox.is-open .lightbox-close { opacity: 1; transition: opacity 0.2s ease 0.3s, background 0.2s; }
+.lightbox-close:hover { background: rgba(255,255,255,0.16); }
+
+/* ─── FOOTER ─────────────────────────────────────────────────── */
+.delivery-footer {
+  text-align: center;
+  padding: var(--s-32) 0 var(--s-48);
+  color: var(--dim);
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+}
+.delivery-footer a { color: var(--muted); text-decoration: none; }
+.delivery-footer a:hover { color: var(--text); }
+
+@media (max-width: 640px) {
+  .delivery-title { font-size: 30px; }
+}
+</style>
+</head>
+<body data-client="Spacegoods" data-date="17 mai 2026" data-batch="01" data-zip="all.zip">
+
+<header class="delivery-header">
+  <div class="container">
+    <a href="/" class="brand-logo">
+      <span class="brand-dot"></span>
+      mimica
+    </a>
+    <span class="eyebrow">Livraison client</span>
+    <h1 class="delivery-title">Spacegoods<br><span class="gradient-text">Batch 01</span></h1>
+    <div class="delivery-meta">
+      <span class="delivery-meta-item">17 mai 2026</span>
+      <span class="delivery-meta-dot"></span>
+      <span class="delivery-meta-item">9 variantes + 1 source</span>
+      <span class="delivery-meta-dot"></span>
+      <span class="delivery-meta-item">Format 1:1</span>
+    </div>
+    <div class="download-all-row">
+      <a href="all.zip" class="btn btn-primary" download>
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Télécharger tout (.zip)
+      </a>
+      <a href="mailto:contact@mimica.fr?subject=Feedback%20Batch%2001%20Spacegoods" class="btn btn-secondary">
+        Donner un feedback
+      </a>
+    </div>
+  </div>
+</header>
+
+<main class="gallery">
+  <div class="container">
+    <div class="gallery-grid" id="galleryGrid">
+      <!-- Les cards seront générées par le script ci-dessous. -->
+    </div>
+  </div>
+</main>
+
+<footer class="delivery-footer">
+  <div class="container">
+    <p>© 2026 Mimica · <a href="/">mimica.fr</a> · <a href="mailto:contact@mimica.fr">contact@mimica.fr</a></p>
+  </div>
+</footer>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" aria-hidden="true" role="dialog">
+  <button class="lightbox-close" aria-label="Fermer">×</button>
+  <img class="lightbox-img" src="" alt="">
+</div>
+
+<script>
+/*
+ ═══════════════════════════════════════════════════════════════
+   ASSETS — à éditer pour chaque livraison
+ ═══════════════════════════════════════════════════════════════
+*/
+const ASSETS = [
+  { src: 'source.jpg',  label: 'Source — Maintain all-day focus',         isSource: true },
+  { src: 'var-1.png',   label: 'Variante 1 — Pink, body original' },
+  { src: 'var-2.png',   label: 'Variante 2 — Magenta saturé' },
+  { src: 'var-3.png',   label: 'Variante 3 — Hook Tired of The Crash' },
+  { src: 'var-4.png',   label: 'Variante 4 — Setting laptop (dark)' },
+  { src: 'var-5.png',   label: 'Variante 5 — UGC selfie miroir' },
+  { src: 'var-6.png',   label: 'Variante 6 — Testimonial Emma L.' },
+  { src: 'var-7.png',   label: 'Variante 7 — Stat 75,000+ Happy Customers' },
+  { src: 'var-8.png',   label: 'Variante 8 — Before/After transformation' },
+  { src: 'var-9.png',   label: 'Variante 9 — Comparaison Them/Us/Them' },
+];
+
+/* ─── Génération des cards ───────────────────────────────────── */
+(() => {
+  const grid = document.getElementById('galleryGrid');
+  ASSETS.forEach((a, i) => {
+    const card = document.createElement('div');
+    card.className = 'creative-card' + (a.isSource ? ' creative-card--source' : '');
+    card.innerHTML = `
+      <img src="${a.src}" alt="${a.label}" loading="lazy">
+      <a class="download-btn" href="${a.src}" download="${a.src}" title="Télécharger" aria-label="Télécharger ${a.label}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </a>
+      <div class="creative-card-label">${a.label}</div>
+    `;
+    grid.appendChild(card);
+  });
+})();
+
+/* ─── Lightbox ───────────────────────────────────────────────── */
+(() => {
+  const lightbox = document.getElementById('lightbox');
+  const img = lightbox.querySelector('.lightbox-img');
+  const closeBtn = lightbox.querySelector('.lightbox-close');
+  const open = (src, alt) => {
+    img.src = src;
+    img.alt = alt || '';
+    lightbox.classList.add('is-open');
+    lightbox.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  };
+  const close = () => {
+    lightbox.classList.remove('is-open');
+    lightbox.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    setTimeout(() => { img.src = ''; }, 260);
+  };
+  document.addEventListener('click', (e) => {
+    // Ignore download button clicks
+    if (e.target.closest('.download-btn')) return;
+    const clickedImg = e.target.closest('.creative-card img');
+    if (clickedImg) {
+      e.stopPropagation();
+      open(clickedImg.src, clickedImg.alt);
+    }
+  });
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+  lightbox.addEventListener('click', (e) => { if (e.target === lightbox) close(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lightbox.classList.contains('is-open')) close();
+  });
+})();
+</script>
+
+</body>
+</html>

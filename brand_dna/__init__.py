@@ -88,14 +88,12 @@ def generate(
             on_log("OK", f"  {len(parsed.text)} chars + {len(parsed.images)} images")
         documents.append(parsed)
 
-    # 3. Scrape URLs
+    # 3. Scrape URLs (text + images held in memory; nothing written to disk)
     sites: list[ScrapedSite] = []
     for url in sources.urls:
         if should_cancel():
             return _abort(out_dir)
-        site_dir = img_dir / _safe_slug(url)
-        site_dir.mkdir(parents=True, exist_ok=True)
-        site = scrape_site(url, site_dir, on_log)
+        site = scrape_site(url, on_log)
         sites.append(site)
 
     if should_cancel():
@@ -201,12 +199,6 @@ def _abort(out_dir: Path) -> BrandDNAResult:
     return BrandDNAResult(dna_text="", candidates=[], output_dir=out_dir)
 
 
-def _safe_slug(url: str) -> str:
-    from urllib.parse import urlparse
-    host = (urlparse(url).hostname or "site").replace(".", "_")
-    return host[:48]
-
-
 def _pick_url_images(sites: list[ScrapedSite], cap: int) -> list[CollectedImage]:
     """Prefer one screenshot per page first (richer signal), then fill with <img>."""
     out: list[CollectedImage] = []
@@ -250,9 +242,11 @@ def _collect_for_tagging(sites, creatives, documents) -> list[CollectedImage]:
 
 def _img_to_dict(img: CollectedImage) -> dict:
     return {
-        "path": str(img.path), "origin": img.origin,
+        "path": str(img.path) if img.path else None,
+        "origin": img.origin,
         "width": img.width, "height": img.height,
         "note": img.note, "tag": img.tag,
+        "in_memory": img.data is not None,
     }
 
 
@@ -265,7 +259,7 @@ def _site_to_dict(site: ScrapedSite) -> dict:
                 "url": p.url, "title": p.title, "meta_description": p.meta_description,
                 "text_chars": len(p.text),
                 "image_count": len(p.images),
-                "screenshot": str(p.screenshot.path) if p.screenshot else None,
+                "has_screenshot": p.screenshot is not None,
             }
             for p in site.pages
         ],

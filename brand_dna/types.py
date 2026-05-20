@@ -21,13 +21,20 @@ class Sources:
 
 @dataclass
 class CollectedImage:
-    """An image candidate harvested from any source."""
-    path: Path                    # local copy on disk (we always copy in)
-    origin: str                   # "url:<url>", "creative", "document:<file>"
+    """An image candidate harvested from any source.
+
+    Site-scraped images are kept in memory only (`data` set, `path` None) — we
+    do not write site visuals to disk. Document-embedded images and user-staged
+    creatives still live on disk (`path` set, `data` None).
+    """
+    path: Optional[Path] = None   # local file, when the image is persisted
+    origin: str = ""              # "url:<url>", "creative", "document:<file>"
     width: int = 0
     height: int = 0
     note: str = ""                # optional descriptor (e.g. "screenshot", "embedded")
     tag: Optional[ImageTag] = None
+    data: Optional[bytes] = None  # in-memory bytes (preferred over path when set)
+    media_type: str = "image/jpeg"  # only meaningful when `data` is set
 
 
 @dataclass

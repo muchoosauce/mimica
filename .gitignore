@@ -18,3 +18,8 @@ dmg_build/
 .claude/
 .idea/
 .vscode/
+
+# Internal docs / work scratch / standalone landing — not part of the product code
+Mimica-Strategy-V2.html
+a-copier/
+deploy/

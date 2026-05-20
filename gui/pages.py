@@ -578,9 +578,14 @@ class GenerateWorker(QObject):
     out_dir_signal = Signal(str)
     finished = Signal(str)
 
-    def __init__(self, image, n, res, aspects, languages, workers, output_root, image_model):
+    def __init__(self, paths, n, res, aspects, languages, workers, output_root, image_model):
         super().__init__()
-        self._args = (image, n, res, aspects, languages, workers)
+        # `paths` is always a list. 1 element → single-image flow (legacy
+        # behavior, timestamped folder, plain `variation_NN` filenames).
+        # 2+ elements → batch flow, flat folder with `srcNN_<slug>_var_MM`
+        # filenames; each source is treated independently (no shared brand).
+        self._paths = list(paths)
+        self._args_tail = (n, res, aspects, languages, workers)
         self._output_root = output_root
         self._image_model = image_model
         self._cancel = False
@@ -589,15 +594,28 @@ class GenerateWorker(QObject):
         self._cancel = True
 
     def run(self):
-        out = core.run_generation(
-            *self._args,
-            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
-            on_result=lambda r: self.result.emit(r),
-            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
-            should_cancel=lambda: self._cancel,
-            output_root=self._output_root,
-            image_model=self._image_model,
-        )
+        on_log = lambda lvl, msg: self.log.emit(lvl, msg)
+        on_result = lambda r: self.result.emit(r)
+        on_out_dir = lambda p: self.out_dir_signal.emit(str(p))
+        should_cancel = lambda: self._cancel
+        if len(self._paths) <= 1:
+            out = core.run_generation(
+                self._paths[0] if self._paths else "",
+                *self._args_tail,
+                on_log=on_log, on_result=on_result, on_out_dir=on_out_dir,
+                should_cancel=should_cancel,
+                output_root=self._output_root,
+                image_model=self._image_model,
+            )
+        else:
+            out = core.run_batch_variation(
+                self._paths,
+                *self._args_tail,
+                on_log=on_log, on_result=on_result, on_out_dir=on_out_dir,
+                should_cancel=should_cancel,
+                output_root=self._output_root,
+                image_model=self._image_model,
+            )
         self.finished.emit(str(out) if out else "")
 
 
@@ -616,7 +634,7 @@ class GeneratePage(QWidget):
 
         head = QVBoxLayout(); head.setSpacing(2)
         h1 = QLabel("Variation"); h1.setObjectName("H1")
-        sub = QLabel("Drop one reference ad, pick your params, get N variations.")
+        sub = QLabel("Drop one image or a folder — each source gets its own N variations, product preserved.")
         sub.setObjectName("Dim")
         head.addWidget(h1); head.addWidget(sub)
         root.addLayout(head)
@@ -639,9 +657,11 @@ class GeneratePage(QWidget):
         scroll.setWidget(form_inner)
         card_lay.addWidget(scroll)
 
-        l1 = QLabel("REFERENCE"); l1.setObjectName("Muted")
+        l1 = QLabel("REFERENCE(S)"); l1.setObjectName("Muted")
         form.addWidget(l1)
-        self.drop = DropZone()
+        self.drop = FolderDropZone()
+        self.drop.title.setText("Drop one image or a folder")
+        self.drop.paths_changed.connect(lambda _paths: self._update_cost())
         form.addWidget(self.drop)
 
         params_row = QHBoxLayout(); params_row.setSpacing(14)
@@ -766,19 +786,26 @@ class GeneratePage(QWidget):
         n = self.n.value()
         m = max(1, len(self.asp.selected()))
         l = max(1, len(self.lang.selected()))
+        s = max(1, len(self.drop.paths()))
         provider = core.get_active_provider_name()
         model = self.model.currentData() or core.DEFAULT_IMAGE_MODEL
         price = core.cost_per_image(provider, model, self.res.currentText())
-        total = n * m * l
-        self.cost_label.setText(
-            f"{total} images  ·  estimated ${total * price:.2f}  "
-            f"({n} var × {l} lang × {m} format × ${price:.2f})"
-        )
+        total = s * n * m * l
+        if s > 1:
+            self.cost_label.setText(
+                f"{total} images  ·  estimated ${total * price:.2f}  "
+                f"({s} sources × {n} var × {l} lang × {m} format × ${price:.2f})"
+            )
+        else:
+            self.cost_label.setText(
+                f"{total} images  ·  estimated ${total * price:.2f}  "
+                f"({n} var × {l} lang × {m} format × ${price:.2f})"
+            )
 
     def _start(self):
-        path = self.drop.path()
-        if not path:
-            QMessageBox.warning(self, "Missing reference", "Drop a reference image first.")
+        paths = self.drop.paths()
+        if not paths:
+            QMessageBox.warning(self, "Missing reference", "Drop a reference image or folder first.")
             return
         aspects = self.asp.selected()
         if not aspects:
@@ -806,7 +833,7 @@ class GeneratePage(QWidget):
 
         self._thread = QThread()
         self._worker = GenerateWorker(
-            path, self.n.value(), self.res.currentText(),
+            paths, self.n.value(), self.res.currentText(),
             aspects, languages, self.workers.value(),
             self.out_row.path(),
             self.model.currentData() or core.DEFAULT_IMAGE_MODEL,
@@ -6098,26 +6125,40 @@ class TwinHubPage(QWidget):
 
 
 class IterationItemWorker(QObject):
-    """Run one source image's iteration through the pipeline. Emits log +
-    per-variant result + a final dict {out_dir, count_ok}."""
+    """Run one source image's iteration through the pipeline. Fans out one
+    `core.run_iterate` call per (axis × language) combination, sequentially
+    on this worker's thread — the queue grid runs items themselves in
+    parallel via separate workers, so axes inside an item stay serialized
+    to keep provider rate-limits predictable.
+
+    Visual-only axes (actor, decor, style, palette, layout) ignore the
+    language list and run once. Copy axes (headline, cta, awareness, offer,
+    concept) fan out once per language.
+
+    All sub-runs share the same root out_dir for the source image, with
+    per-(axis,lang) sub-folders inside.
+    """
     log = Signal(str, str)
     result = Signal(int, dict)  # (item_index, variant_result_dict)
     finished = Signal(int, str, int)  # (item_index, out_dir_path, count_ok)
 
-    def __init__(self, item_index: int, image_path: str, axis: str,
-                 n_variants: int, image_model: str, resolution: str,
-                 targets: Optional[list] = None):
+    _COPY_AXES = {"headline", "cta", "awareness", "offer", "concept"}
+
+    def __init__(self, item_index: int, image_path: str,
+                 axes: list[dict], languages: list[str],
+                 image_model: str, resolution: str,
+                 brand_name: Optional[str] = None):
         super().__init__()
         self._idx = item_index
         self._image_path = image_path
-        self._axis = axis
-        self._n = n_variants
+        self._axes = axes or []
+        self._languages = languages or ["English"]
         self._image_model = image_model
         self._resolution = resolution
-        self._targets = targets
+        self._brand_name = brand_name
         self._cancel = False
         self._count_ok = 0
-        self._out_dir = ""
+        self._root_dir = ""
 
     def cancel(self):
         self._cancel = True
@@ -6127,29 +6168,65 @@ class IterationItemWorker(QObject):
             self._count_ok += 1
         self.result.emit(self._idx, r)
 
-    def _on_out_dir(self, p):
-        self._out_dir = str(p)
+    def _on_sub_out_dir(self, _p):
+        # Sub-runs each get a folder under root_dir — we don't override the
+        # already-set root that points to the parent for the card "Open"
+        # button.
+        pass
 
     def _emit_log(self, lvl: str, msg: str):
         self.log.emit(lvl, f"[item {self._idx + 1}] {msg}")
 
     def run(self):
         try:
-            core.run_iterate(
-                self._image_path,
-                self._axis,
-                self._n,
-                on_log=self._emit_log,
-                on_result=self._on_result,
-                on_out_dir=self._on_out_dir,
-                should_cancel=lambda: self._cancel,
-                image_model=self._image_model,
-                resolution=self._resolution,
-                targets=self._targets,
-            )
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            stem = Path(self._image_path).stem
+            safe_stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)[:40] or "iter"
+            root = core.get_output_dir() / f"{ts}_iterate_{safe_stem}"
+            root.mkdir(parents=True, exist_ok=True)
+            self._root_dir = str(root)
+            self._emit_log("INFO", f"Output root: {root}")
+
+            for axis_cfg in self._axes:
+                if self._cancel:
+                    break
+                axis = axis_cfg["axis"]
+                count = int(axis_cfg.get("count") or 1)
+                targets = axis_cfg.get("targets")
+                actor_desc = axis_cfg.get("actor_description")
+                langs = self._languages if axis in self._COPY_AXES else [None]
+                for lang in langs:
+                    if self._cancel:
+                        break
+                    sub_name = axis
+                    if lang:
+                        sub_name = f"{axis}_{core.LANG_SLUG.get(lang, lang).lower()}"
+                    sub_dir = root / sub_name
+                    sub_dir.mkdir(parents=True, exist_ok=True)
+                    label = f"{axis}" + (f"·{lang}" if lang else "")
+                    self._emit_log("INFO", f"→ Running axis {label} ({count} variants)")
+                    try:
+                        core.run_iterate(
+                            self._image_path,
+                            axis,
+                            count,
+                            on_log=self._emit_log,
+                            on_result=self._on_result,
+                            on_out_dir=self._on_sub_out_dir,
+                            should_cancel=lambda: self._cancel,
+                            image_model=self._image_model,
+                            resolution=self._resolution,
+                            targets=targets,
+                            language=lang,
+                            brand_name=self._brand_name,
+                            actor_description=actor_desc,
+                            out_dir_override=sub_dir,
+                        )
+                    except Exception as e:
+                        self._emit_log("ERR", f"axis {label} failed: {e}")
         except Exception as e:
             self._emit_log("ERR", str(e))
-        self.finished.emit(self._idx, self._out_dir, self._count_ok)
+        self.finished.emit(self._idx, self._root_dir, self._count_ok)
 
 
 class IterationPage(QWidget):
@@ -6181,9 +6258,9 @@ class IterationPage(QWidget):
         head = QVBoxLayout(); head.setSpacing(2)
         h1 = QLabel("Iteration"); h1.setObjectName("H1")
         sub = QLabel(
-            "Drop multiple static ads, pick a number of variants per image, "
-            "and the headline iterator generates same-style alternatives "
-            "across the whole batch in parallel."
+            "Drop static ads, configure one or more axes per image (Concept, "
+            "Actor, Décor, Headline…), pick target languages, and run the whole "
+            "queue in parallel — each axis × language fan-out happens in one click."
         )
         sub.setObjectName("Dim")
         head.addWidget(h1); head.addWidget(sub)
@@ -6240,6 +6317,20 @@ class IterationPage(QWidget):
         self.run_btn.setEnabled(False)
         bottom_row.addWidget(self.run_btn)
         cc.addLayout(bottom_row)
+
+        # Global languages picker — multi-select, applies to every queued
+        # image. Copy-affecting axes (headline, CTA, awareness, offer,
+        # concept) are fanned out once per checked language; visual-only
+        # axes (actor, decor, style, palette, layout) ignore it.
+        lang_row = QHBoxLayout(); lang_row.setSpacing(8)
+        lang_lbl = QLabel("LANGUAGES  ·  copy axes will fan out per language")
+        lang_lbl.setObjectName("Muted")
+        lang_row.addWidget(lang_lbl)
+        lang_row.addStretch()
+        cc.addLayout(lang_row)
+        self.lang = ChipGroup(core.LANGUAGES, default=["English"], columns=8)
+        self.lang.changed.connect(lambda: self._refresh_queue_state())
+        cc.addWidget(self.lang)
         root.addWidget(controls_card)
 
         # Queue grid
@@ -6312,11 +6403,15 @@ class IterationPage(QWidget):
         name_lbl.setWordWrap(True)
         cl.addWidget(name_lbl)
         from providers.prompts import ITERATION_AXES as _AXES
-        default_axis = "headline"
-        default_label = _AXES[default_axis]["label"]
+        default_label = _AXES["headline"]["label"]
         summary = QLabel(f"▸ {default_label} × 5")
         summary.setStyleSheet(f"color: {t.ACCENT_SOFT}; font-size: 11px;")
+        summary.setWordWrap(True)
         cl.addWidget(summary)
+        brand_summary = QLabel("")
+        brand_summary.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 10px;")
+        brand_summary.setWordWrap(True)
+        cl.addWidget(brand_summary)
         row = QHBoxLayout(); row.setSpacing(6); row.setContentsMargins(0, 0, 0, 0)
         cfg = QPushButton("Configure"); cfg.setObjectName("OnCardBtn")
         cfg.setCursor(Qt.PointingHandCursor)
@@ -6339,16 +6434,23 @@ class IterationPage(QWidget):
         results_holder = QWidget(); results_holder.setLayout(results_strip)
         cl.addWidget(results_holder)
 
+        # axes: list of per-axis configs, each
+        #   {"axis": str, "count": int, "targets": list|None,
+        #    "actor_description": str|None}
+        # Defaults to a single headline×5 entry to preserve V1 ergonomics.
         item = {
             "path": image_path,
             "card_widget": card,
             "summary_label": summary,
+            "brand_summary_label": brand_summary,
             "config_btn": cfg,
             "open_btn": open_btn,
             "remove_btn": rm,
-            "axis": default_axis,
-            "count": 5,
-            "targets": None,  # filled when user picks catalog chips
+            "axes": [{
+                "axis": "headline", "count": 5,
+                "targets": None, "actor_description": None,
+            }],
+            "brand_name": None,
             "results_strip": results_strip,
             "results_holder": results_holder,
             "out_dir": None,
@@ -6387,9 +6489,21 @@ class IterationPage(QWidget):
         self._refresh_queue_state()
 
     def _refresh_queue_state(self):
+        from providers.prompts import ITERATION_AXES
+        _COPY_AXES = {"headline", "cta", "awareness", "offer", "concept"}
         n = len(self._items)
-        total = sum(it["count"] for it in self._items)
-        self.queue_count_lbl.setText(f"{n} image{'s' if n != 1 else ''} queued · {total} variation{'s' if total != 1 else ''}")
+        langs = self.lang.selected() or ["English"]
+        n_langs = max(1, len(langs))
+        total = 0
+        for it in self._items:
+            for ax in it.get("axes") or []:
+                k = ax["axis"]
+                per_axis = int(ax.get("count") or 0)
+                mult = n_langs if k in _COPY_AXES else 1
+                total += per_axis * mult
+        self.queue_count_lbl.setText(
+            f"{n} image{'s' if n != 1 else ''} queued · {total} variation{'s' if total != 1 else ''}"
+        )
         self.run_btn.setEnabled(n > 0)
 
     def _open_config(self, idx: int):
@@ -6397,170 +6511,271 @@ class IterationPage(QWidget):
             return
         item = self._items[idx]
         from providers.prompts import ITERATION_AXES
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Configure iteration")
         dlg.setStyleSheet(f"QDialog {{ background: {t.BG_ELEVATED}; }}")
-        dlg.setMinimumWidth(520)
-        l = QVBoxLayout(dlg); l.setContentsMargins(16, 16, 16, 16); l.setSpacing(10)
-        l.addWidget(QLabel(f"<b>{Path(item['path']).name}</b>", styleSheet=f"color: {t.TEXT}; font-size: 13px;"))
+        dlg.setMinimumWidth(640)
+        dlg.setMinimumHeight(560)
+        outer = QVBoxLayout(dlg); outer.setContentsMargins(16, 16, 16, 16); outer.setSpacing(10)
+        outer.addWidget(QLabel(
+            f"<b>{Path(item['path']).name}</b>",
+            styleSheet=f"color: {t.TEXT}; font-size: 13px;",
+        ))
 
-        l.addWidget(QLabel("Iteration axis", objectName="Muted"))
-        axis_combo = QComboBox()
-        for key, meta in ITERATION_AXES.items():
-            axis_combo.addItem(meta["label"], userData=key)
-        for i in range(axis_combo.count()):
-            if axis_combo.itemData(i) == item["axis"]:
-                axis_combo.setCurrentIndex(i); break
-        axis_combo.setMinimumWidth(220)
-        l.addWidget(axis_combo)
+        # ── Brand DNA picker (per card) ──────────────────────────────
+        brand_card = QFrame(); brand_card.setObjectName("CardFlat")
+        brand_card.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 10px;")
+        bl = QVBoxLayout(brand_card); bl.setContentsMargins(12, 10, 12, 10); bl.setSpacing(6)
+        bl.addWidget(QLabel("BRAND DNA  ·  drives copy voice & persona ICP", objectName="Muted"))
+        brand_combo = QComboBox(); brand_combo.setMinimumWidth(240)
+        brand_combo.addItem("— No brand (image-only analysis) —", userData=None)
+        for name in sorted(core.load_brands().keys(), key=lambda s: s.lower()):
+            brand_combo.addItem(name, userData=name)
+        cur_brand = item.get("brand_name")
+        if cur_brand:
+            for i in range(brand_combo.count()):
+                if brand_combo.itemData(i) == cur_brand:
+                    brand_combo.setCurrentIndex(i); break
+        bl.addWidget(brand_combo)
+        outer.addWidget(brand_card)
 
-        hint = QLabel()
-        hint.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px; padding: 4px 0;")
-        hint.setWordWrap(True)
-        l.addWidget(hint)
+        # ── Axes list (multi-select, each with its own sub-config) ───
+        axes_lbl = QLabel("AXES  ·  check one or many — they run in parallel on the source", objectName="Muted")
+        outer.addWidget(axes_lbl)
 
-        # ── Two interchangeable bodies ────────────────────────────────
-        # Catalog mode: chips multi-select. Used when the axis exposes
-        # a finite list of sub-options (Concept, Awareness, Style, Offer).
-        # Open mode: count spinbox. Used when variants are LLM-generated
-        # text (Headline, CTA, Actor, Décor, Palette, Layout).
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll_holder = QWidget()
+        axes_lay = QVBoxLayout(scroll_holder)
+        axes_lay.setContentsMargins(0, 0, 0, 0); axes_lay.setSpacing(8)
+        scroll.setWidget(scroll_holder)
+        outer.addWidget(scroll, 1)
 
-        catalog_card = QFrame()
-        catalog_lay = QVBoxLayout(catalog_card); catalog_lay.setContentsMargins(0, 0, 0, 0); catalog_lay.setSpacing(8)
-        catalog_actions = QHBoxLayout(); catalog_actions.setSpacing(8)
-        catalog_lay.addLayout(catalog_actions)
-        # Chips live in a flow grid (QGridLayout with wrap-by-row).
-        chips_grid = QGridLayout(); chips_grid.setSpacing(6); chips_grid.setContentsMargins(0, 0, 0, 0)
-        catalog_lay.addLayout(chips_grid)
-        catalog_summary = QLabel("0 picked → 0 variants")
-        catalog_summary.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
-        catalog_lay.addWidget(catalog_summary)
-        l.addWidget(catalog_card)
+        # Existing config keyed by axis slug → quick lookup for prefill.
+        existing_by_axis: dict[str, dict] = {
+            (a.get("axis") or ""): a for a in (item.get("axes") or [])
+        }
 
-        count_card = QFrame()
-        count_lay = QVBoxLayout(count_card); count_lay.setContentsMargins(0, 0, 0, 0); count_lay.setSpacing(6)
-        count_lay.addWidget(QLabel("Number of variations", objectName="Muted"))
-        spin = QSpinBox(); spin.setRange(1, 12); spin.setValue(int(item.get("count") or 5))
-        count_lay.addWidget(spin)
-        l.addWidget(count_card)
-
-        # Mutable state shared with the closures below.
-        state = {"picked": set(), "chips": {}, "catalog_items": []}
-        if item.get("targets"):
-            state["picked"] = {t["slug"] for t in item["targets"]}
+        # Per-axis widget refs collected here so we can read state on Save.
+        axis_widgets: dict[str, dict] = {}
 
         def _chip_style(active: bool) -> str:
             if active:
                 return (
                     f"QPushButton {{ background: {t.ACCENT}; color: white;"
                     f" border: 1px solid {t.ACCENT}; border-radius: 999px;"
-                    f" padding: 6px 14px; font-size: 11px; font-weight: 600; }}"
+                    f" padding: 5px 12px; font-size: 11px; font-weight: 600; }}"
                 )
             return (
                 f"QPushButton {{ background: {t.BG_INPUT}; color: {t.TEXT_DIM};"
                 f" border: 1px solid {t.BORDER}; border-radius: 999px;"
-                f" padding: 6px 14px; font-size: 11px; font-weight: 600; }}"
+                f" padding: 5px 12px; font-size: 11px; font-weight: 600; }}"
                 f"QPushButton:hover {{ border: 1px solid {t.ACCENT}; color: {t.ACCENT_SOFT}; }}"
             )
 
-        def _on_chip(slug: str):
-            if slug in state["picked"]:
-                state["picked"].discard(slug)
-            else:
-                state["picked"].add(slug)
-            state["chips"][slug].setStyleSheet(_chip_style(slug in state["picked"]))
-            n = len(state["picked"])
-            catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+        def _build_axis_row(axis_key: str, meta: dict):
+            row = QFrame()
+            row.setStyleSheet(
+                f"QFrame {{ background: {t.BG_INPUT}; border: 1px solid {t.BORDER_MUTED};"
+                f" border-radius: 10px; }}"
+            )
+            rl = QVBoxLayout(row); rl.setContentsMargins(12, 10, 12, 10); rl.setSpacing(6)
+            head = QHBoxLayout(); head.setSpacing(8)
+            chk = QCheckBox(meta["label"])
+            chk.setStyleSheet(f"QCheckBox {{ color: {t.TEXT}; font-weight: 600; font-size: 12px; }}")
+            head.addWidget(chk)
+            desc = QLabel(f"— {meta.get('describe', axis_key)}")
+            desc.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 10px;")
+            head.addWidget(desc); head.addStretch()
+            rl.addLayout(head)
 
-        def _rebuild_chips():
-            # Clear grid.
-            while chips_grid.count():
-                w = chips_grid.takeAt(0).widget()
-                if w: w.setParent(None)
-            state["chips"].clear()
-            catalog = state.get("catalog_items") or []
-            cols = 3
-            for i, entry in enumerate(catalog):
-                slug = entry["slug"]; label = entry["label"]
-                btn = QPushButton(label); btn.setCursor(Qt.PointingHandCursor)
-                btn.setStyleSheet(_chip_style(slug in state["picked"]))
-                btn.clicked.connect(lambda _=False, s=slug: _on_chip(s))
-                r, c = divmod(i, cols)
-                chips_grid.addWidget(btn, r, c)
-                state["chips"][slug] = btn
-            n = len(state["picked"])
-            catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+            body = QFrame()
+            bl2 = QVBoxLayout(body); bl2.setContentsMargins(22, 4, 0, 0); bl2.setSpacing(6)
+            rl.addWidget(body)
 
-        def _select_all():
-            state["picked"] = {e["slug"] for e in state.get("catalog_items") or []}
-            for slug, btn in state["chips"].items():
-                btn.setStyleSheet(_chip_style(True))
-            n = len(state["picked"])
-            catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+            prefill = existing_by_axis.get(axis_key) or {}
+            checked_default = bool(prefill)
 
-        def _clear_all():
-            state["picked"] = set()
-            for btn in state["chips"].values():
-                btn.setStyleSheet(_chip_style(False))
-            catalog_summary.setText("0 picked → 0 variants")
-
-        sel_all_btn = QPushButton("Select all"); sel_all_btn.setObjectName("GhostBtn")
-        sel_all_btn.setCursor(Qt.PointingHandCursor); sel_all_btn.clicked.connect(_select_all)
-        clear_btn = QPushButton("Clear"); clear_btn.setObjectName("GhostBtn")
-        clear_btn.setCursor(Qt.PointingHandCursor); clear_btn.clicked.connect(_clear_all)
-        catalog_actions.addWidget(sel_all_btn); catalog_actions.addWidget(clear_btn)
-        catalog_actions.addStretch()
-
-        def _refresh_for_axis():
-            k = axis_combo.currentData() or "headline"
-            meta = ITERATION_AXES.get(k, {})
             catalog = meta.get("catalog")
+            state = {"picked": set(), "chips": {}}
+
+            actor_desc_edit = None  # only built for the actor axis
+            spin = None
+            catalog_summary = None
+
             if catalog:
-                hint.setText(
-                    f"Iterating the {meta.get('describe', k)} — pick the specific "
-                    f"sub-options you want. Each picked chip = one variant."
-                )
-                count_card.hide()
-                catalog_card.show()
-                # If the user just switched axis, reset the picked set unless
-                # we're showing the originally-saved axis (preserve selection).
-                if k != item["axis"]:
+                # Catalog axis → chips + select all/clear.
+                actions = QHBoxLayout(); actions.setSpacing(6)
+                sa = QPushButton("Select all"); sa.setObjectName("GhostBtn")
+                cl_btn = QPushButton("Clear"); cl_btn.setObjectName("GhostBtn")
+                sa.setCursor(Qt.PointingHandCursor); cl_btn.setCursor(Qt.PointingHandCursor)
+                actions.addWidget(sa); actions.addWidget(cl_btn); actions.addStretch()
+                bl2.addLayout(actions)
+
+                chips_grid = QGridLayout(); chips_grid.setSpacing(5); chips_grid.setContentsMargins(0, 0, 0, 0)
+                bl2.addLayout(chips_grid)
+                catalog_summary = QLabel("0 picked → 0 variants")
+                catalog_summary.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 11px;")
+                bl2.addWidget(catalog_summary)
+
+                # Prefill picked.
+                if prefill.get("targets"):
+                    state["picked"] = {t["slug"] for t in prefill["targets"]}
+
+                def _set_summary():
+                    n = len(state["picked"])
+                    catalog_summary.setText(f"{n} picked → {n} variant{'s' if n != 1 else ''}")
+
+                def _on_chip(slug: str):
+                    if slug in state["picked"]:
+                        state["picked"].discard(slug)
+                    else:
+                        state["picked"].add(slug)
+                    state["chips"][slug].setStyleSheet(_chip_style(slug in state["picked"]))
+                    _set_summary()
+
+                cols = 3
+                for i, entry in enumerate(catalog):
+                    slug = entry["slug"]; lab = entry["label"]
+                    btn = QPushButton(lab); btn.setCursor(Qt.PointingHandCursor)
+                    btn.setStyleSheet(_chip_style(slug in state["picked"]))
+                    btn.clicked.connect(lambda _=False, s=slug: _on_chip(s))
+                    r, c = divmod(i, cols)
+                    chips_grid.addWidget(btn, r, c)
+                    state["chips"][slug] = btn
+                _set_summary()
+
+                def _sel_all():
+                    state["picked"] = {e["slug"] for e in catalog}
+                    for btn in state["chips"].values():
+                        btn.setStyleSheet(_chip_style(True))
+                    _set_summary()
+
+                def _clr_all():
                     state["picked"] = set()
-                state["catalog_items"] = catalog
-                _rebuild_chips()
+                    for btn in state["chips"].values():
+                        btn.setStyleSheet(_chip_style(False))
+                    _set_summary()
+
+                sa.clicked.connect(_sel_all); cl_btn.clicked.connect(_clr_all)
             else:
-                hint.setText(
-                    f"Iterating the {meta.get('describe', k)} — open-text "
-                    f"generation, the LLM produces N variants in the same style."
-                )
-                catalog_card.hide()
-                count_card.show()
+                # Open-axis → spinbox.
+                cnt_row = QHBoxLayout(); cnt_row.setSpacing(8)
+                cnt_row.addWidget(QLabel("Variants:", styleSheet=f"color: {t.TEXT_DIM}; font-size: 11px;"))
+                spin = QSpinBox(); spin.setRange(1, 12)
+                spin.setValue(int(prefill.get("count") or 5))
+                spin.setFixedWidth(70)
+                cnt_row.addWidget(spin); cnt_row.addStretch()
+                bl2.addLayout(cnt_row)
 
-        axis_combo.currentIndexChanged.connect(lambda _i: _refresh_for_axis())
-        _refresh_for_axis()
+                if axis_key == "actor":
+                    bl2.addWidget(QLabel(
+                        "Describe the actor you want (leave empty for random demographic variations):",
+                        styleSheet=f"color: {t.TEXT_DIM}; font-size: 11px;",
+                    ))
+                    actor_desc_edit = QTextEdit()
+                    actor_desc_edit.setPlaceholderText(
+                        "e.g. mid-30s Black woman, natural curly hair, soft athletic build, warm "
+                        "approachable vibe, no-makeup makeup, wearing neutral linen"
+                    )
+                    actor_desc_edit.setFixedHeight(70)
+                    actor_desc_edit.setStyleSheet(
+                        f"QTextEdit {{ background: {t.BG_ELEVATED}; color: {t.TEXT};"
+                        f" border: 1px solid {t.BORDER}; border-radius: 6px;"
+                        f" padding: 6px; font-size: 11px; }}"
+                    )
+                    if prefill.get("actor_description"):
+                        actor_desc_edit.setPlainText(prefill["actor_description"])
+                    bl2.addWidget(actor_desc_edit)
 
-        l.addSpacing(8)
+            # Toggle body visibility based on the checkbox.
+            def _on_toggle(checked: bool):
+                body.setVisible(checked)
+            chk.toggled.connect(_on_toggle)
+            chk.setChecked(checked_default)
+            body.setVisible(checked_default)
+
+            axes_lay.addWidget(row)
+            axis_widgets[axis_key] = {
+                "checkbox": chk,
+                "spin": spin,
+                "actor_desc_edit": actor_desc_edit,
+                "state": state,
+                "catalog": catalog,
+                "catalog_summary": catalog_summary,
+            }
+
+        for axis_key, meta in ITERATION_AXES.items():
+            _build_axis_row(axis_key, meta)
+
+        outer.addSpacing(8)
         btns = QHBoxLayout(); btns.addStretch()
+        cancel = QPushButton("Cancel"); cancel.setObjectName("GhostBtn")
+        cancel.clicked.connect(dlg.reject)
         ok = QPushButton("Save"); ok.setObjectName("PrimaryBtn")
         ok.clicked.connect(dlg.accept)
-        btns.addWidget(ok)
-        l.addLayout(btns)
+        btns.addWidget(cancel); btns.addWidget(ok)
+        outer.addLayout(btns)
 
-        if dlg.exec() == QDialog.Accepted:
-            new_axis = axis_combo.currentData() or "headline"
-            item["axis"] = new_axis
-            meta = ITERATION_AXES[new_axis]
-            if meta.get("catalog") and state["picked"]:
-                catalog = meta["catalog"]
-                picked_targets = [e for e in catalog if e["slug"] in state["picked"]]
-                item["targets"] = picked_targets
-                item["count"] = len(picked_targets)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        # Collect checked axes into the new item["axes"] list.
+        new_axes: list[dict] = []
+        for axis_key, w in axis_widgets.items():
+            if not w["checkbox"].isChecked():
+                continue
+            meta = ITERATION_AXES[axis_key]
+            if w["catalog"]:
+                picked_slugs = w["state"]["picked"]
+                if not picked_slugs:
+                    # Checked but no chip picked → skip silently rather than
+                    # firing an empty axis. The summary will reflect omission.
+                    continue
+                picked_targets = [e for e in w["catalog"] if e["slug"] in picked_slugs]
+                new_axes.append({
+                    "axis": axis_key,
+                    "count": len(picked_targets),
+                    "targets": picked_targets,
+                    "actor_description": None,
+                })
             else:
-                item["targets"] = None
-                item["count"] = int(spin.value())
-            label = ITERATION_AXES[new_axis]["label"]
-            item["summary_label"].setText(f"▸ {label} × {item['count']}")
-            self._refresh_queue_state()
+                actor_desc = None
+                if w["actor_desc_edit"] is not None:
+                    txt = w["actor_desc_edit"].toPlainText().strip()
+                    actor_desc = txt or None
+                new_axes.append({
+                    "axis": axis_key,
+                    "count": int(w["spin"].value()) if w["spin"] else 1,
+                    "targets": None,
+                    "actor_description": actor_desc,
+                })
+
+        if not new_axes:
+            # At least one axis is required — keep the previous config.
+            QMessageBox.information(
+                self, "No axis picked",
+                "Check at least one axis before saving — kept previous config.",
+            )
+            return
+
+        item["axes"] = new_axes
+        item["brand_name"] = brand_combo.currentData()
+
+        # Refresh the card summary band.
+        parts = []
+        for a in new_axes:
+            lab = ITERATION_AXES[a["axis"]]["label"]
+            suffix = ""
+            if a["axis"] == "actor" and a.get("actor_description"):
+                suffix = " · custom"
+            parts.append(f"{lab} × {a['count']}{suffix}")
+        item["summary_label"].setText("▸ " + "  ·  ".join(parts))
+        item["brand_summary_label"].setText(
+            f"Brand: {item['brand_name']}" if item["brand_name"] else ""
+        )
+        self._refresh_queue_state()
 
     # ── Run / results ───────────────────────────────────────────────────
 
@@ -6596,11 +6811,11 @@ class IterationPage(QWidget):
             thread = QThread()
             worker = IterationItemWorker(
                 item_index=idx, image_path=item["path"],
-                axis=item["axis"],
-                n_variants=item["count"],
+                axes=item.get("axes") or [],
+                languages=self.lang.selected() or ["English"],
                 image_model=(self.image_model.currentData() or core.DEFAULT_IMAGE_MODEL),
                 resolution=self.resolution.currentText() or "1k",
-                targets=item.get("targets"),
+                brand_name=item.get("brand_name"),
             )
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -6619,11 +6834,17 @@ class IterationPage(QWidget):
         if not (0 <= item_idx < len(self._items)):
             return
         item = self._items[item_idx]
-        out_dir = self._workers[item_idx]._out_dir
-        if not out_dir or r.get("status") != "ok":
+        # The variant file path is relative to whichever sub-folder the
+        # underlying run_iterate wrote to. Recover it by scanning the
+        # root_dir for the file name — sub-folders are flat per (axis,lang).
+        root_dir = self._workers[item_idx]._root_dir
+        if not root_dir or r.get("status") != "ok":
             return
-        local = Path(out_dir) / r.get("file", "")
-        if not local.exists():
+        file_name = r.get("file", "")
+        local: Optional[Path] = None
+        for cand in Path(root_dir).rglob(file_name):
+            local = cand; break
+        if local is None or not local.exists():
             return
         from PySide6.QtGui import QPixmap
         thumb = QLabel(); thumb.setFixedSize(64, 64)
@@ -6638,15 +6859,16 @@ class IterationPage(QWidget):
 
     def _on_item_finished(self, item_idx: int, out_dir: str, count_ok: int):
         if 0 <= item_idx < len(self._items):
-            from providers.prompts import ITERATION_AXES
             item = self._items[item_idx]
             item["out_dir"] = out_dir
             item["config_btn"].setEnabled(True)
             item["remove_btn"].setEnabled(True)
             # Open button becomes useful only once the out_dir exists with content.
             item["open_btn"].setEnabled(bool(out_dir and Path(out_dir).exists()))
-            axis_label = ITERATION_AXES.get(item["axis"], {}).get("label", item["axis"])
-            item["summary_label"].setText(f"✓ {axis_label} × {count_ok} done")
+            n_axes = len(item.get("axes") or [])
+            item["summary_label"].setText(
+                f"✓ {count_ok} variant{'s' if count_ok != 1 else ''} across {n_axes} axe{'s' if n_axes != 1 else ''}"
+            )
         # Tear down the thread.
         try:
             self._threads[item_idx].quit()

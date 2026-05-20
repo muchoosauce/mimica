@@ -1,14 +1,17 @@
 """Shallow web scraper using Playwright (Chromium) + BeautifulSoup.
 
-Scrapes the homepage and common secondary paths, captures full-page screenshots
-for vision analysis, and downloads <img> assets for product candidate detection.
+Scrapes the homepage and common secondary paths, captures a full-page
+screenshot for vision analysis, and collects `<img>` assets. Site images are
+held in **memory only** — they are sent to Claude for analysis but never
+written to the user's disk. The user attaches their own reference visuals
+manually for anything that needs to persist past a single run.
 """
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from io import BytesIO
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import requests
 
@@ -33,10 +36,13 @@ _USER_AGENT = (
 
 def scrape_site(
     url: str,
-    image_dir: Path,
     on_log=lambda lvl, msg: None,
 ) -> ScrapedSite:
-    """Scrape one site shallowly. Returns ScrapedSite with .error on fatal failure."""
+    """Scrape one site shallowly. Returns ScrapedSite with .error on fatal failure.
+
+    Images (screenshots + `<img>` assets) are collected in-memory as
+    `CollectedImage(data=...)` and never written to disk.
+    """
     site = ScrapedSite(url=url)
     try:
         from playwright.sync_api import sync_playwright
@@ -45,8 +51,7 @@ def scrape_site(
         return site
 
     paths = _candidate_paths(url)
-    image_dir.mkdir(parents=True, exist_ok=True)
-    on_log("INFO", f"Scraping {url} (up to {len(paths)} pages)")
+    on_log("INFO", f"Scraping {url} (up to {len(paths)} pages, images in-memory)")
 
     try:
         with sync_playwright() as p:
@@ -57,7 +62,7 @@ def scrape_site(
                 for i, path in enumerate(paths):
                     full = urljoin(url, path)
                     try:
-                        page = _scrape_page(pg, full, image_dir, on_log, page_idx=i)
+                        page = _scrape_page(pg, full, on_log, page_idx=i)
                         if page is not None:
                             site.pages.append(page)
                     except Exception as e:
@@ -84,8 +89,7 @@ def _candidate_paths(url: str) -> list[str]:
     return paths[:_MAX_PAGES]
 
 
-def _scrape_page(pw_page, full_url: str, image_dir: Path,
-                 on_log, page_idx: int) -> Optional[ScrapedPage]:
+def _scrape_page(pw_page, full_url: str, on_log, page_idx: int) -> Optional[ScrapedPage]:
     response = pw_page.goto(full_url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT_MS)
     if response is None:
         return None
@@ -117,19 +121,22 @@ def _scrape_page(pw_page, full_url: str, image_dir: Path,
         text=text,
     )
 
-    # Screenshot full page (heavy on long pages — clip to viewport-height-ish)
+    # Screenshot full page — bytes only, no path
     try:
-        shot_path = image_dir / f"screenshot_{page_idx:02d}.jpg"
-        pw_page.screenshot(path=str(shot_path), full_page=True, type="jpeg", quality=80)
+        shot_bytes = pw_page.screenshot(full_page=True, type="jpeg", quality=80)
+        w, h = _dims_from_bytes(shot_bytes)
         page.screenshot = CollectedImage(
-            path=shot_path,
+            data=shot_bytes,
+            media_type="image/jpeg",
             origin=f"url:{full_url}",
             note="screenshot",
+            width=w,
+            height=h,
         )
     except Exception as e:
         on_log("WARN", f"  screenshot failed for {full_url}: {e}")
 
-    # <img> harvest
+    # <img> harvest — bytes only, no path
     try:
         img_urls = pw_page.evaluate("""
             () => Array.from(document.querySelectorAll('img'))
@@ -145,7 +152,7 @@ def _scrape_page(pw_page, full_url: str, image_dir: Path,
         if absolute in seen:
             continue
         seen.add(absolute)
-        ci = _download_image(absolute, image_dir, page_idx)
+        ci = _fetch_image(absolute)
         if ci is not None:
             page.images.append(ci)
         if len(page.images) >= 25:  # cap per page
@@ -155,7 +162,7 @@ def _scrape_page(pw_page, full_url: str, image_dir: Path,
     return page
 
 
-def _download_image(img_url: str, image_dir: Path, page_idx: int) -> Optional[CollectedImage]:
+def _fetch_image(img_url: str) -> Optional[CollectedImage]:
     if not img_url.startswith(("http://", "https://")):
         return None
     if img_url.endswith(".svg") or "data:image/svg" in img_url:
@@ -167,45 +174,44 @@ def _download_image(img_url: str, image_dir: Path, page_idx: int) -> Optional[Co
     if r.status_code >= 400:
         return None
 
-    content_type = (r.headers.get("Content-Type") or "").lower()
+    content_type = (r.headers.get("Content-Type") or "").lower().split(";")[0].strip()
     if not content_type.startswith("image/"):
         return None
-    ext = content_type.split("/")[-1].split(";")[0] or "jpg"
-    if ext == "jpeg":
-        ext = "jpg"
-    if ext not in ("jpg", "png", "webp", "gif"):
+    subtype = content_type.split("/")[-1] or "jpg"
+    if subtype not in ("jpeg", "jpg", "png", "webp", "gif"):
         return None
+    media_type = "image/jpeg" if subtype in ("jpeg", "jpg") else f"image/{subtype}"
 
-    name = re.sub(r"[^A-Za-z0-9_.-]", "_", urlparse(img_url).path.split("/")[-1] or "img")
-    out = image_dir / f"img_p{page_idx:02d}_{abs(hash(img_url)) % 10**8}_{name}"
-    if not out.suffix:
-        out = out.with_suffix(f".{ext}")
+    buf = BytesIO()
+    size = 0
     try:
-        size = 0
-        with open(out, "wb") as f:
-            for chunk in r.iter_content(8192):
-                if not chunk:
-                    continue
-                size += len(chunk)
-                if size > _MAX_IMG_BYTES:
-                    f.close()
-                    out.unlink(missing_ok=True)
-                    return None
-                f.write(chunk)
+        for chunk in r.iter_content(8192):
+            if not chunk:
+                continue
+            size += len(chunk)
+            if size > _MAX_IMG_BYTES:
+                return None
+            buf.write(chunk)
     except Exception:
         return None
 
-    w, h = _image_dims(out)
+    data = buf.getvalue()
+    w, h = _dims_from_bytes(data)
     if max(w, h) < _MIN_IMG_DIM:
-        out.unlink(missing_ok=True)
         return None
-    return CollectedImage(path=out, origin=f"url:{img_url}", width=w, height=h)
+    return CollectedImage(
+        data=data,
+        media_type=media_type,
+        origin=f"url:{img_url}",
+        width=w,
+        height=h,
+    )
 
 
-def _image_dims(path: Path) -> tuple[int, int]:
+def _dims_from_bytes(data: bytes) -> tuple[int, int]:
     try:
         from PIL import Image
-        with Image.open(path) as im:
+        with Image.open(BytesIO(data)) as im:
             return im.size
     except Exception:
         return 0, 0

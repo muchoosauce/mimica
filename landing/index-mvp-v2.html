@@ -2,28 +2,8 @@
 <html lang="fr"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mimica — Démultipliez vos winners en 72h</title>
-<meta name="description" content="Vous trouvez la winner. On vous fait scale. 30 à 50 variantes par winner en 72h. Pure exécution pour les comptes Meta qui scalent.">
-
-<!-- Favicon (full pack from realfavicongenerator) -->
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<link rel="manifest" href="/site.webmanifest">
-
-<!-- Open Graph (Facebook, LinkedIn, iMessage preview) -->
-<meta property="og:type" content="website">
-<meta property="og:title" content="Mimica — Démultipliez vos winners en 72h">
-<meta property="og:description" content="Vous trouvez la winner. On vous fait scale. 30 à 50 variantes par winner en 72h.">
-<meta property="og:url" content="https://mimica.fr">
-<meta property="og:image" content="https://mimica.fr/web-app-manifest-512x512.png">
-
-<!-- Twitter Card -->
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Mimica — Démultipliez vos winners en 72h">
-<meta name="twitter:description" content="Vous trouvez la winner. On vous fait scale.">
-<meta name="twitter:image" content="https://mimica.fr/web-app-manifest-512x512.png">
+<title>Mimica — Production créa AI managée pour media buyers</title>
+<meta name="description" content="Production créa AI managée pour les media buyers et petites agences. Multi-brand, marque blanche, livré en 48h. À partir de $500/mois.">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
@@ -890,7 +870,7 @@ section { padding: var(--s-64) 0; }
   to   { transform: translateX(0); }
 }
 
-.crea-card {
+.ad-card {
   flex-shrink: 0;
   position: relative;
   width: var(--card-w);
@@ -906,12 +886,12 @@ section { padding: var(--s-64) 0; }
   transition: border-color var(--dur-fast) var(--ease), box-shadow 300ms var(--ease);
   will-change: transform;
 }
-.crea-card:hover {
+.ad-card:hover {
   border-color: var(--border-emp);
   box-shadow: 0 24px 48px -12px rgba(124, 92, 255, 0.25);
   z-index: 10;
 }
-.crea-card::before {
+.ad-card::before {
   content: '';
   position: absolute;
   inset: -25%;
@@ -921,7 +901,7 @@ section { padding: var(--s-64) 0; }
   opacity: 0.95;
   pointer-events: none;
 }
-.crea-card::after {
+.ad-card::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -930,12 +910,12 @@ section { padding: var(--s-64) 0; }
   transition: opacity 220ms var(--ease);
   pointer-events: none;
 }
-.crea-card:hover::after { opacity: 1; }
+.ad-card:hover::after { opacity: 1; }
 @keyframes gradient-shift {
   0%, 100% { background-position: 0% 50%; }
   50%      { background-position: 100% 50%; }
 }
-.crea-card-label {
+.ad-card-label {
   position: relative;
   z-index: 2;
   display: inline-flex;
@@ -954,18 +934,18 @@ section { padding: var(--s-64) 0; }
   transition: opacity 220ms var(--ease);
   white-space: nowrap;
 }
-.crea-card-label.cycling { opacity: 0; }
-.crea-card-1 { --bg-gradient: linear-gradient(135deg, #1A1530 0%, #0A0A0F 50%, #2A1A30 100%); }
-.crea-card-2 { --bg-gradient: linear-gradient(135deg, #2A1A22 0%, #0A0A0F 50%, #1F1A30 100%); }
-.crea-card-3 { --bg-gradient: linear-gradient(135deg, #1F1A30 0%, #0A0A0F 50%, #251B30 100%); }
-.crea-card-4 { --bg-gradient: linear-gradient(135deg, #251B30 0%, #0A0A0F 50%, #1A1830 100%); }
-.crea-card-5 { --bg-gradient: linear-gradient(135deg, #1A1830 0%, #0A0A0F 50%, #2A1830 100%); }
-.crea-card-6 { --bg-gradient: linear-gradient(135deg, #2A1830 0%, #0A0A0F 50%, #1A1530 100%); }
-.crea-card-7 { --bg-gradient: linear-gradient(135deg, #1F2030 0%, #0A0A0F 50%, #1A1530 100%); }
-.crea-card-8 { --bg-gradient: linear-gradient(135deg, #251930 0%, #0A0A0F 50%, #2A1A22 100%); }
+.ad-card-label.cycling { opacity: 0; }
+.ad-card-1 { --bg-gradient: linear-gradient(135deg, #1A1530 0%, #0A0A0F 50%, #2A1A30 100%); }
+.ad-card-2 { --bg-gradient: linear-gradient(135deg, #2A1A22 0%, #0A0A0F 50%, #1F1A30 100%); }
+.ad-card-3 { --bg-gradient: linear-gradient(135deg, #1F1A30 0%, #0A0A0F 50%, #251B30 100%); }
+.ad-card-4 { --bg-gradient: linear-gradient(135deg, #251B30 0%, #0A0A0F 50%, #1A1830 100%); }
+.ad-card-5 { --bg-gradient: linear-gradient(135deg, #1A1830 0%, #0A0A0F 50%, #2A1830 100%); }
+.ad-card-6 { --bg-gradient: linear-gradient(135deg, #2A1830 0%, #0A0A0F 50%, #1A1530 100%); }
+.ad-card-7 { --bg-gradient: linear-gradient(135deg, #1F2030 0%, #0A0A0F 50%, #1A1530 100%); }
+.ad-card-8 { --bg-gradient: linear-gradient(135deg, #251930 0%, #0A0A0F 50%, #2A1A22 100%); }
 
 /* ─── Real-media support in cards (image / video) ─────────────── */
-.crea-card-media {
+.ad-card-media {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -975,20 +955,20 @@ section { padding: var(--s-64) 0; }
   pointer-events: none;
   background: var(--surface-1);
 }
-.crea-card--has-media::before { opacity: 0; }
-.crea-card--has-media::after {
+.ad-card--has-media::before { opacity: 0; }
+.ad-card--has-media::after {
   background: linear-gradient(180deg, transparent 0%, transparent 55%, rgba(10,10,15,0.72) 100%);
   opacity: 1;
 }
-.crea-card--has-media:hover::after {
+.ad-card--has-media:hover::after {
   background: linear-gradient(180deg, transparent 0%, transparent 45%, rgba(10,10,15,0.85) 100%);
 }
 
 /* ─── Format-specific heights (visual rhythm in marquee) ─────── */
 .marquee-row { align-items: center; }
-.crea-card--sq    { height: calc(var(--card-w) * 1);    }  /* 1:1 — 240px */
-.crea-card--post  { height: calc(var(--card-w) * 1.25); }  /* 4:5 — 300px (default) */
-.crea-card--story { height: calc(var(--card-w) * 1.6);  }  /* ~9:16 — 384px */
+.ad-card--sq    { height: calc(var(--card-w) * 1);    }  /* 1:1 — 240px */
+.ad-card--post  { height: calc(var(--card-w) * 1.25); }  /* 4:5 — 300px (default) */
+.ad-card--story { height: calc(var(--card-w) * 1.6);  }  /* ~9:16 — 384px */
 
 /* ─── Marquee disclaimer ─────────────────────────────────────── */
 .marquee-disclaimer {
@@ -1012,9 +992,9 @@ section { padding: var(--s-64) 0; }
 
 @media (max-width: 640px) {
   .marquee { --card-w: 160px; --card-gap: 16px; }
-  .crea-card--sq    { height: calc(var(--card-w) * 1);    }
-  .crea-card--post  { height: calc(var(--card-w) * 1.25); }
-  .crea-card--story { height: calc(var(--card-w) * 1.6);  }
+  .ad-card--sq    { height: calc(var(--card-w) * 1);    }
+  .ad-card--post  { height: calc(var(--card-w) * 1.25); }
+  .ad-card--story { height: calc(var(--card-w) * 1.6);  }
 }
 
 /* ─── PAIN SECTION ─────────────────────────────────────────────── */
@@ -2811,104 +2791,9 @@ section { position: relative; overflow: hidden; }
   .email-capture-form { flex-direction: column; }
   .email-capture-form button { width: 100%; justify-content: center; }
 }
-
-/* ─── LIGHTBOX (image zoom on click) ─────────────────────────── */
-.demo-source img,
-.demo-variants-grid img,
-.crea-card {
-  cursor: zoom-in !important;
-}
-
-.lightbox {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 10, 15, 0);
-  backdrop-filter: blur(0px);
-  -webkit-backdrop-filter: blur(0px);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  padding: var(--s-40);
-  cursor: zoom-out;
-  transition: background 0.35s ease, backdrop-filter 0.35s ease;
-}
-.lightbox.is-open {
-  display: flex;
-  background: rgba(10, 10, 15, 0.92);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-}
-.lightbox-img {
-  max-width: min(92vw, 900px);
-  max-height: 88vh;
-  width: auto;
-  height: auto;
-  border-radius: 14px;
-  box-shadow: 0 32px 96px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  cursor: default;
-  display: block;
-  /* JS-driven transform via FLIP technique. Default identity. */
-  will-change: transform;
-}
-/* Pause marquee while lightbox is open so close animation targets correct position */
-.marquee.lightbox-frozen .marquee-row { animation-play-state: paused; }
-/* Hide hint until fully open */
-.lightbox-hint {
-  opacity: 0;
-  transition: opacity 0.2s ease 0.3s;
-}
-.lightbox.is-open .lightbox-hint { opacity: 1; }
-.lightbox-close {
-  opacity: 0;
-  transition: opacity 0.2s ease 0.3s, background 0.2s, transform 0.2s;
-}
-.lightbox.is-open .lightbox-close { opacity: 1; }
-.lightbox-close {
-  position: absolute;
-  top: var(--s-24);
-  right: var(--s-24);
-  width: 44px;
-  height: 44px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 50%;
-  color: #fff;
-  font-size: 22px;
-  font-weight: 300;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s, transform 0.2s;
-}
-.lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.16);
-  transform: scale(1.05);
-}
-.lightbox-hint {
-  position: absolute;
-  bottom: var(--s-24);
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  pointer-events: none;
-}
 </style>
 
 
-<!-- Microsoft Clarity (analytics + heatmaps + session recordings) -->
-<script type="text/javascript">
-    (function(c,l,a,r,i,t,y){
-        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-    })(window, document, "clarity", "script", "ws60siz1s8");
-</script>
 </head>
 
 <body>
@@ -2979,42 +2864,42 @@ section { position: relative; overflow: hidden; }
         ─────────────────────────────────────────────────────────────
       -->
       <div class="marquee-row marquee-row-1">
-        <div class="crea-card crea-card--story crea-card--has-media"><img class="crea-card-media" src="creas/01-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media"><img class="crea-card-media" src="creas/01-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media"><img class="crea-card-media" src="creas/01-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media"><img class="crea-card-media" src="creas/02-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media"><img class="crea-card-media" src="creas/02-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media"><img class="crea-card-media" src="creas/02-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media"><img class="crea-card-media" src="creas/03-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media"><img class="crea-card-media" src="creas/03-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media"><img class="ad-card-media" src="creas/01-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media"><img class="ad-card-media" src="creas/01-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media"><img class="ad-card-media" src="creas/01-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media"><img class="ad-card-media" src="creas/02-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media"><img class="ad-card-media" src="creas/02-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media"><img class="ad-card-media" src="creas/02-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media"><img class="ad-card-media" src="creas/03-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media"><img class="ad-card-media" src="creas/03-post.png" alt="" loading="lazy"></div>
         <!-- duplicate for seamless loop -->
-        <div class="crea-card crea-card--story crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/01-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/01-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/01-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/02-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/02-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/02-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/03-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/03-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/01-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/01-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/01-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/02-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/02-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/02-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/03-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/03-post.png" alt="" loading="lazy"></div>
       </div>
       <div class="marquee-row marquee-row-2">
-        <div class="crea-card crea-card--post crea-card--has-media"><img class="crea-card-media" src="creas/04-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media"><img class="crea-card-media" src="creas/04-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media"><img class="crea-card-media" src="creas/03-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media"><img class="crea-card-media" src="creas/05-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media"><img class="crea-card-media" src="creas/05-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media"><img class="crea-card-media" src="creas/06-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media"><img class="crea-card-media" src="creas/04-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media"><img class="crea-card-media" src="creas/06-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media"><img class="ad-card-media" src="creas/04-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media"><img class="ad-card-media" src="creas/04-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media"><img class="ad-card-media" src="creas/03-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media"><img class="ad-card-media" src="creas/05-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media"><img class="ad-card-media" src="creas/05-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media"><img class="ad-card-media" src="creas/06-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media"><img class="ad-card-media" src="creas/04-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media"><img class="ad-card-media" src="creas/06-story.png" alt="" loading="lazy"></div>
         <!-- duplicate for seamless loop -->
-        <div class="crea-card crea-card--post crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/04-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/04-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/03-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/05-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/05-story.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--post crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/06-post.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--sq crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/04-square.png" alt="" loading="lazy"></div>
-        <div class="crea-card crea-card--story crea-card--has-media" aria-hidden="true"><img class="crea-card-media" src="creas/06-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/04-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/04-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/03-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/05-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/05-story.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--post ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/06-post.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--sq ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/04-square.png" alt="" loading="lazy"></div>
+        <div class="ad-card ad-card--story ad-card--has-media" aria-hidden="true"><img class="ad-card-media" src="creas/06-story.png" alt="" loading="lazy"></div>
       </div>
     </div>
     <p class="marquee-disclaimer fade-up">
@@ -3296,13 +3181,15 @@ section { position: relative; overflow: hidden; }
 <footer>
   <div class="container">
     <div class="footer-content">
-      <a href="#" class="footer-logo" aria-label="mimica">
-        <span class="nav-logo-mark" aria-hidden="true"></span>
+      <a href="#" class="footer-logo">
+        <span class="nav-logo-dot"></span>
+        mimica
       </a>
       <div class="footer-links">
         <a href="#work">Work</a>
+        <a href="#pricing">Pricing</a>
         <a href="#faq">FAQ</a>
-        <a href="mailto:contact@mimica.fr">contact@mimica.fr</a>
+        <a href="mailto:hey@mimica.studio">hey@mimica.studio</a>
       </div>
       <div>© 2026 Mimica</div>
     </div>
@@ -3353,9 +3240,9 @@ document.querySelectorAll('.faq-q').forEach(q => {
 });
 
 // 3D tilt + label cycling on ad cards (labels optional)
-document.querySelectorAll('.crea-card').forEach((card) => {
+document.querySelectorAll('.ad-card').forEach((card) => {
   let cycleInterval;
-  const labelEl = card.querySelector('.crea-card-label');
+  const labelEl = card.querySelector('.ad-card-label');
   const variations = labelEl ? (card.dataset.variations || labelEl.textContent).split('|') : [];
   let idx = 0;
 
@@ -3449,52 +3336,6 @@ const demoObserver = new IntersectionObserver((entries) => {
 }, { threshold: 0.2, rootMargin: '0px 0px -5% 0px' });
 document.querySelectorAll('.demo-grid').forEach(el => demoObserver.observe(el));
 
-// Lightbox — click any creative to zoom in (event delegation pour marquee + demo)
-(() => {
-  const lightbox = document.getElementById('lightbox');
-  if (!lightbox) return;
-  const img = lightbox.querySelector('.lightbox-img');
-  const closeBtn = lightbox.querySelector('.lightbox-close');
-  const open = (src, alt) => {
-    if (!src) return;
-    img.src = src;
-    img.alt = alt || '';
-    lightbox.classList.add('is-open');
-    lightbox.setAttribute('aria-hidden', 'false');
-    document.body.style.overflow = 'hidden';
-  };
-  const close = () => {
-    lightbox.classList.remove('is-open');
-    lightbox.setAttribute('aria-hidden', 'true');
-    document.body.style.overflow = '';
-    setTimeout(() => { img.src = ''; }, 260);
-  };
-  // Event delegation — works even when inner img has pointer-events: none (cas du marquee)
-  document.addEventListener('click', (e) => {
-    // Demo images (cliquables directement)
-    const demoImg = e.target.closest('.demo-source img, .demo-variants-grid img');
-    if (demoImg) {
-      e.stopPropagation();
-      open(demoImg.src, demoImg.alt);
-      return;
-    }
-    // Marquee crea-cards (clic sur la card parente, on récupère l'img dedans)
-    const card = e.target.closest('.crea-card');
-    if (card) {
-      const inner = card.querySelector('img');
-      if (inner && inner.src) {
-        e.stopPropagation();
-        open(inner.src, inner.alt);
-      }
-    }
-  });
-  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
-  lightbox.addEventListener('click', (e) => { if (e.target === lightbox) close(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && lightbox.classList.contains('is-open')) close();
-  });
-})();
-
 // Count-up animation (ease-out-expo, decimal support)
 function animateCount(el, target, duration, prefix, suffix, decimals) {
   const start = performance.now();
@@ -3528,145 +3369,6 @@ document.querySelectorAll('[data-count-target]').forEach(el => {
 });
 </script>
 
-<!-- Lightbox overlay (placed BEFORE end of body so the JS finds it) -->
-<div class="lightbox" id="lightbox" aria-hidden="true" role="dialog" aria-label="Image agrandie">
-  <button class="lightbox-close" aria-label="Fermer">×</button>
-  <img class="lightbox-img" src="" alt="">
-  <span class="lightbox-hint">Cliquer en dehors ou Échap pour fermer</span>
-</div>
 
-<script>
-// Lightbox with FLIP shared-element transition (iPhone Photos style)
-(() => {
-  const lightbox = document.getElementById('lightbox');
-  if (!lightbox) return;
-  const img = lightbox.querySelector('.lightbox-img');
-  const closeBtn = lightbox.querySelector('.lightbox-close');
-  const marquee = document.querySelector('.marquee');
-
-  // Apple-signature easing (close to iOS spring damp)
-  const EASING = 'cubic-bezier(0.32, 0.72, 0, 1)';
-  const DURATION = 420; // ms
-
-  let sourceEl = null;       // The thumbnail (img or .crea-card) clicked
-  let isAnimating = false;
-
-  // Compute FLIP transform from `from` rect to `to` rect (around center)
-  const flipTransform = (from, to) => {
-    const scale = Math.max(from.width / to.width, from.height / to.height);
-    const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
-    const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
-    return `translate(${dx}px, ${dy}px) scale(${scale})`;
-  };
-
-  const open = (clickedEl, src, alt) => {
-    if (!src || isAnimating) return;
-    isAnimating = true;
-    sourceEl = clickedEl;
-
-    const startRect = clickedEl.getBoundingClientRect();
-
-    // Pause marquee so close animation lands on correct position
-    marquee?.classList.add('lightbox-frozen');
-
-    // Load image first
-    const loadAndAnimate = () => {
-      lightbox.classList.add('is-open');
-      lightbox.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-
-      // Wait two RAFs so layout settles, then capture final rect
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        const endRect = img.getBoundingClientRect();
-        // Pre-position the lightbox img at the thumbnail's rect (instant, no animation)
-        img.style.transformOrigin = 'center center';
-        img.style.transition = 'none';
-        img.style.transform = flipTransform(startRect, endRect);
-
-        // Force reflow so the browser registers the start state
-        img.offsetHeight;
-
-        // Animate to identity (= final centered position)
-        img.style.transition = `transform ${DURATION}ms ${EASING}`;
-        img.style.transform = '';
-
-        setTimeout(() => { isAnimating = false; }, DURATION);
-      }));
-    };
-
-    img.src = src;
-    img.alt = alt || '';
-    if (img.complete && img.naturalWidth > 0) {
-      loadAndAnimate();
-    } else {
-      img.onload = loadAndAnimate;
-    }
-  };
-
-  const close = () => {
-    if (!lightbox.classList.contains('is-open') || isAnimating) {
-      // Fallback: instant close
-      lightbox.classList.remove('is-open');
-      lightbox.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-      img.style.transform = '';
-      img.style.transition = '';
-      marquee?.classList.remove('lightbox-frozen');
-      sourceEl = null;
-      return;
-    }
-
-    isAnimating = true;
-    const endRect = img.getBoundingClientRect();
-    const targetRect = sourceEl ? sourceEl.getBoundingClientRect() : null;
-
-    if (targetRect && targetRect.width > 0 && targetRect.height > 0) {
-      // Animate back to thumbnail position
-      img.style.transition = `transform ${DURATION}ms ${EASING}`;
-      img.style.transform = flipTransform(targetRect, endRect);
-    }
-
-    // Fade out background simultaneously by removing .is-open
-    // But delay it slightly so the image animation has time to play
-    setTimeout(() => {
-      lightbox.classList.remove('is-open');
-      lightbox.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-    }, 10);
-
-    setTimeout(() => {
-      img.style.transition = 'none';
-      img.style.transform = '';
-      img.src = '';
-      marquee?.classList.remove('lightbox-frozen');
-      sourceEl = null;
-      isAnimating = false;
-    }, DURATION + 30);
-  };
-
-  document.addEventListener('click', (e) => {
-    if (isAnimating) return;
-    const demoImg = e.target.closest('.demo-source img, .demo-variants-grid img');
-    if (demoImg) {
-      e.stopPropagation();
-      open(demoImg, demoImg.src, demoImg.alt);
-      return;
-    }
-    const card = e.target.closest('.crea-card');
-    if (card) {
-      const inner = card.querySelector('img');
-      if (inner && inner.src) {
-        e.stopPropagation();
-        open(card, inner.src, inner.alt);
-      }
-    }
-  });
-  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
-  lightbox.addEventListener('click', (e) => { if (e.target === lightbox) close(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && lightbox.classList.contains('is-open')) close();
-  });
-})();
-</script>
 
 </body></html>
