@@ -33,7 +33,10 @@ _BASE_URL = "https://api.muapi.ai/api/v1"
 # Bumped from 300 to 600s to match Kie and give Claude vision calls breathing
 # room when MuAPI's queue is backed up.
 _POLL_TIMEOUT = 600
-_POLL_INTERVAL = 3
+# Polling cadence for MuAPI prediction status. Lower = faster surface
+# once the model is done, but more API calls. 1.5s is a good balance
+# (was 3s — felt sluggish for 15-25s NB2 generations).
+_POLL_INTERVAL = 1.5
 _UPLOAD_LIMIT = 10 * 1024 * 1024  # MuAPI rejects >10MB uploads
 
 

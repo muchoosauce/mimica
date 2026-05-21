@@ -3443,6 +3443,21 @@ def create_animation_project(
     refs_dir = out_dir / "refs"
     refs_dir.mkdir(exist_ok=True)
 
+    # Auto-fill product_image from the brand if the caller didn't pass one.
+    # Both the desktop UI (where the user might forget to pick a product
+    # image manually) and the SaaS API (where no manual upload was
+    # provided) benefit from this single source of truth. Without it,
+    # shots flagged shows_product=true had no visual ref attached and
+    # the model invented generic packaging.
+    if not product_image:
+        try:
+            brand = load_brands().get(brand_name) or {}
+            candidate = brand.get("product_image") or ""
+            if candidate and Path(candidate).exists():
+                product_image = candidate
+        except Exception:
+            pass
+
     saved_product: dict = {"name": product_name.strip(), "image": ""}
     if product_image and Path(product_image).exists():
         src = Path(product_image)
