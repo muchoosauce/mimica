@@ -11,7 +11,7 @@ from . import core
 from . import theme as t
 from .pages import (
     AdaptPage, AnimationPage, BatchFixPage, BrandsPage, BRollPage, DashboardPage,
-    FunnelAdsPage, GeneratePage, HistoryPage, IterationPage, RunDetailPage,
+    FunnelAdsPage, GeneratePage, HistoryPage, IterationPage, ReshootPage, RunDetailPage,
     SettingsPage, TwinHubPage
 )
 from .swap_page import SwapPage
@@ -111,10 +111,11 @@ class Sidebar(QWidget):
             ("twin", "twin", "Twin"),
             ("swap", "adapt", "Swap product"),
             ("generate", "generate", "Variation"),
+            ("iteration", "generate", "Iteration"),
+            ("reshoot", "generate", "Reshoot"),
             ("adapt", "adapt", "Adapt"),
             ("fix", "wrench", "Fix"),
             ("broll", "broll", "B-Roll"),
-            ("iteration", "generate", "Iteration"),
             ("history", "history", "History"),
         ]:
             item = SidebarItem(icon, label)
@@ -284,12 +285,13 @@ class MainWindow(QMainWindow):
         self.fix = BatchFixPage()
         self.broll = BRollPage()
         self.iteration = IterationPage()
+        self.reshoot = ReshootPage()
         self.history = HistoryPage()
         self.brands = BrandsPage()
         self.detail = RunDetailPage()
         self.settings = SettingsPage()
         for p in (self.dashboard, self.create, self.animation, self.funnel, self.twin, self.swap, self.generate, self.adapt, self.fix, self.broll,
-                  self.iteration, self.history, self.brands, self.detail, self.settings):
+                  self.iteration, self.reshoot, self.history, self.brands, self.detail, self.settings):
             self.stack.addWidget(p)
         right.addWidget(self.stack, 1)
 
@@ -340,6 +342,7 @@ class MainWindow(QMainWindow):
             "fix":       (self.fix,       "Fix"),
             "broll":     (self.broll,     "B-Roll"),
             "iteration": (self.iteration, "Iteration"),
+            "reshoot":   (self.reshoot,   "Reshoot"),
             "history":   (self.history,   "History"),
             "brands":    (self.brands,    "Brands"),
             "settings":  (self.settings,  "Settings"),
@@ -361,6 +364,8 @@ class MainWindow(QMainWindow):
             self.funnel.refresh_brands()
         if page is self.animation:
             self.animation.refresh_brands()
+        if page is self.reshoot:
+            self.reshoot.refresh_brands()
         self.stack.setCurrentWidget(page)
         self.sidebar.set_active(key)
         self.topbar.set_crumb(crumb)

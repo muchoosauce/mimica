@@ -58,6 +58,7 @@ from providers.prompts import (
     parse_animation_brief as _parse_animation_brief,
     refine_animation_shot_image_prompt as _refine_anim_img,
     refine_animation_shot_video_prompt as _refine_anim_vid,
+    reshoot_analyze as _reshoot_analyze,
     soften_prompt as _soften,
 )
 
@@ -3695,6 +3696,210 @@ def run_image_generate(
             "aspect": aspect,
             "provider": provider.name,
         },
+        "results": results,
+    }
+    try:
+        (out_dir / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    ok = sum(1 for r in results if r.get("status") == "ok")
+    on_log("OK", f"Done · {ok}/{len(results)} variants succeeded.")
+    return out_dir
+
+
+# ─── Reshoot ──────────────────────────────────────────────────────────────────
+# Same as forge — see forge/gui/core.py for the full doc.
+
+def _extract_brand_accent_color(brand_dna: str) -> str:
+    """First hex-like color from the brand DNA text, or "" if none found."""
+    import re
+    if not brand_dna:
+        return ""
+    m = re.search(r"#[0-9a-fA-F]{6}\b", brand_dna)
+    return m.group(0) if m else ""
+
+
+def run_reshoot(
+    ref_image: str,
+    brand_name: str,
+    n_variants: int,
+    resolution: str,
+    aspect: str,
+    workers: int,
+    on_log: Callable[[str, str], None],
+    on_result: Callable[[dict], None],
+    *,
+    accent_override: str = "",
+    product_image_override: Optional[str] = None,
+    on_out_dir: Callable[[Path], None] = lambda _p: None,
+    should_cancel: Callable[[], bool] = lambda: False,
+    output_root: Optional[str] = None,
+    image_model: str = "nano_banana_pro",
+    provider_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Re-shoot a reference photo with the user's brand product + accent.
+    See forge/gui/core.py for the full doc."""
+    if image_model not in IMAGE_MODELS:
+        on_log("ERR", f"Unknown image model: {image_model!r}")
+        return None
+    n = max(1, min(4, int(n_variants or 1)))
+
+    ref_p = Path(ref_image).expanduser().resolve()
+    if not ref_p.exists():
+        on_log("ERR", f"Reference image not found: {ref_p}")
+        return None
+
+    brands = load_brands()
+    brand = brands.get(brand_name) or {}
+    if not brand:
+        on_log("ERR", f"Brand not found: {brand_name!r}.")
+        return None
+    brand_dna = brand.get("dna", "") or ""
+
+    product_p: Optional[Path] = None
+    if product_image_override:
+        cand = Path(product_image_override).expanduser().resolve()
+        if cand.exists():
+            product_p = cand
+    if product_p is None:
+        cand = brand.get("product_image") or ""
+        if cand and Path(cand).exists():
+            product_p = Path(cand)
+    if product_p is None:
+        on_log("ERR", f"No product image available for brand {brand_name!r}.")
+        return None
+
+    accent = (accent_override or "").strip()
+    if not accent:
+        accent = _extract_brand_accent_color(brand_dna)
+
+    provider = get_provider(provider_name) if provider_name else get_active_provider()
+    provider.set_logger(on_log)
+    if not provider.is_configured():
+        on_log("ERR", f"{provider.display_name} key not set.")
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(output_root).expanduser() if output_root else get_output_dir()
+    slug = _safe_name(brand_name)[:30] or "brand"
+    out_dir = base / f"{ts}_reshoot_{slug}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    on_out_dir(out_dir)
+    on_log("INFO", f"Output: {out_dir}")
+    on_log(
+        "INFO",
+        f"Provider: {provider.display_name} · Model: {IMAGE_MODEL_LABELS[image_model]} · "
+        f"{n} variant{'s' if n > 1 else ''} · {aspect} · {resolution} · "
+        f"accent: {accent or '(LLM picks)'}",
+    )
+
+    try:
+        shutil.copy2(ref_p, out_dir / f"reference{ref_p.suffix or '.png'}")
+        shutil.copy2(product_p, out_dir / f"product{product_p.suffix or '.png'}")
+    except Exception:
+        pass
+
+    try:
+        on_log("INFO", "Uploading reference + product images...")
+        ref_url = provider.upload_image(ref_p)
+        product_url = provider.upload_image(product_p)
+        on_log("OK", "Both references uploaded.")
+    except Exception as e:
+        on_log("ERR", f"Reference upload failed: {e}")
+        return out_dir
+    if should_cancel():
+        return out_dir
+
+    try:
+        on_log("INFO", f"Analyzing reference and building {n} re-shoot prompt(s)...")
+        analysis = _reshoot_analyze(
+            provider, ref_url, n,
+            brand_name=brand_name,
+            brand_dna=brand_dna,
+            accent_color=accent,
+            product_name=brand.get("product_name") or "",
+        )
+    except Exception as e:
+        on_log("ERR", f"Reshoot analyzer failed: {e}")
+        return out_dir
+    on_log("OK", f"Detected scene: {analysis.get('detected_scene', '')[:120]}")
+    text_overlays = analysis.get("detected_text_overlays") or ""
+    if text_overlays:
+        on_log("INFO", f"Text overlays detected (will be stripped): {text_overlays[:120]}")
+    on_log("OK", f"Detected accents: {analysis.get('detected_accents', '')[:120]}")
+
+    prompts = analysis.get("variants") or []
+    if not prompts:
+        on_log("ERR", "Analyzer returned no prompts.")
+        return out_dir
+    try:
+        (out_dir / "analysis.json").write_text(
+            json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+    if should_cancel():
+        return out_dir
+
+    def render_one(idx: int, prompt: str) -> dict:
+        label = f"reshoot_{idx:02d}"
+        try:
+            on_log("INFO", f"[{label}] rendering...")
+            try:
+                img_url = provider.call_image(
+                    model=image_model, prompt=prompt,
+                    image_urls=[ref_url, product_url],
+                    resolution=resolution, aspect_ratio=aspect,
+                    label=label,
+                )
+            except CensorshipError:
+                on_log("WARN", f"[{label}] blocked by content filter — softening prompt")
+                soft = _soften(provider, prompt, ref_url)
+                img_url = provider.call_image(
+                    model=image_model, prompt=soft,
+                    image_urls=[ref_url, product_url],
+                    resolution=resolution, aspect_ratio=aspect,
+                    label=label + "-retry",
+                )
+            file_name = f"variant_{idx:02d}.png"
+            dest = out_dir / file_name
+            provider.download(img_url, dest)
+            on_log("OK", f"[{label}] saved {dest.name}")
+            return {
+                "index": idx, "status": "ok", "prompt": prompt,
+                "image_url": img_url, "file": dest.name,
+            }
+        except Exception as e:
+            on_log("ERR", f"[{label}] {e}")
+            return {"index": idx, "status": "error", "prompt": prompt, "error": str(e)}
+
+    results: list[dict] = []
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futs = [pool.submit(render_one, i + 1, p) for i, p in enumerate(prompts)]
+            for f in as_completed(futs):
+                if should_cancel():
+                    break
+                r = f.result()
+                results.append(r)
+                on_result(r)
+    except Exception as e:
+        on_log("ERR", str(e))
+
+    results.sort(key=lambda r: r["index"])
+    report = {
+        "type": "reshoot",
+        "timestamp": ts,
+        "brand": brand_name,
+        "accent": accent,
+        "ref_image": str(ref_p),
+        "product_image": str(product_p),
+        "n_variants": n,
+        "resolution": resolution,
+        "aspect": aspect,
+        "model": image_model,
+        "analysis": analysis,
         "results": results,
     }
     try:

@@ -2934,3 +2934,115 @@ def refine_animation_shot_video_prompt(
     if not text.startswith("^"):
         text = "^" + text.lstrip("^").lstrip()
     return text
+
+
+# ─── Reshoot ──────────────────────────────────────────────────────────────────
+# (Same as Forge — see forge/providers/prompts.py for the full doc.)
+
+RESHOOT_SYSTEM_PROMPT = """You are an expert NanoBanana Pro prompt engineer. The user gives you ONE reference photo (could be a competitor ad, a lifestyle inspiration, a packshot, anything visual) and asks you to produce {N} text-to-image prompts that re-shoot the same scene with THEIR product and THEIR brand colors.
+
+WHAT TO PRESERVE FROM THE REFERENCE (lock these EXACTLY)
+- Composition / framing / camera angle / crop
+- Lighting setup (direction, hardness, color temperature, shadow shape)
+- Materials and textures of the background and props (marble, linen, ceramic, wood, water, etc.)
+- Depth of field and lens character (macro, wide, tilt-shift…)
+- Mood and overall photographic style (editorial, e-commerce flat, raw iPhone UGC, cinematic dusk…)
+- Time of day / ambient register
+- Scale relationships (product vs hand vs background)
+
+WHAT TO REPLACE OR STRIP
+- The central product/object → the brand's product (a reference image will be attached separately at generation time; refer to it as "the product" in the prompt — DO NOT describe imagined packaging text or label content; the model pulls the real packaging from the attached image)
+- Accent colors of lights, props, walls, or styling that don't match the brand → shift toward the brand's accent color(s)
+- ANY text overlay, caption, watermark, headline, badge, price tag, CTA, slogan, brand wordmark pasted on top of the reference → MUST be removed. The output is a clean photograph as if just shot in studio, BEFORE any designer added text. The scene contains zero on-screen text.
+- Any other branding cues (competitor logo, brand-specific color story not aligned with the user's brand) → drop or recolor
+
+VARIANT STRATEGY
+Produce {N} prompts. They MUST all share the locked composition / lighting / mood. The variations between them are MICRO:
+  - prompt 1: product centered, frontal
+  - prompt 2: product slightly off-center (rule of thirds)
+  - prompt 3: tighter crop, product fills more of the frame
+  - prompt 4: same as 1 but a touch more bokeh / shallower DoF
+…and so on. NEVER change the lighting direction, the materials, the mood, or the framing logic between variants.
+
+If N = 1, output exactly one prompt — the cleanest, most faithful re-shoot.
+
+OUTPUT — STRICT JSON, NOTHING ELSE
+Wrap the JSON in a single fenced code block:
+
+```json
+{
+  "detected_scene": "1-sentence description of the reference scene",
+  "detected_text_overlays": "comma-separated list of any text/CTA/watermark detected on the reference, or empty if clean",
+  "detected_accents": "comma-separated dominant accent colors detected in the reference (hex or descriptive)",
+  "variants": [
+    "^[full NanoBanana Pro prompt for variant 1, starting with ^]",
+    "^[variant 2]",
+    "..."
+  ]
+}
+```
+
+PROMPT FORMAT (each entry in variants)
+- First character is `^`.
+- One paragraph, 60-120 words.
+- Open with: aspect ratio + "studio photograph, freshly captured, no overlay text, no captions, no watermark."
+- Describe the composition exactly (from the reference).
+- Describe the lighting (direction, color temperature, shadow quality).
+- Describe materials and props (matching the reference).
+- Refer to the product as "the product" — the actual product image is attached as a reference image. Do NOT invent label text or packaging details.
+- Mention the brand accent color where it naturally lives in the scene.
+- End with: "Hyperrealistic, sharp focus, natural texture, no on-screen text, no overlays, no watermarks, no logos pasted on top, no captions, no badges, no UI."
+
+HARD RULES
+- The fenced ```json block is the ONLY content of your response. No commentary before or after.
+- All strings double-quoted. No trailing commas.
+- variants must contain exactly {N} strings, all starting with `^`.
+
+CONTENT SAFETY
+Default attire fully covered everyday clothing. No medical / clinical claims. No nudity. No minors in suggestive contexts. No public-figure likeness."""
+
+
+def reshoot_analyze(
+    provider: "Provider",
+    ref_image_url: str,
+    n_variants: int,
+    *,
+    brand_name: str,
+    brand_dna: str,
+    accent_color: str,
+    product_name: str = "",
+) -> dict:
+    """Same as forge's reshoot_analyze — see forge/providers/prompts.py."""
+    import json as _json
+    sys_prompt = RESHOOT_SYSTEM_PROMPT.replace("{N}", str(n_variants))
+    user_prompt = (
+        f"BRAND: {brand_name}\n"
+        f"BRAND DNA:\n{(brand_dna or '').strip()}\n\n"
+        f"BRAND ACCENT COLOR (must be woven into the scene): {accent_color or '(use brand default)'}\n"
+        f"PRODUCT NAME: {product_name.strip() or '(use brand default)'}\n\n"
+        f"Analyze the attached reference photo and produce exactly "
+        f"{n_variants} re-shoot prompt(s) per the system rules. Output the "
+        f"strict JSON — nothing else."
+    )
+    text = provider.call_llm(
+        prompt=user_prompt,
+        image_url=ref_image_url,
+        system_prompt=sys_prompt,
+        label="LLM-reshoot",
+    )
+    raw = _strip_json_fence(text or "")
+    try:
+        out = _json.loads(raw)
+    except _json.JSONDecodeError as e:
+        raise RuntimeError(f"Reshoot analyzer returned unparseable JSON: {e}\n\n{raw[:600]}") from e
+    variants = out.get("variants") or []
+    if not isinstance(variants, list) or not variants:
+        raise RuntimeError(f"Reshoot analyzer returned no variants: {raw[:600]}")
+    cleaned = []
+    for v in variants[:n_variants]:
+        v = (v or "").strip()
+        if v and not v.startswith("^"):
+            v = "^" + v.lstrip("^").lstrip()
+        cleaned.append(v)
+    out["variants"] = cleaned
+    return out

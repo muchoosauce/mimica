@@ -7,11 +7,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton,
-    QScrollArea, QSizePolicy, QSlider, QSpinBox, QStackedWidget, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
+    QAbstractItemView, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
+    QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit,
+    QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
+    QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
 )
 
 # QtMultimedia ships with PySide6 on every supported platform but the install
@@ -2946,6 +2946,473 @@ class _ApprovalThumb(QFrame):
 
     def is_approved(self) -> bool:
         return self._approved
+
+
+# ─── Reshoot ─────────────────────────────────────────────────────────────────
+# Same as Forge's ReshootPage — see forge/gui/pages.py for full docs.
+
+class ReshootWorker(QObject):
+    log = Signal(str, str)
+    result = Signal(dict)
+    out_dir_signal = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, ref_path, brand_name, n_variants, resolution, aspect,
+                 workers, output_root, image_model, accent_override,
+                 product_image_override):
+        super().__init__()
+        self._args = (ref_path, brand_name, n_variants, resolution, aspect, workers)
+        self._output_root = output_root
+        self._image_model = image_model
+        self._accent = accent_override
+        self._product = product_image_override
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        out = core.run_reshoot(
+            *self._args,
+            on_log=lambda lvl, msg: self.log.emit(lvl, msg),
+            on_result=lambda r: self.result.emit(r),
+            on_out_dir=lambda p: self.out_dir_signal.emit(str(p)),
+            should_cancel=lambda: self._cancel,
+            output_root=self._output_root,
+            image_model=self._image_model,
+            accent_override=self._accent,
+            product_image_override=self._product,
+        )
+        self.finished.emit(str(out) if out else "")
+
+
+class ReshootPage(QWidget):
+    open_brands = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("Root")
+        self._worker: ReshootWorker | None = None
+        self._thread: QThread | None = None
+        self._out_dir: Path | None = None
+        self._results_count = 0
+        self._ref_path: str = ""
+        self._product_override: str = ""
+        self._accent_hex: str = ""
+        self._build()
+        self.refresh_brands()
+
+    def _build(self):
+        from .widgets import DropZone
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20); root.setSpacing(18)
+
+        head = QVBoxLayout(); head.setSpacing(2)
+        h1 = QLabel("Reshoot"); h1.setObjectName("H1")
+        sub = QLabel("Drop a photo. Get a clean studio shot with your product + brand colors. Strips any overlay text.")
+        sub.setObjectName("Dim")
+        head.addWidget(h1); head.addWidget(sub)
+        root.addLayout(head)
+
+        body = QHBoxLayout(); body.setSpacing(14)
+
+        form_card = Card()
+        form_card.setMinimumWidth(520)
+        card_lay = QVBoxLayout(form_card)
+        card_lay.setContentsMargins(0, 0, 0, 0); card_lay.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        form_inner = QWidget()
+        form = QVBoxLayout(form_inner)
+        form.setContentsMargins(22, 20, 22, 20); form.setSpacing(16)
+        scroll.setWidget(form_inner)
+        card_lay.addWidget(scroll)
+
+        bl = QLabel("BRAND DNA"); bl.setObjectName("Muted")
+        form.addWidget(bl)
+        brow = QHBoxLayout(); brow.setSpacing(8)
+        self.brand_combo = QComboBox()
+        brow.addWidget(self.brand_combo, 1)
+        manage_btn = QPushButton("Manage"); manage_btn.setObjectName("GhostBtn")
+        manage_btn.setCursor(Qt.PointingHandCursor)
+        manage_btn.clicked.connect(self.open_brands.emit)
+        brow.addWidget(manage_btn)
+        form.addLayout(brow)
+
+        self.brand_preview = QFrame()
+        self.brand_preview.setStyleSheet(f"background: {t.BG_INPUT}; border-radius: 12px;")
+        bp = QHBoxLayout(self.brand_preview); bp.setContentsMargins(12, 12, 12, 12); bp.setSpacing(12)
+        self.brand_thumb = QLabel()
+        self.brand_thumb.setFixedSize(52, 52)
+        self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        bp.addWidget(self.brand_thumb)
+        bdesc = QVBoxLayout(); bdesc.setSpacing(2)
+        self.brand_name_lbl = QLabel(""); self.brand_name_lbl.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.brand_dna_lbl = QLabel(""); self.brand_dna_lbl.setStyleSheet(f"color: {t.TEXT_MUTED}; font-size: 11px;")
+        self.brand_dna_lbl.setWordWrap(True)
+        bdesc.addWidget(self.brand_name_lbl); bdesc.addWidget(self.brand_dna_lbl)
+        bp.addLayout(bdesc, 1)
+        form.addWidget(self.brand_preview)
+
+        rl = QLabel("REFERENCE PHOTO  ·  the look to copy"); rl.setObjectName("Muted")
+        form.addWidget(rl)
+        self.ref_drop = DropZone()
+        self.ref_drop.file_dropped.connect(self._on_ref_picked)
+        self.ref_drop.mousePressEvent = self._on_ref_click
+        form.addWidget(self.ref_drop)
+
+        pl = QLabel("PRODUCT  ·  optional override (else uses brand product)"); pl.setObjectName("Muted")
+        form.addWidget(pl)
+        prow = QHBoxLayout(); prow.setSpacing(8)
+        self.product_path_edit = QLineEdit()
+        self.product_path_edit.setPlaceholderText("Using brand product (uncheck to upload another)")
+        self.product_path_edit.setReadOnly(True)
+        prow.addWidget(self.product_path_edit, 1)
+        pick_p = QPushButton("Pick"); pick_p.setObjectName("GhostBtn"); pick_p.setCursor(Qt.PointingHandCursor)
+        pick_p.clicked.connect(self._pick_product)
+        prow.addWidget(pick_p)
+        clear_p = QPushButton("Clear"); clear_p.setObjectName("GhostBtn"); clear_p.setCursor(Qt.PointingHandCursor)
+        clear_p.clicked.connect(self._clear_product)
+        prow.addWidget(clear_p)
+        form.addLayout(prow)
+
+        al = QLabel("ACCENT COLOR  ·  woven into lights / props / styling"); al.setObjectName("Muted")
+        form.addWidget(al)
+        arow = QHBoxLayout(); arow.setSpacing(8)
+        self.accent_swatch = QLabel()
+        self.accent_swatch.setFixedSize(36, 36)
+        self.accent_swatch.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        arow.addWidget(self.accent_swatch)
+        self.accent_label = QLabel("Auto from brand DNA")
+        self.accent_label.setStyleSheet(f"color: {t.TEXT}; font-size: 12px;")
+        arow.addWidget(self.accent_label, 1)
+        pick_c = QPushButton("Pick color…"); pick_c.setObjectName("GhostBtn"); pick_c.setCursor(Qt.PointingHandCursor)
+        pick_c.clicked.connect(self._pick_accent)
+        arow.addWidget(pick_c)
+        reset_c = QPushButton("Auto"); reset_c.setObjectName("GhostBtn"); reset_c.setCursor(Qt.PointingHandCursor)
+        reset_c.clicked.connect(self._reset_accent)
+        arow.addWidget(reset_c)
+        form.addLayout(arow)
+
+        params_row = QHBoxLayout(); params_row.setSpacing(14)
+        col_n = QVBoxLayout(); col_n.setSpacing(6)
+        col_n.addWidget(_field_label("Variants"))
+        self.n_variants = QSpinBox(); self.n_variants.setRange(1, 4); self.n_variants.setValue(1)
+        col_n.addWidget(self.n_variants)
+        col_r = QVBoxLayout(); col_r.setSpacing(6)
+        col_r.addWidget(_field_label("Resolution"))
+        self.res = QComboBox(); self.res.addItems(core.RESOLUTIONS); self.res.setCurrentText("2k")
+        col_r.addWidget(self.res)
+        col_a = QVBoxLayout(); col_a.setSpacing(6)
+        col_a.addWidget(_field_label("Aspect"))
+        self.aspect = QComboBox(); self.aspect.addItems(["Same as ref", *core.ASPECTS])
+        col_a.addWidget(self.aspect)
+        col_m = QVBoxLayout(); col_m.setSpacing(6)
+        col_m.addWidget(_field_label("Model"))
+        self.model = QComboBox()
+        for slug, label in core.IMAGE_MODEL_CHOICES:
+            self.model.addItem(label, userData=slug)
+        for i in range(self.model.count()):
+            if self.model.itemData(i) == "nano_banana_pro":
+                self.model.setCurrentIndex(i); break
+        col_m.addWidget(self.model)
+        params_row.addLayout(col_n, 1); params_row.addLayout(col_r, 1)
+        params_row.addLayout(col_a, 1); params_row.addLayout(col_m, 1)
+        form.addLayout(params_row)
+
+        out_l = QLabel("OUTPUT FOLDER"); out_l.setObjectName("Muted")
+        form.addWidget(out_l)
+        self.out_row = OutputFolderRow()
+        form.addWidget(self.out_row)
+
+        self.cost_label = QLabel()
+        self.cost_label.setStyleSheet(f"color: {t.TEXT_DIM}; font-size: 12px;")
+        form.addWidget(self.cost_label)
+        form.addSpacing(8)
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        self.go_btn = QPushButton("Reshoot ✨")
+        self.go_btn.setObjectName("PrimaryBtn"); self.go_btn.setCursor(Qt.PointingHandCursor)
+        self.go_btn.clicked.connect(self._start)
+        self.cancel_btn = QPushButton("Cancel"); self.cancel_btn.setObjectName("GhostBtn")
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel)
+        self.cancel_btn.hide()
+        btn_row.addWidget(self.go_btn); btn_row.addWidget(self.cancel_btn); btn_row.addStretch()
+        form.addLayout(btn_row)
+        form.addStretch()
+
+        body.addWidget(form_card, 5)
+
+        right = QVBoxLayout(); right.setSpacing(14)
+
+        log_card = Card()
+        llay = QVBoxLayout(log_card); llay.setContentsMargins(20, 18, 20, 18); llay.setSpacing(10)
+        lhead = QHBoxLayout()
+        lh = QLabel("Activity"); lh.setObjectName("H2")
+        lhead.addWidget(lh); lhead.addStretch()
+        self.live_pill = StatusPill("Idle", t.TEXT_MUTED)
+        lhead.addWidget(self.live_pill)
+        llay.addLayout(lhead)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(180)
+        llay.addWidget(self.log)
+        right.addWidget(log_card, 1)
+
+        res_card = Card()
+        rlay = QVBoxLayout(res_card); rlay.setContentsMargins(20, 18, 20, 18); rlay.setSpacing(10)
+        rhead = QHBoxLayout()
+        rh = QLabel("Results"); rh.setObjectName("H2")
+        rhead.addWidget(rh); rhead.addStretch()
+        self.open_folder_btn = QPushButton("Open folder"); self.open_folder_btn.setObjectName("GhostBtn")
+        self.open_folder_btn.setCursor(Qt.PointingHandCursor); self.open_folder_btn.setEnabled(False)
+        self.open_folder_btn.clicked.connect(self._open_folder)
+        rhead.addWidget(self.open_folder_btn)
+        rlay.addLayout(rhead)
+
+        gscroll = QScrollArea(); gscroll.setWidgetResizable(True)
+        gscroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.grid_container = QWidget()
+        self.grid = QGridLayout(self.grid_container)
+        self.grid.setSpacing(12); self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        gscroll.setWidget(self.grid_container)
+        gscroll.setMinimumHeight(220)
+        rlay.addWidget(gscroll)
+        right.addWidget(res_card, 2)
+
+        right_w = QWidget(); right_w.setLayout(right)
+        body.addWidget(right_w, 5)
+
+        root.addLayout(body, 1)
+
+        self.brand_combo.currentIndexChanged.connect(self._on_brand_changed)
+        self.res.currentTextChanged.connect(self._update_cost)
+        self.model.currentIndexChanged.connect(self._update_cost)
+        self.n_variants.valueChanged.connect(self._update_cost)
+
+    def refresh_brands(self):
+        current = self.brand_combo.currentText()
+        self.brand_combo.blockSignals(True)
+        self.brand_combo.clear()
+        brands = core.load_brands()
+        names = sorted(brands.keys(), key=lambda s: s.lower())
+        if not names:
+            self.brand_combo.addItem("— No brands yet (Manage →) —")
+            self.brand_combo.setEnabled(False)
+        else:
+            self.brand_combo.setEnabled(True)
+            self.brand_combo.addItems(names)
+            if current in names:
+                self.brand_combo.setCurrentText(current)
+        self.brand_combo.blockSignals(False)
+        self._on_brand_changed()
+
+    def _on_brand_changed(self):
+        brands = core.load_brands()
+        name = self.brand_combo.currentText() if self.brand_combo.isEnabled() else ""
+        b = brands.get(name)
+        if not b:
+            self.brand_name_lbl.setText("No brand selected")
+            self.brand_dna_lbl.setText("Create a Brand DNA from the Brands page first.")
+            self.brand_thumb.clear()
+            self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        else:
+            self.brand_name_lbl.setText(b["name"])
+            dna = b["dna"].replace("\n", " ")
+            self.brand_dna_lbl.setText((dna[:140] + "…") if len(dna) > 140 else dna)
+            pi = b.get("product_image", "")
+            if pi and Path(pi).exists():
+                from .widgets import round_pixmap
+                self.brand_thumb.setPixmap(round_pixmap(Path(pi), 52, 52, 8))
+                self.brand_thumb.setStyleSheet("background: transparent;")
+            else:
+                self.brand_thumb.clear()
+                self.brand_thumb.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+        if not self._accent_hex:
+            self._refresh_accent_swatch()
+        self._update_cost()
+
+    def _on_ref_click(self, _ev):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Pick reference photo", "",
+            "Images (*.png *.jpg *.jpeg *.webp)"
+        )
+        if path:
+            self.ref_drop.set_file(path)
+
+    def _on_ref_picked(self, path: str):
+        self._ref_path = path
+        self._update_cost()
+
+    def _pick_product(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Pick product image", "",
+            "Images (*.png *.jpg *.jpeg *.webp)"
+        )
+        if path:
+            self._product_override = path
+            self.product_path_edit.setText(Path(path).name)
+
+    def _clear_product(self):
+        self._product_override = ""
+        self.product_path_edit.clear()
+        self.product_path_edit.setPlaceholderText("Using brand product (Pick to upload another)")
+
+    def _pick_accent(self):
+        from PySide6.QtGui import QColor
+        initial = self._accent_hex
+        if not initial:
+            brands = core.load_brands()
+            b = brands.get(self.brand_combo.currentText())
+            if b:
+                initial = core._extract_brand_accent_color(b.get("dna", "")) or ""
+        qcol = QColorDialog.getColor(
+            QColor(initial) if initial else QColor("#16a34a"),
+            self, "Pick accent color"
+        )
+        if qcol.isValid():
+            self._accent_hex = qcol.name()
+            self._refresh_accent_swatch()
+
+    def _reset_accent(self):
+        self._accent_hex = ""
+        self._refresh_accent_swatch()
+
+    def _refresh_accent_swatch(self):
+        if self._accent_hex:
+            self.accent_swatch.setStyleSheet(
+                f"background: {self._accent_hex}; border-radius: 8px; "
+                f"border: 1px solid {t.BORDER};"
+            )
+            self.accent_label.setText(f"Manual: {self._accent_hex}")
+        else:
+            brands = core.load_brands()
+            b = brands.get(self.brand_combo.currentText())
+            detected = ""
+            if b:
+                detected = core._extract_brand_accent_color(b.get("dna", "")) or ""
+            if detected:
+                self.accent_swatch.setStyleSheet(
+                    f"background: {detected}; border-radius: 8px; "
+                    f"border: 1px solid {t.BORDER};"
+                )
+                self.accent_label.setText(f"Auto from brand DNA: {detected}")
+            else:
+                self.accent_swatch.setStyleSheet(f"background: {t.BORDER}; border-radius: 8px;")
+                self.accent_label.setText("Auto (LLM picks from brand DNA)")
+
+    def _update_cost(self):
+        if not self._ref_path:
+            self.cost_label.setText("Drop a reference photo to estimate cost.")
+            return
+        n = self.n_variants.value()
+        provider = core.get_active_provider_name()
+        model = self.model.currentData() or "nano_banana_pro"
+        price = core.cost_per_image(provider, model, self.res.currentText())
+        self.cost_label.setText(
+            f"{n} variant{'s' if n > 1 else ''}  ·  estimated ${n * price:.2f} "
+            f"(+ 1 LLM analysis call)"
+        )
+
+    def _start(self):
+        if not self._ref_path or not Path(self._ref_path).exists():
+            QMessageBox.warning(self, "No reference", "Drop a reference photo first."); return
+        if not self.brand_combo.isEnabled():
+            QMessageBox.warning(self, "No brand", "Create a Brand DNA first."); return
+        if not core.is_active_provider_configured():
+            label = core.PROVIDER_LABELS[core.get_active_provider_name()]
+            QMessageBox.warning(self, "Missing key", f"Set your {label} key in Settings first."); return
+
+        self._clear_grid()
+        self.log.clear()
+        self._out_dir = None
+        self._results_count = 0
+        self.open_folder_btn.setEnabled(False)
+        self.go_btn.hide(); self.cancel_btn.show()
+        self.live_pill.setText("Running")
+        self.live_pill.setStyleSheet(
+            f"background: {t.ACCENT}22; color: {t.ACCENT}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+
+        asp_choice = self.aspect.currentText()
+        aspect = "" if asp_choice == "Same as ref" else asp_choice
+
+        self._thread = QThread()
+        self._worker = ReshootWorker(
+            ref_path=self._ref_path,
+            brand_name=self.brand_combo.currentText(),
+            n_variants=self.n_variants.value(),
+            resolution=self.res.currentText(),
+            aspect=aspect,
+            workers=max(1, self.n_variants.value()),
+            output_root=self.out_row.path(),
+            image_model=self.model.currentData() or "nano_banana_pro",
+            accent_override=self._accent_hex,
+            product_image_override=self._product_override or None,
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._on_log)
+        self._worker.result.connect(self._on_result)
+        self._worker.out_dir_signal.connect(self._on_out_dir)
+        self._worker.finished.connect(self._on_finished)
+        self._thread.start()
+
+    def _cancel(self):
+        if self._worker:
+            self._worker.cancel()
+        self.cancel_btn.setEnabled(False); self.cancel_btn.setText("Cancelling…")
+
+    def _on_out_dir(self, p: str):
+        self._out_dir = Path(p)
+        self.open_folder_btn.setEnabled(True)
+
+    def _on_log(self, level: str, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = {"INFO": t.TEXT_DIM, "OK": t.GREEN, "ERR": t.RED, "WARN": t.YELLOW}.get(level, t.TEXT_DIM)
+        self.log.appendHtml(
+            f'<span style="color:{t.TEXT_MUTED};">[{ts}]</span> '
+            f'<span style="color:{color}; font-weight:600;">{level:<4}</span> '
+            f'<span style="color:{t.TEXT_DIM};">{_esc(msg)}</span>'
+        )
+
+    def _on_result(self, r: dict):
+        if r.get("status") != "ok":
+            return
+        self._results_count += 1
+        if self._out_dir:
+            local = self._out_dir / r.get("file", "")
+            if local.exists():
+                thumb = ThumbLabel(local, 200, 200, 10)
+                thumb.clicked.connect(lambda path=local: open_path(path))
+                row = (self._results_count - 1) // 4
+                col = (self._results_count - 1) % 4
+                self.grid.addWidget(thumb, row, col)
+
+    def _on_finished(self, out_dir: str):
+        self._thread.quit(); self._thread.wait()
+        self.go_btn.show(); self.cancel_btn.hide()
+        self.cancel_btn.setEnabled(True); self.cancel_btn.setText("Cancel")
+        self.live_pill.setText("Done")
+        self.live_pill.setStyleSheet(
+            f"background: {t.GREEN}22; color: {t.GREEN}; padding: 4px 10px; "
+            f"border-radius: 999px; font-size: 11px; font-weight: 600;"
+        )
+
+    def _clear_grid(self):
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _open_folder(self):
+        if self._out_dir:
+            open_path(self._out_dir)
 
 
 class BRollPage(QWidget):
