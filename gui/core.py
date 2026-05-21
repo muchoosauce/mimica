@@ -3719,6 +3719,36 @@ def _extract_brand_accent_color(brand_dna: str) -> str:
     return m.group(0) if m else ""
 
 
+_SUPPORTED_ASPECTS = ("1:1", "3:4", "4:3", "9:16", "16:9", "3:2", "2:3", "5:4", "4:5", "21:9")
+
+
+def _snap_aspect(image_path: Path, on_log: Optional[Callable[[str, str], None]] = None) -> str:
+    """Snap the ref image's actual ratio to MuAPI's closest supported aspect."""
+    try:
+        from PIL import Image
+        with Image.open(image_path) as im:
+            w, h = im.size
+    except Exception as e:
+        if on_log:
+            on_log("WARN", f"Could not read ref dimensions ({e}); defaulting aspect to 1:1.")
+        return "1:1"
+    if not w or not h:
+        return "1:1"
+    target = w / h
+    best = "1:1"
+    best_diff = float("inf")
+    for asp in _SUPPORTED_ASPECTS:
+        a, b = asp.split(":")
+        ratio = float(a) / float(b)
+        diff = abs(target - ratio)
+        if diff < best_diff:
+            best_diff = diff
+            best = asp
+    if on_log:
+        on_log("INFO", f"Reference is {w}×{h} ({target:.2f}) → snapping to {best}.")
+    return best
+
+
 def run_reshoot(
     ref_image: str,
     brand_name: str,
@@ -3748,6 +3778,12 @@ def run_reshoot(
     if not ref_p.exists():
         on_log("ERR", f"Reference image not found: {ref_p}")
         return None
+
+    if not aspect:
+        aspect = _snap_aspect(ref_p, on_log=on_log)
+    elif aspect not in _SUPPORTED_ASPECTS:
+        on_log("WARN", f"Aspect {aspect!r} not supported; snapping to closest.")
+        aspect = _snap_aspect(ref_p, on_log=on_log)
 
     brands = load_brands()
     brand = brands.get(brand_name) or {}
