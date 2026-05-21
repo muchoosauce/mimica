@@ -1,10 +1,33 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo.
 echo   Ad Variator - starting...
 echo.
+
+REM ─ Silent auto-update from GitHub before launching ────────────────
+REM Mirrors launch.command on macOS. Skipped silently if not a git
+REM clone, git missing, local changes present, or pull fails (offline).
+if exist ".git" (
+  where git >nul 2>nul
+  if not errorlevel 1 (
+    set HAS_LOCAL=
+    for /f "delims=" %%i in ('git status --porcelain 2^>nul') do set HAS_LOCAL=1
+    if not defined HAS_LOCAL (
+      echo Checking for updates...
+      for /f "delims=" %%i in ('git rev-parse HEAD 2^>nul') do set BEFORE=%%i
+      set GIT_TERMINAL_PROMPT=0
+      git pull --ff-only --quiet 2>nul
+      for /f "delims=" %%i in ('git rev-parse HEAD 2^>nul') do set AFTER=%%i
+      if not "!BEFORE!" == "!AFTER!" (
+        for /f "delims=" %%i in ('git rev-parse --short HEAD 2^>nul') do echo Updated to %%i.
+      )
+    ) else (
+      echo Local changes detected - skipping auto-update.
+    )
+  )
+)
 
 where python >nul 2>nul
 if errorlevel 1 (
