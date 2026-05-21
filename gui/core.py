@@ -3878,20 +3878,37 @@ def run_reshoot(
     if should_cancel():
         return out_dir
 
+    # Belt-and-suspenders preamble — see forge/gui/core.py for the full
+    # rationale. Ensures NB Pro never recolors the product label with
+    # the brand accent shift meant for the scene.
+    PROMPT_PREAMBLE = (
+        "TWO REFERENCE IMAGES ARE ATTACHED. IMAGE #1 (first) is the "
+        "composition reference — copy its framing, lighting, materials, "
+        "mood. IMAGE #2 (second) is the brand's product reference — "
+        "reproduce the product EXACTLY as it appears in IMAGE #2: same "
+        "shape, same packaging color, same label color, same wordmark, "
+        "same logo, same finish. The product is sacred — DO NOT recolor "
+        "it, DO NOT tint it with the scene's accent light, DO NOT "
+        "restyle it. The brand accent color shift below applies ONLY to "
+        "surrounding scene elements (lights, walls, props, fabric, "
+        "flowers, styling), NEVER to the product itself.\n\n"
+    )
+
     def render_one(idx: int, prompt: str) -> dict:
         label = f"reshoot_{idx:02d}"
+        full_prompt = PROMPT_PREAMBLE + prompt
         try:
             on_log("INFO", f"[{label}] rendering...")
             try:
                 img_url = provider.call_image(
-                    model=image_model, prompt=prompt,
+                    model=image_model, prompt=full_prompt,
                     image_urls=[ref_url, product_url],
                     resolution=resolution, aspect_ratio=aspect,
                     label=label,
                 )
             except CensorshipError:
                 on_log("WARN", f"[{label}] blocked by content filter — softening prompt")
-                soft = _soften(provider, prompt, ref_url)
+                soft = _soften(provider, full_prompt, ref_url)
                 img_url = provider.call_image(
                     model=image_model, prompt=soft,
                     image_urls=[ref_url, product_url],
