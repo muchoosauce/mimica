@@ -196,7 +196,7 @@ LANG_SLUG = {
 }
 AD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
-DEFAULT_IMAGE_MODEL = "gpt_image_2"
+DEFAULT_IMAGE_MODEL = "nano_banana_2"
 
 BRANDS_FILE = USER_DATA_DIR / "brands.json"
 BRANDS_IMG_DIR = USER_DATA_DIR / "brands" / "images"
@@ -2874,7 +2874,10 @@ def run_iterate(
 
     results: list[dict] = []
     try:
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        # Bumped from 3 → 6 parallel image edits — MuAPI handles ~10 concurrent
+        # calls cleanly, so 6 gives a ~2× speed-up on multi-variant runs
+        # without hitting rate limits.
+        with ThreadPoolExecutor(max_workers=6) as pool:
             futs = [pool.submit(render_one, i + 1, variants[i]) for i in range(len(variants))]
             for f in as_completed(futs):
                 if should_cancel():
@@ -3878,10 +3881,12 @@ def run_animation_shot_image(
     # to 8, GPT Image 2 up to 16).
     refs: list[Path] = []
     is_anchor_shot = (shot_id == 1)
-    # Style ref is only attached to the anchor — subsequent shots inherit
-    # the look through `anchor` itself, which already carries the styled
-    # subject and setting. This keeps Kling's input clean for non-anchor
-    # renders and avoids fighting between style ref and the anchor.
+    # Style ref is attached ONLY to the anchor (shot 1). Shots 2..N
+    # inherit the look via the anchor itself. The bundled
+    # `gui/assets/styles/*.jpg` references were regenerated against a
+    # neutral subject (steaming teacup) so they no longer leak a
+    # character into the shot. The leak-guard wording below still
+    # instructs the model to copy technique only.
     style_key = (state.get("style") or "").strip()
     if is_anchor_shot and style_key and style_key != "realistic":
         if style_key == "custom":
@@ -3920,19 +3925,18 @@ def run_animation_shot_image(
         has_anchor=(use_anchor and not is_anchor_shot and len([r for r in refs]) > 0
                     and (not is_anchor_shot)),
     )
-    # Style guard rail — wrap the refined prompt in an explicit
-    # style-transfer instruction so NanoBanana doesn't copy the SUBJECT of
-    # the style reference (the model would otherwise pull the old-lady-in-
-    # pink-robe character through every shot just because she's in the ref).
+    # Style injection. Wrap the refined prompt with an explicit
+    # style-transfer instruction so NanoBanana copies the rendering
+    # technique of the attached style ref (anchor only) but NOT its
+    # subject. Also prepend the AESTHETIC descriptor text so the
+    # technique is reinforced verbally for non-anchor shots which
+    # inherit through the anchor and don't have a style ref attached.
     if style_key and style_key != "realistic":
         from providers.prompts import ANIMATION_STYLES
         style_prefix = (
             (ANIMATION_STYLES.get(style_key) or {}).get("prompt", "")
             if style_key != "custom" else ""
         )
-        # The first image_urls slot is the style reference (anchor only) or
-        # the anchor itself (later shots inherit through it). Either way the
-        # leak protection wording is the same: technique only, never subject.
         leak_guard = (
             "STYLE TRANSFER: the first reference image attached carries the "
             "rendering technique to apply (medium, materials, lighting "
