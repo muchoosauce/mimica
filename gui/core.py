@@ -3428,6 +3428,7 @@ def create_animation_project(
     default_duration: int = ANIMATION_DEFAULT_DURATION,
     style: str = "realistic",
     style_custom_image: Optional[str] = None,
+    resolution: str = "1k",
 ) -> Path:
     """Create a fresh project on disk with status='brief'. Copies the product
     and style-ref images into the project folder so the run is self-contained
@@ -3502,6 +3503,7 @@ def create_animation_project(
         "image_model": image_model,
         "video_model": video_model,
         "aspect_ratio": aspect_ratio,
+        "resolution": resolution or "1k",
         "default_duration": _round_duration(default_duration),
         "brief_text": brief_text,
         "product": saved_product,
@@ -3780,14 +3782,20 @@ def run_animation_character(
     *,
     provider_name: Optional[str] = None,
     image_model: Optional[str] = None,
-    resolution: str = "1k",
+    resolution: Optional[str] = None,
 ) -> dict:
     """Step 2: generate (or regenerate) a single character portrait.
-    Mutates state.characters[id] with image path + status."""
+    Mutates state.characters[id] with image path + status.
+
+    `resolution` falls back to the project's saved resolution (state.json),
+    then "1k".
+    """
     project_dir = Path(project_dir)
     state = load_animation_state(project_dir)
     if not state:
         raise ValueError(f"No state.json in {project_dir}")
+    if resolution is None:
+        resolution = state.get("resolution") or "1k"
     char = state.get("characters", {}).get(character_id)
     if not char:
         raise ValueError(f"Character {character_id!r} not in scenario.")
@@ -3866,18 +3874,23 @@ def run_animation_shot_image(
     *,
     provider_name: Optional[str] = None,
     use_anchor: bool = True,
-    resolution: str = "1k",
+    resolution: Optional[str] = None,
 ) -> dict:
     """Step 3 (anchor) and step 4 (other shots): generate one shot's image.
 
     For shot 1 (the anchor), we don't pass any anchor_image — the result IS
     the anchor. For shots 2..N, we pass shot 1's approved image as a style
     reference (`use_anchor=True`).
+
+    `resolution` falls back to the project's saved resolution
+    (state.json), then "1k".
     """
     project_dir = Path(project_dir)
     state = load_animation_state(project_dir)
     if not state:
         raise ValueError(f"No state.json in {project_dir}")
+    if resolution is None:
+        resolution = state.get("resolution") or "1k"
     shots = state.get("shots") or {}
     shot = shots.get(str(shot_id))
     if not shot:
