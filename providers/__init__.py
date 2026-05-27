@@ -46,11 +46,12 @@ IMAGE_MODEL_LABELS = {
 }
 IMAGE_MODEL_CHOICES = [(m, IMAGE_MODEL_LABELS[m]) for m in IMAGE_MODELS]
 
-VIDEO_MODELS = ["kling_3_std", "kling_3_pro", "seedance_2"]
+VIDEO_MODELS = ["kling_3_std", "kling_3_pro", "seedance_2", "veo_3_1"]
 VIDEO_MODEL_LABELS = {
     "kling_3_std": "Kling 3.0 Standard",
     "kling_3_pro": "Kling 3.0 Pro",
     "seedance_2":  "Seedance 2.0",
+    "veo_3_1":     "Veo 3.1",
 }
 VIDEO_MODEL_CHOICES = [(m, VIDEO_MODEL_LABELS[m]) for m in VIDEO_MODELS]
 
@@ -75,10 +76,13 @@ def cost_per_image(provider: str, model: str, resolution: str) -> float:
 
 # Pricing per second of generated video (USD). Kling tasks bill on output
 # duration; the UI multiplies by clip length × clip count.
+# Veo 3.1: rough estimate ~$0.50/sec on MuAPI (Google Vertex direct is
+# $0.40-$0.75/sec; aggregators usually pass through with a small markup).
 COST_PER_VIDEO_SECOND: dict[tuple[str, str], float] = {
     ("muapi", "kling_3_std"): 0.06,
     ("muapi", "kling_3_pro"): 0.18,
     ("muapi", "seedance_2"):  0.06,
+    ("muapi", "veo_3_1"):     0.50,
     ("kie",   "kling_3_std"): 0.04,
     ("kie",   "kling_3_pro"): 0.14,
     ("kie",   "seedance_2"):  0.05,

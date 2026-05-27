@@ -72,6 +72,9 @@ _VIDEO_SLUGS = {
     # `seedance-v2.0-video-edit` (true video-to-video, preserves source faces +
     # motion + audio sync) — routed via _SWAP_VIDEO_SLUGS below.
     "seedance_2":  "seedance-v2.0-i2v",
+    # Google Veo 3.1 — native 1080p, 24fps, 4/6/8s durations, contextual
+    # audio synthesised from the prompt. Premium tier.
+    "veo_3_1":     "veo3.1-image-to-video",
 }
 # Video-to-video edit endpoints. Distinct from _VIDEO_SLUGS because the payload
 # shape is different (video_urls + images_list referenced via @image1 in the
@@ -444,6 +447,20 @@ class MuApiProvider(Provider):
 
         is_kling = model.startswith("kling_")
         is_seedance = model.startswith("seedance_")
+        is_veo = model.startswith("veo_")
+
+        # Veo 3.1 only accepts durations of 4, 6 or 8 seconds. Clamp instead
+        # of returning a 422 so callers can blindly pass the user's choice.
+        if is_veo:
+            d = int(duration)
+            if d <= 4:
+                duration = 4
+            elif d <= 6:
+                duration = 6
+            else:
+                duration = 8
+            if d != duration:
+                self._log("INFO", f"[{label}] duration {d}s clamped to {duration}s (Veo only supports 4/6/8s).")
 
         # MuAPI's Kling 3 default is "sound on" in practice (despite WaveSpeed
         # docs claiming the opposite), so we always send the boolean explicitly.
