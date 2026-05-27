@@ -9,6 +9,7 @@ import mimetypes
 import os
 import tempfile
 import threading
+import socket
 import time
 from pathlib import Path
 from typing import Optional
@@ -224,8 +225,29 @@ class MuApiProvider(Provider):
     def _poll(self, prediction_id: str, label: str):
         start = time.time()
         url = f"{_BASE_URL}/predictions/{prediction_id}/result"
+        # Swallow transient network errors at the poll layer (Windows DNS
+        # flakes). See forge/providers/muapi.py for the full rationale.
+        _POLL_NET_FAILS = 5
+        consecutive_net_fails = 0
         while time.time() - start < _POLL_TIMEOUT:
-            r = requests.get(url, headers=self._headers(), timeout=60)
+            try:
+                r = requests.get(url, headers=self._headers(), timeout=60)
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                socket.gaierror,
+                ConnectionResetError,
+            ) as e:
+                consecutive_net_fails += 1
+                if consecutive_net_fails >= _POLL_NET_FAILS:
+                    raise ProviderError(
+                        f"Poll network error (gave up after "
+                        f"{consecutive_net_fails} retries): {e}"
+                    )
+                self._log("WARN", f"[{label}] poll network hiccup, retrying in {_POLL_INTERVAL}s ({consecutive_net_fails}/{_POLL_NET_FAILS})")
+                time.sleep(_POLL_INTERVAL)
+                continue
+            consecutive_net_fails = 0
             if r.status_code >= 400:
                 raise ProviderError(f"Poll failed ({r.status_code}): {r.text}")
             data = r.json()
