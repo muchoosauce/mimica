@@ -4337,6 +4337,7 @@ def run_animation_shot_video(
         duration=duration,
         aspect_ratio=aspect,
         shows_product=bool(shot.get("shows_product")),
+        target_model=video_model,
     )
     _atomic_update_shot(project_dir, shot_id, {
         "video_prompt": refined_prompt,

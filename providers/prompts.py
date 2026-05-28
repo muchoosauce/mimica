@@ -2915,15 +2915,41 @@ def refine_animation_shot_video_prompt(
     duration: int,
     aspect_ratio: str,
     shows_product: bool,
+    target_model: str = "",
 ) -> str:
-    """Step 5 — refine a draft video prompt before sending to Kling/Seedance."""
+    """Step 5 — refine a draft video prompt before sending to the video model.
+
+    `target_model` lets us override the "silent clip" default when the
+    target is Veo 3.1 (which generates audio + dialogue from the prompt).
+    """
+    is_veo = target_model.startswith("veo_")
+    audio_override = ""
+    if is_veo:
+        audio_override = (
+            "\n\nTARGET MODEL OVERRIDE — Veo 3.1: this model generates "
+            "contextual audio AND spoken dialogue from the prompt. "
+            "Override rule #5 of the system prompt for this call:\n"
+            "  • Describe AMBIENT audio that fits the scene (room tones, "
+            "footsteps, water, fabric, breath…).\n"
+            "  • If a CHARACTER is in the shot, include exactly ONE short "
+            "spoken line in double quotes (≤ 10 words) that fits the "
+            "emotional beat, e.g. \"Wow… enfin.\" or \"This actually "
+            "works.\" or \"I needed this.\" — pick a language matching "
+            "the brand tone (French for FR brands, English otherwise).\n"
+            "  • If the shot is a pack-shot or has no character, OMIT "
+            "dialogue and keep only ambient sound.\n"
+            "  • Do NOT include music — the clip is for ad cutting, "
+            "music gets layered downstream."
+        )
     user_prompt = (
         f"DRAFT VIDEO PROMPT:\n{draft_video_prompt.strip() or '(empty)'}\n\n"
         f"SHOT DESCRIPTION: {description.strip()}\n"
         f"DURATION: {duration}s\n"
         f"ASPECT RATIO: {aspect_ratio}\n"
-        f"SHOWS PRODUCT: {'yes' if shows_product else 'no'}\n\n"
-        "Output ONE refined Kling/Seedance video prompt starting with ^."
+        f"SHOWS PRODUCT: {'yes' if shows_product else 'no'}\n"
+        f"TARGET MODEL: {target_model or '(generic)'}"
+        f"{audio_override}\n\n"
+        "Output ONE refined video prompt starting with ^."
     )
     text = provider.call_llm(
         prompt=user_prompt,
