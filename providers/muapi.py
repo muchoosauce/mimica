@@ -449,18 +449,13 @@ class MuApiProvider(Provider):
         is_seedance = model.startswith("seedance_")
         is_veo = model.startswith("veo_")
 
-        # Veo 3.1 only accepts durations of 4, 6 or 8 seconds. Clamp instead
-        # of returning a 422 so callers can blindly pass the user's choice.
+        # MuAPI's veo3.1-image-to-video endpoint is fixed at 8 seconds.
+        # Anything else returns a 422 literal_error. Force to 8 and log.
         if is_veo:
             d = int(duration)
-            if d <= 4:
-                duration = 4
-            elif d <= 6:
-                duration = 6
-            else:
-                duration = 8
-            if d != duration:
-                self._log("INFO", f"[{label}] duration {d}s clamped to {duration}s (Veo only supports 4/6/8s).")
+            if d != 8:
+                self._log("INFO", f"[{label}] duration {d}s forced to 8s (Veo 3.1 i2v on MuAPI is fixed at 8s).")
+            duration = 8
 
         # MuAPI's Kling 3 default is "sound on" in practice (despite WaveSpeed
         # docs claiming the opposite), so we always send the boolean explicitly.
