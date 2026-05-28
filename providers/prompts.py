@@ -225,22 +225,65 @@ ANIMATION_STYLES: dict[str, dict] = {
         ),
         "style_ref": "styles/balloon.jpg",
     },
+    # Anthropomorphic face emerging from human skin (Pixar render) — see
+    # forge/providers/prompts.py for the full doc.
+    "face_skin": {
+        "label": "Face in Skin",
+        "prompt": (
+            "Pixar-style 3D animated rendering of an anthropomorphic "
+            "cartoon face emerging directly from human skin (thigh, "
+            "arm, belly, cheek, etc.). The face features are SCULPTED "
+            "into the skin surface — two large round expressive eyes "
+            "with shining tears, worried thin brows, a tiny nose, a "
+            "small sad mouth, rosy cheeks. Often two chubby baby hands "
+            "also emerge from the same skin pressing softly on its own "
+            "cheeks. No separate head, no neck, no body — only the face "
+            "and optional hands forming IN the skin. The skin retains "
+            "its natural texture (dimples, cellulite, soft fabric "
+            "indent, sagging) but conforms to the facial features. "
+            "Warm bedroom / bathroom lighting, painterly soft-focus "
+            "blurred interior background. Pixar render quality: "
+            "subsurface scattering on skin, soft specular highlights, "
+            "rich warm cinematic color grading."
+        ),
+        "style_refs": [
+            "styles/face_skin_01.jpg",
+            "styles/face_skin_02.jpg",
+        ],
+        "style_ref": "styles/face_skin_01.jpg",
+    },
 }
 
 
 def resolve_style_ref(style_key: str) -> str:
     """Return an absolute path to the style ref image for `style_key`, or
-    empty string if the style has no ref (e.g. "realistic")."""
+    empty string if the style has no ref (e.g. "realistic"). Back-
+    compat wrapper around resolve_style_refs."""
+    refs = resolve_style_refs(style_key)
+    return refs[0] if refs else ""
+
+
+def resolve_style_refs(style_key: str) -> list[str]:
+    """Return all style ref image paths for `style_key`. See forge/
+    providers/prompts.py for the full doc."""
     style = ANIMATION_STYLES.get(style_key or "")
     if not style:
-        return ""
-    rel = style.get("style_ref") or ""
-    if not rel:
-        return ""
+        return []
+    rels = list(style.get("style_refs") or [])
+    if not rels:
+        rel = style.get("style_ref") or ""
+        if rel:
+            rels = [rel]
+    if not rels:
+        return []
     from pathlib import Path
     here = Path(__file__).resolve().parent.parent
-    candidate = here / "gui" / "assets" / rel
-    return str(candidate) if candidate.exists() else ""
+    out: list[str] = []
+    for rel in rels:
+        candidate = here / "gui" / "assets" / rel
+        if candidate.exists():
+            out.append(str(candidate))
+    return out
 
 
 SYSTEM_PROMPT = """You are an expert NanoBanana 2 prompt engineer for static ad production. When the user provides a reference ad image and specifies a number of iterations (N), you generate exactly N NanoBanana 2 prompts that produce N totally different ads — different layouts, different compositions, different product placements, different backgrounds — but all sharing the same graphic universe, tone, and visual identity as the reference.

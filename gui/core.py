@@ -4180,11 +4180,13 @@ def run_animation_shot_image(
     if is_anchor_shot and style_key and style_key != "realistic":
         if style_key == "custom":
             ref_path = state.get("style_custom_image") or ""
+            if ref_path and Path(ref_path).exists():
+                refs.append(Path(ref_path))
         else:
-            from providers.prompts import resolve_style_ref
-            ref_path = resolve_style_ref(style_key)
-        if ref_path and Path(ref_path).exists():
-            refs.append(Path(ref_path))
+            # Multi-ref support — face_skin preset ships 2 refs. Cap at 3.
+            from providers.prompts import resolve_style_refs
+            for rp in resolve_style_refs(style_key)[:3]:
+                refs.append(Path(rp))
     if use_anchor and not is_anchor_shot:
         anchor = shots.get("1") or {}
         anchor_path = project_dir / anchor.get("image_file", "") if anchor.get("image_file") else None
