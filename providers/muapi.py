@@ -466,6 +466,11 @@ class MuApiProvider(Provider):
             "aspect_ratio": aspect_ratio,
             "sound": bool(sound),
         }
+        # Veo's official Google field is `generate_audio`. Send both
+        # (sound + generate_audio) so we cover whichever MuAPI normalizes
+        # to. Unknown fields are silently ignored.
+        if is_veo:
+            payload["generate_audio"] = bool(sound)
         # Pass through an explicit resolution only when the caller asked for
         # one — keeps the existing default behavior on every other workflow.
         if resolution:

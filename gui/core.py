@@ -4359,9 +4359,12 @@ def run_animation_shot_video(
             except Exception as e:
                 provider._log("WARN", f"[{label}] product ref upload failed: {e}")
 
+        # Veo 3.1 generates contextual audio from the prompt — silent Veo
+        # wastes the model. Kling/Seedance stay silent (audio added at edit).
+        sound_on = video_model.startswith("veo_")
         video_url = provider.call_video(
             model=video_model, prompt=refined_prompt, image_url=ref_url,
-            duration=duration, aspect_ratio=aspect, sound=False,
+            duration=duration, aspect_ratio=aspect, sound=sound_on,
             product_reference_urls=prod_refs, label=label,
         )
         dest = project_dir / "shots" / f"shot_{shot_id:03d}.mp4"
