@@ -27,13 +27,17 @@ ANIMATION_STYLES: dict[str, dict] = {
     },
     "pixar": {
         "label": "Pixar",
+        # Material/rendering-focused — see forge for the full rationale.
         "prompt": (
-            "Pixar-style 3D animated render: subtly stylized human "
-            "proportions with slightly enlarged eyes, smooth subsurface-"
-            "scattered skin with soft specular highlights, hyperreal but "
-            "stylized clothing fabric, warm cinematic lighting with rich "
-            "color grading, painterly background blur, expressive emotive "
-            "face — 3D render quality, not photoreal."
+            "Pixar-style 3D animated rendering technique: smooth subsurface-"
+            "scattered surfaces with soft specular highlights, hyperreal "
+            "but slightly stylized proportions and materials, warm "
+            "cinematic lighting with rich color grading, painterly soft-"
+            "focus background blur, expressive textures — 3D render "
+            "quality, not photoreal. The subject of the frame is whatever "
+            "the scene description specifies (human, anthropomorphic "
+            "object, abstract form, close-up of skin or material) — do "
+            "NOT default to a generic human/family composition."
         ),
         "style_ref": "styles/pixar.jpg",
     },
@@ -2750,7 +2754,7 @@ Output: only the prompt, nothing else."""
 ANIMATION_SHOT_IMAGE_REFINE_SYSTEM_PROMPT = """You are an expert NanoBanana 2 prompt engineer. You take a draft image prompt for a shot of a multi-shot ad and refine it for execution.
 
 INPUT
-- A `draft_image_prompt` for the shot (already produced by the storyboard parser).
+- A `draft_image_prompt` for the shot (already produced by the storyboard parser). This draft may contain UNUSUAL OR SURREAL subjects (anthropomorphic objects, faces emerging from skin, sentient packaging, abstract shapes acting as characters). PRESERVE these specifics — they are intentional.
 - A `style` label.
 - The aspect ratio.
 - A list of character ids that will be passed as visual references (their portraits are attached as input images at generation time).
@@ -2758,19 +2762,23 @@ INPUT
 - Whether an `anchor_image` is attached (the previously approved shot 1, for style consistency on shots 2..N).
 
 YOUR JOB
-Rewrite the draft into a final NanoBanana 2 prompt. Improve specificity, lighting, environment, and tactile materials. Keep it 40-100 words, one paragraph.
+Rewrite the draft into a final NanoBanana Pro prompt. Improve specificity, lighting, environment, and tactile materials WITHOUT removing the draft's unique creative elements. Target 80-180 words, one paragraph.
+
+🔒 PRESERVATION RULE — CRITICAL
+- Every unusual / surreal / anthropomorphic specific in the draft MUST be preserved literally in your refined output. Do NOT generalize ("a character on a thigh"). Do NOT default to a generic family/woman/lifestyle composition. Do NOT replace the surreal subject with a normal human scene.
+- Constraints from the draft like "frame contains the thigh only, no hip, no crotch" or "no separate head, no body, just the face" are EXACT framing rules — keep them verbatim.
 
 Rules:
 1. First character is `^`.
 2. Open with the aspect ratio and the style label.
 3. If `anchor_image` is attached, add the phrase "match the visual style, color palette and lighting register of the attached reference image".
-4. If character references are attached, refer to characters by role only ("the morning woman", "her friend") — never invent face details, the model will pull them from the attached portraits.
+4. If character references are attached, refer to characters by role only — never invent face details.
 5. If `shows_product` is true, refer to the product as "the product" and let the model pull packaging from the attached product image. Do not invent label text, ingredient lists, dosage, or claims.
-6. Describe the action, environment, lighting, materials, and ambient details (steam, condensation, soft window light...).
+6. Describe the action, environment, lighting, materials, and ambient details. For UNUSUAL subjects, describe how the lighting interacts with the surreal element.
 7. No camera-motion verbs (push-in, pan, dolly...). Those belong to the video prompt.
 8. No on-screen text, no CTA, no brand wordmark unless explicitly asked.
-9. End with "Hyperrealistic, sharp focus, natural skin texture, no on-screen text."
-10. CONTENT SAFETY: no medical/clinical claims, no before/after transformations, no nudity, no minors in suggestive contexts. Default attire fully covered everyday clothing.
+9. End with "Hyperrealistic, sharp focus, natural texture, no on-screen text."
+10. CONTENT SAFETY: no medical/clinical claims, no before/after transformations, no nudity, no minors in suggestive contexts. Surreal anthropomorphic concepts (face in skin, sentient products) are CREATIVE not unsafe — preserve them.
 
 Output: only the prompt, starting with `^`. No commentary."""
 

@@ -4214,27 +4214,53 @@ def run_animation_shot_image(
         has_anchor=(use_anchor and not is_anchor_shot and len([r for r in refs]) > 0
                     and (not is_anchor_shot)),
     )
-    # Style injection. Wrap the refined prompt with an explicit
-    # style-transfer instruction so NanoBanana copies the rendering
-    # technique of the attached style ref (anchor only) but NOT its
-    # subject. Also prepend the AESTHETIC descriptor text so the
-    # technique is reinforced verbally for non-anchor shots which
-    # inherit through the anchor and don't have a style ref attached.
+    # Style injection — hardened leak-guard wording (see forge core).
+    # The bundled style refs are now pure-environment scenes (no humans,
+    # no characters, no leakable composition), so NB Pro is forced to
+    # copy only the rendering technique.
     if style_key and style_key != "realistic":
         from providers.prompts import ANIMATION_STYLES
         style_prefix = (
             (ANIMATION_STYLES.get(style_key) or {}).get("prompt", "")
             if style_key != "custom" else ""
         )
-        leak_guard = (
-            "STYLE TRANSFER: the first reference image attached carries the "
-            "rendering technique to apply (medium, materials, lighting "
-            "treatment, color rendering). Do NOT copy its subject, "
-            "character, pose, clothing, props, or setting — those come "
-            "ONLY from the SCENE description below."
+        custom_ref_attached = (
+            style_key == "custom"
+            and is_anchor_shot
+            and bool(state.get("style_custom_image"))
+            and Path(state.get("style_custom_image") or "").exists()
         )
-        descriptor = f" Aesthetic: {style_prefix}" if style_prefix else ""
-        refined_prompt = f"{leak_guard}{descriptor} SCENE: {refined_prompt}".strip()
+        if custom_ref_attached or (style_prefix and is_anchor_shot):
+            leak_guard = (
+                "STYLE TRANSFER ONLY. The first reference image attached "
+                "carries ONLY the rendering technique to apply (medium, "
+                "materials, lighting treatment, color rendering, "
+                "subsurface scattering, shading register). You MUST IGNORE "
+                "the reference image's subject, composition, characters, "
+                "people, faces, framing, props, environment, and layout. "
+                "Render exclusively the subject described in the SCENE "
+                "below. Do NOT default to a generic person, family, "
+                "woman, or lifestyle composition just because the "
+                "reference suggests one. If the SCENE describes an "
+                "anthropomorphic / surreal / unusual subject (face "
+                "emerging from skin, sentient object, close-up of a "
+                "material, single hand, abstract form), render THAT — "
+                "the reference image is a TEXTURE/RENDER swatch only. "
+                "Preserve the framing constraints from SCENE verbatim "
+                "(e.g. \"thigh only, no hip, no crotch\")."
+            )
+            descriptor = f" AESTHETIC: {style_prefix}" if style_prefix else ""
+            refined_prompt = f"{leak_guard}{descriptor} SCENE: {refined_prompt}".strip()
+        elif style_prefix:
+            refined_prompt = (
+                f"AESTHETIC: {style_prefix} "
+                f"HARD RULES: render EXACTLY the subject described in the "
+                f"SCENE below — do NOT substitute it with a generic person, "
+                f"family, woman, or lifestyle scene. If the SCENE describes "
+                f"an unusual or anthropomorphic subject, render THAT. "
+                f"Preserve the framing constraints from SCENE verbatim. "
+                f"SCENE: {refined_prompt}"
+            ).strip()
     _atomic_update_shot(project_dir, shot_id, {
         "image_prompt": refined_prompt,
         "image_status": "generating",
