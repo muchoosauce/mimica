@@ -4018,6 +4018,9 @@ def run_animation_parse(
             "shows_product": bool(s.get("shows_product", False)),
             "image_prompt": s.get("image_prompt", ""),
             "video_prompt": s.get("video_prompt", ""),
+            # Verbatim dialogue in the brief's original language for Veo
+            # voiceover. Empty string when no spoken line.
+            "dialogue": s.get("dialogue", ""),
             "image_status": "pending",
             "video_status": "pending",
             "image_file": "",
@@ -4330,6 +4333,9 @@ def run_animation_shot_video(
 
     label = f"shot_{shot_id:03d}_v"
     on_log("INFO", f"[{label}] refining video prompt...")
+    shot_dialogue = (shot.get("dialogue") or "").strip()
+    if shot_dialogue:
+        on_log("INFO", f"[{label}] dialogue: {shot_dialogue[:120]}{'...' if len(shot_dialogue) > 120 else ''}")
     refined_prompt = _refine_anim_vid(
         provider,
         draft_video_prompt=shot.get("video_prompt", ""),
@@ -4338,6 +4344,7 @@ def run_animation_shot_video(
         aspect_ratio=aspect,
         shows_product=bool(shot.get("shows_product")),
         target_model=video_model,
+        dialogue=shot_dialogue,
     )
     _atomic_update_shot(project_dir, shot_id, {
         "video_prompt": refined_prompt,

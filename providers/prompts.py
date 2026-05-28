@@ -2631,25 +2631,30 @@ def analyze_video_for_swap(
 ANIMATION_PARSER_SYSTEM_PROMPT = """You are an expert AI ad storyboard parser. You convert a free-form ad brief into a strict JSON storyboard ready for image and video generation.
 
 INPUT YOU RECEIVE
-- A free-form brief written by a creative director, listing the shots of an ad. Each shot is one or two sentences describing a scene, optionally with a duration ("3s", "(4s)", "≈4s"...).
+- A free-form brief written by a creative director, listing the shots of an ad. Briefs can be richly structured — a single shot may include sub-sections like "Visuel:" / "Visual:", "Action:", "Dialogue:" / "Voice-off:" / "Voix off:" describing the frame, the motion, and what the character says.
 - The Brand DNA of the product (text block).
 - A target aspect ratio (9:16, 1:1, 16:9, or 4:5).
 - An optional product name and product image (used for shots that show the product).
 
 YOUR JOB
-Decompose the brief into an ordered list of shots, normalize their durations, identify recurring characters/personas, infer the overall visual style, and emit a single JSON object.
+Decompose the brief into an ordered list of shots, normalize their durations, identify recurring characters/personas, infer the overall visual style, EXTRACT THE DIALOGUE VERBATIM IN ITS ORIGINAL LANGUAGE, and emit a single JSON object.
+
+LANGUAGE POLICY — CRITICAL
+- `image_prompt`, `video_prompt`, `description`, `style`, and `characters[].description` are ALWAYS WRITTEN IN ENGLISH (image and video models perform best on English prompts).
+- `dialogue` is ALWAYS WRITTEN VERBATIM IN THE BRIEF'S ORIGINAL LANGUAGE. Do NOT translate dialogue. If the brief is in French, the dialogue stays in French. The video model (Veo 3.1) reads the dialogue line as-is and synthesises the voice in that language.
 
 CHARACTER DETECTION
-- A "character" is a recurring human persona referenced across multiple shots (e.g. "the woman", "her friend", "the dad").
-- Extract every character that appears in 1 or more shots and give it a stable snake_case id ("woman_morning", "friend_2", "dad_kitchen").
-- For each character, write a 1-2 sentence neutral physical description suitable for generating a portrait (age range, hair, skin tone if implied, vibe — keep it simple, no clothing brand, no full outfit).
+- A "character" is a recurring human persona referenced across multiple shots (e.g. "the woman", "her friend", "the dad"). Also count non-human anthropomorphic characters (e.g. "the cellulite face", "the wrinkle creature") — these are characters too.
+- Extract every character that appears in 1 or more shots and give it a stable snake_case id ("woman_morning", "friend_2", "cellulite_face").
+- For each character, write a 1-2 sentence neutral physical description suitable for generating a portrait (age range, hair, skin tone if implied, vibe — keep it simple, no clothing brand, no full outfit). FOR NON-HUMAN ANTHROPOMORPHIC CHARACTERS, describe the visual form (eyes, mouth, expression, hands…).
 - Reference each character in shots by its id.
-- Shots that show only the product, abstract scenes, or no human do not carry any character id.
+- Shots that show only the product, abstract scenes, or no human/anthropomorphic figure do not carry any character id.
 
 DURATION RULES
 - Each shot duration must be an integer between 3 and 10 seconds.
 - If the brief specifies a fractional duration ("3.5s"), round to the nearest integer (3.5 → 4).
 - If the brief gives no duration for a shot, default to 4 seconds.
+- If the brief includes dialogue, set the duration to at least 5s; if you estimate the spoken line takes >5s, bump to 8s.
 - Total ad duration is informational only; do not adjust shots to hit a target total.
 
 STYLE DETECTION
@@ -2657,43 +2662,50 @@ STYLE DETECTION
 - This label is informational; the per-shot prompts are independent.
 
 PER-SHOT IMAGE PROMPT
-For each shot, write an `image_prompt` field — a single English paragraph (40-90 words) describing the still frame to generate. Include:
+For each shot, write an `image_prompt` field — a single English paragraph (60-150 words, longer if the brief gave a detailed visual description). Include:
 - The aspect ratio at the start (e.g. "Vertical 9:16").
 - The style label.
-- The exact action / scene.
-- Lighting, mood, environment.
+- EVERY visual specific from the brief's "Visuel" / "Visual" section if present — proportions, framing, what's in / out of frame, materials, props, expression details, hand positions, etc. Do NOT compress the brief's specifics; preserve them all.
+- Lighting, mood, environment from the brief.
 - If the shot shows the product, mention it briefly (the actual product image will be passed as reference at generation time, do not invent packaging text).
-- If the shot has a character, mention the character role (e.g. "the morning woman applies the cream") — the character's portrait will be passed as reference at generation time, do not redescribe their face.
+- If the shot has a character, mention the character role.
 - No camera-motion verbs (those go in the video prompt).
 - No on-screen text. No CTA. No brand wordmark unless brand DNA explicitly asks for it.
 
 PER-SHOT VIDEO PROMPT
-For each shot, write a `video_prompt` field — a single English paragraph (30-70 words) describing the motion. Include:
-- The dominant subject motion (subtle hand twist, slow head turn, fingers gliding...).
-- The camera move (slow push-in, micro-drift, locked, gentle pan...). Keep it subtle and handheld-feeling.
+For each shot, write a `video_prompt` field — a single English paragraph (40-100 words). Include:
+- The dominant subject motion. PRESERVE the specifics from the brief's "Action" section.
+- The camera move (slow push-in, micro-drift, locked, gentle pan...). Keep it subtle and handheld-feeling unless the brief specifies otherwise.
 - The duration (must match `duration` field).
 - "no shake to the point of unreadable", "smooth natural motion", "hyperrealistic".
-- No transitions, no cuts, no music, no voiceover, no on-screen text.
-- The product, if present, must NEVER rotate, pivot, flip, or change orientation. Only hands, environment and ambient elements move.
+- No transitions, no cuts, no on-screen text.
+- The product, if present, must NEVER rotate, pivot, flip, or change orientation.
+- DO NOT mention voiceover or dialogue here. The dialogue lives in its own `dialogue` field.
+
+PER-SHOT DIALOGUE (NEW)
+- If the brief includes a "Dialogue:" / "Voix off:" / "Voice-off:" / "VO:" section, copy the spoken text VERBATIM into the `dialogue` field, in its ORIGINAL LANGUAGE, with normal punctuation. Strip the section label and the surrounding « » or quotes — keep just the spoken words.
+- If no dialogue is mentioned for the shot, set `dialogue` to "" (empty string).
+- DO NOT invent dialogue.
 
 OUTPUT — STRICT JSON, NOTHING ELSE
 Wrap the JSON in a single fenced code block:
 
 ```json
 {
-  "style": "clay-motion",
+  "style": "pixar-3d-painted",
   "characters": [
-    { "id": "woman_morning", "description": "Woman 28-35, brown hair tied loosely, calm morning expression, soft skin." }
+    { "id": "cellulite_face", "description": "Anthropomorphic face formed on female thigh skin: large round expressive eyes with shining tears, worried brows, small nose, sad small mouth, rosy cheeks. Two chubby baby hands emerge from the same skin." }
   ],
   "shots": [
     {
       "id": 1,
-      "duration": 3,
-      "description": "Hand opens cream jar in morning bathroom",
-      "characters": ["woman_morning"],
-      "shows_product": true,
-      "image_prompt": "Vertical 9:16, clay-motion, ...",
-      "video_prompt": "Subtle hand twist of the lid, slow push-in, 3s, no shake, hyperrealistic, ..."
+      "duration": 8,
+      "description": "Close-up on outer thigh skin showing the cellulite face character introducing itself.",
+      "characters": ["cellulite_face"],
+      "shows_product": false,
+      "image_prompt": "Vertical 9:16, pixar-3d-painted, warm blurred bedroom lighting. Tight close-up on the outer side of a real female thigh, lightly dimpled skin. A large character face is formed directly in the thigh skin: two large round expressive eyes with shining tears, worried eyebrows, small nose, small sad mouth, rosy cheeks. Two chubby baby hands rise and gently press against the face's own cheeks. No separate head, no body, just the face and the two small hands emerging from the dimpled skin. Frame contains the thigh only — no hip, no crotch.",
+      "video_prompt": "The face blinks slowly, the eyebrows tremble, the mouth opens and closes softly as if speaking, the small chubby hands gently caress the rosy cheeks. Slow tender movements throughout. Camera locked with very subtle micro-drift inward, 8s.",
+      "dialogue": "Salut. Moi, je suis la cellulite. J'apparais quand les cellules graisseuses poussent ta peau vers la surface, et je donne cette vilaine peau d'orange."
     }
   ]
 }
@@ -2701,13 +2713,13 @@ Wrap the JSON in a single fenced code block:
 
 Hard rules:
 - The fenced block is the ONLY content of your response. No commentary before or after.
-- `style` is required. `characters` may be empty if the brief has no humans.
+- `style` is required. `characters` may be empty.
 - `shots` must list shots in the order they appear in the brief.
 - Shot ids start at 1 and increment by 1.
 - Each shot's `characters` list may be empty.
-- Booleans are JSON true/false (lowercase, unquoted).
-- All strings are double-quoted.
-- No trailing commas.
+- Each shot's `dialogue` field is required (empty string "" when no dialogue).
+- DIALOGUE LANGUAGE: verbatim from the brief, NEVER translated. Image/video prompts: English.
+- Booleans are JSON true/false. All strings double-quoted. No trailing commas.
 
 CONTENT SAFETY
 Apply the same safety rules as elsewhere in the system: no medical claims, no before/after body transformations, no nudity, no minors in suggestive contexts, no public-figure names. Rewrite any such content into neutral wellness/lifestyle copy in `image_prompt` and `description`."""
@@ -2845,6 +2857,7 @@ def parse_animation_brief(
         s.setdefault("description", "")
         s.setdefault("image_prompt", "")
         s.setdefault("video_prompt", "")
+        s.setdefault("dialogue", "")
     scenario["shots"] = shots
     scenario.setdefault("characters", [])
     scenario.setdefault("style", "")
@@ -2916,31 +2929,47 @@ def refine_animation_shot_video_prompt(
     aspect_ratio: str,
     shows_product: bool,
     target_model: str = "",
+    dialogue: str = "",
 ) -> str:
     """Step 5 — refine a draft video prompt before sending to the video model.
 
     `target_model` lets us override the "silent clip" default when the
-    target is Veo 3.1 (which generates audio + dialogue from the prompt).
+    target is Veo 3.1. `dialogue` is the verbatim spoken line captured
+    at parse time; when present and Veo is the target, we inject it
+    directly so Veo synthesises the right voice in the right language.
     """
     is_veo = target_model.startswith("veo_")
     audio_override = ""
     if is_veo:
-        audio_override = (
-            "\n\nTARGET MODEL OVERRIDE — Veo 3.1: this model generates "
-            "contextual audio AND spoken dialogue from the prompt. "
-            "Override rule #5 of the system prompt for this call:\n"
-            "  • Describe AMBIENT audio that fits the scene (room tones, "
-            "footsteps, water, fabric, breath…).\n"
-            "  • If a CHARACTER is in the shot, include exactly ONE short "
-            "spoken line in double quotes (≤ 10 words) that fits the "
-            "emotional beat, e.g. \"Wow… enfin.\" or \"This actually "
-            "works.\" or \"I needed this.\" — pick a language matching "
-            "the brand tone (French for FR brands, English otherwise).\n"
-            "  • If the shot is a pack-shot or has no character, OMIT "
-            "dialogue and keep only ambient sound.\n"
-            "  • Do NOT include music — the clip is for ad cutting, "
-            "music gets layered downstream."
-        )
+        dialogue_clean = (dialogue or "").strip()
+        if dialogue_clean:
+            dialogue_escaped = dialogue_clean.replace('"', '\\"')
+            audio_override = (
+                "\n\nTARGET MODEL OVERRIDE — Veo 3.1: this model generates "
+                "contextual audio AND spoken dialogue from the prompt.\n"
+                "Override rule #5 of the system prompt for this call:\n"
+                "  • Describe AMBIENT audio that fits the scene (room tones, "
+                "footsteps, water, fabric, breath…).\n"
+                "  • The CHARACTER speaks the EXACT dialogue line below — "
+                "embed it verbatim in your output, in double quotes, in its "
+                "original language (do NOT translate, do NOT paraphrase, "
+                "do NOT shorten):\n"
+                f'      "{dialogue_escaped}"\n'
+                "  • The voice should match the character's age/gender and "
+                "the scene's emotional register (sad, playful, warm…).\n"
+                "  • Do NOT include music — the clip is for ad cutting, "
+                "music gets layered downstream."
+            )
+        else:
+            audio_override = (
+                "\n\nTARGET MODEL OVERRIDE — Veo 3.1: this model generates "
+                "contextual audio (the brief does NOT specify dialogue for "
+                "this shot).\n"
+                "Override rule #5 of the system prompt:\n"
+                "  • Describe AMBIENT audio that fits the scene.\n"
+                "  • OMIT dialogue — no character speaks in this shot.\n"
+                "  • Do NOT include music."
+            )
     user_prompt = (
         f"DRAFT VIDEO PROMPT:\n{draft_video_prompt.strip() or '(empty)'}\n\n"
         f"SHOT DESCRIPTION: {description.strip()}\n"
